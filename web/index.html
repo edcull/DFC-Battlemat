@@ -945,9 +945,8 @@ const UCM_FLEET = [
       {name:'Cobra Heavy Laser', arc:'FN', att:4, lock:'3+', dmg:1, type:'E', special:'Burnthrough-1, Flash-1, Focused'},
       {name:'UF-6400 Mass Driver Turrets', arc:'F/S', att:4, lock:'3+', dmg:1, type:'K', special:'Critical-1'}
     ],
-    launch:[{name:'Fighters & Bombers', n:2, type:'fighter_bomber'}, {name:'Deploy Aegis Platform', n:1, type:'feature_deploy', feature:'aegis_platform'}],
-    carriesFeatures:['aegis_platform'],
-    special:'Feature Carrier (Aegis Platform)'
+    launch:[{name:'Fighters & Bombers', n:2, type:'fighter_bomber'}],
+    special:'—'
   },
   {
     id:'u3', name:'San Francisco', role:'Troopship', pts:100, tonnage:'M', side:'ucm',
@@ -1880,6 +1879,7 @@ const state = {
   initiative: null,    // {red, blue, winner, holder, round} — start-of-round initiative roll
   activeSide: null,    // 'ucm' | 'shal' — whose turn it is to activate a Group
   assetMove: null,     // {id, count} — selected launched asset being moved (Asset Combat)
+  assetActiveSide: null, // side currently activating an asset (alternates by initiative)
   _assetId: 0,         // counter for stable launched-asset ids
   factions: { ucm: 'ucm', shal: 'shaltari' }, // chosen faction per slot (red=ucm, blue=shal)
   fleetChoices: { f1: null, f2: null }, // picker selections (randomised to slots at commit)
@@ -2226,15 +2226,12 @@ function renderDropsiteDetail(ds) {
 
   // Battalion data + deploy mode (shared by ground block and feature cards).
   const bats = dsBattalions(ds);
-  const deploying = state.battalionDeploy && state.battalionDeploy.dsId === ds.id;
-  const depSide = deploying ? state.battalionDeploy.side : null;
   // Renders the per-side +/− battalion controls for one location key.
+  // (Landing launched battalions is now done via the deploy modal, so these rows
+  // are only for manual adjustment — not click-to-deploy targets.)
   const batControls = (key) => {
     const loc = bats[key];
-    const rowAttr = deploying
-      ? ` data-bat-deploy="${ds.id}|${key}" style="cursor:pointer;border:1px solid var(--${depSide});border-radius:3px;padding:3px;background:rgba(74,214,255,0.05);"`
-      : '';
-    return `<div class="bat-counts"${rowAttr}>
+    return `<div class="bat-counts">
       <span class="bat-side ucm">${factionName('ucm')}
         <button class="hp-btn" data-bat-adj="${ds.id}|${key}|ucm|-1">−</button>
         <b style="color:var(--ucm)">${loc.ucm}</b>
@@ -2258,10 +2255,6 @@ function renderDropsiteDetail(ds) {
         <button class="spike-btn" data-ds-damage-u="${ds.id}">+</button>
       </div>
     </div>
-    ${deploying ? `<div class="help-tip ${depSide}" style="color:var(--${depSide});margin-top:6px;">
-      Click a location to land <b>${state.battalionDeploy.count}</b> ${state.battalionDeploy.asset} battalion${state.battalionDeploy.count>1?'s':''}.
-      <button class="btn" data-bat-cancel="1" style="margin-top:4px;width:100%;">Cancel</button>
-    </div>` : ''}
     <div style="margin-top:8px;">
       <div class="bat-loc-label">Dropsite</div>
       ${batControls('ground')}
@@ -2299,11 +2292,117 @@ function renderDropsiteDetail(ds) {
   return html;
 }
 
+/* Detail panel for a selected launched asset (Asset Phase): stats, movement, and —
+   for bombers/fire ships/torpedoes that have moved into base contact — an attack button. */
+function renderAssetDetail(a) {
+  const side = a.side;
+  const sideClass = side === 'ucm' ? 'ucm' : 'shal';
+  const thr = a.t2t && a._t2tRange ? a._t2tRange : assetThrust(a);
+  const max = a.count;
+  const c = state.assetMove.count;
+  const kindLabel = { fighter: 'Fighters', bomber: 'Bombers', fireship: 'Fire Ships', torpedo: 'Torpedoes', mine: 'Mines' }[a.kind] || a.kind;
+  const cell = (lbl, val) => `<div class="stat-cell"><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`;
+  let statCells = cell('Thrust', thr + '"') + cell('In Stack', max);
+  if (a.kind === 'bomber' || a.kind === 'fireship' || a.kind === 'torpedo' || a.kind === 'mine') {
+    const p = assetProfile(side, a.kind);
+    statCells += cell('Att/ea', p.att) + cell('Lock', p.lock) + cell('Dmg', p.dmg + ' ' + p.type);
+  } else if (a.kind === 'fighter') {
+    /* fighters: base Thrust + In Stack cells suffice; Close Protection in the note. */
+  }
+  const specialNote = (() => {
+    const p = assetProfile(side, a.kind);
+    if (a.kind === 'fighter') return `<div style="font-size:9.5px;color:var(--text-dim);margin-top:4px;font-style:italic;">Close Protection: friendly ships within ${assetProfile(side,'fighter').thrust}" may spend these to re-roll failed saves vs Close Action / Bomber / Fire-Ship hits.</div>`;
+    return (p.special) ? `<div style="font-size:9.5px;color:var(--text-dim);margin-top:4px;font-style:italic;">${p.special}</div>` : '';
+  })();
+
+  let html = `<div class="panel-section">
+    <div class="detail-name ${sideClass}">${kindLabel} <span style="color:var(--text-mute);font-weight:400;font-size:11px;">· ${factionName(side)} asset</span></div>
+    <div class="detail-role">${a.moved ? 'Moved this round' : 'Not yet moved'}</div>
+    <div class="stat-grid">${statCells}</div>
+    ${specialNote}
+  </div>`;
+
+  // Movement controls (split the stack, then click the board to move).
+  if (!a.moved && a.kind !== 'mine') {
+    html += `<div class="panel-section">
+      <div class="panel-title">Move</div>
+      <div class="bat-counts" style="justify-content:center;gap:8px;align-items:center;">
+        <span style="font-size:10px;color:var(--text-dim);">Stack to move:</span>
+        <button class="hp-btn" data-asm-adj="-1" ${c<=1?'disabled':''}>−</button>
+        <b style="color:var(--${sideClass});font-size:13px;">${c}</b><span style="color:var(--text-mute);">/ ${max}</span>
+        <button class="hp-btn" data-asm-adj="1" ${c>=max?'disabled':''}>+</button>
+      </div>
+      <div class="weapon-special" style="color:var(--text-mute);margin-top:4px;">Click a destination on the board ≤ ${thr}". Split with −/+ to move part of the stack.</div>
+    </div>`;
+  } else if (a.kind === 'mine') {
+    html += `<div class="panel-section"><div class="weapon-special" style="color:var(--text-mute);">Mines cannot move once launched.</div></div>`;
+  }
+
+  // Attack target: bombers/fire ships/torpedoes that have MOVED into base contact
+  // LOCK a target (resolved later, pooled). Excludes Descent ships in atmosphere
+  // (enemyShipsInBaseContact already excludes atmosphere-layer ships).
+  if ((a.kind === 'bomber' || a.kind === 'fireship' || a.kind === 'torpedo')) {
+    if (a.moved) {
+      const contacts = enemyShipsInBaseContact(side, a.x, a.y);
+      if (a.bomberTarget) {
+        const td = getDef(a.bomberTarget.gid);
+        const tn = td ? td.name + (state.groups[a.bomberTarget.gid].ships.length > 1 ? ` #${a.bomberTarget.si + 1}` : '') : '?';
+        html += `<div class="panel-section">
+          <div class="panel-title">Target Locked</div>
+          <div class="weapon-special" style="color:var(--hull-crit);">▶ ${tn} — resolves when all assets have moved.</div>
+          <button class="btn" id="asset-detail-untarget" style="width:100%;margin-top:4px;">✕ Clear Target</button>
+        </div>`;
+      } else if (contacts.length) {
+        const verb = a.kind === 'torpedo' ? 'TORPEDO' : a.kind === 'fireship' ? 'FIRE SHIP' : 'BOMBER';
+        html += `<div class="panel-section">
+          <div class="panel-title">Attack Target</div>`;
+        contacts.forEach(ct => {
+          const tn = ct.def.name + (state.groups[ct.gid].ships.length > 1 ? ` #${ct.si + 1}` : '');
+          html += `<button class="btn-finish-act" data-asset-target="${ct.gid}|${ct.si}" style="margin-top:4px;background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">⊕ LOCK ${verb} ▸ ${tn}</button>`;
+        });
+        html += `</div>`;
+      } else {
+        html += `<div class="panel-section"><div class="weapon-special" style="color:var(--text-mute);">No enemy ship in base contact.</div></div>`;
+      }
+    } else {
+      html += `<div class="panel-section"><div class="weapon-special" style="color:var(--text-mute);">Move into base contact of an enemy ship to lock an attack.</div></div>`;
+    }
+  }
+
+  // Time to Target (2 AP): move a moved fighter/bomber again up to 6".
+  if ((a.kind === 'fighter' || a.kind === 'bomber') && a.moved && !a.t2t &&
+      state.planning && state.planning.ap[side] >= 2) {
+    html += `<div class="panel-section">
+      <button class="btn" id="asset-detail-t2t" style="width:100%;">⚙ Time to Target (2 AP · move again ≤6")</button>
+    </div>`;
+  }
+
+  // Reset Move: undo this asset's move so it can be re-activated this turn.
+  if (a.moved && a.kind !== 'mine') {
+    html += `<div class="panel-section">
+      <button class="btn" id="asset-detail-reset" style="width:100%;">⟲ Reset Move</button>
+      ${a._preMove ? '' : '<div class="weapon-special" style="color:var(--text-mute);margin-top:3px;">(stack was split/merged — resets in place)</div>'}
+    </div>`;
+  }
+
+  html += `<div class="panel-section"><button class="btn" id="asset-detail-deselect" style="width:100%;">↩ Deselect</button></div>`;
+  return html;
+}
+
 function renderDetail() {
   const div = document.getElementById('detail-panel');
 
-  // If a dropsite is selected, render its info instead.
-  if (state.selectedDropsiteId && state.scenarioData) {
+  // ── ASSET DETAIL: a launched asset is selected in the Asset Phase. ──
+  if (state.assetMove) {
+    const a = (state.launchedAssets || []).find(x => x.id === state.assetMove.id);
+    if (a) {
+      div.innerHTML = renderAssetDetail(a);
+      return;
+    }
+  }
+
+  // If a dropsite is selected (and no ship/group is actively selected), show its info.
+  if (state.selectedDropsiteId && state.scenarioData && !state.selectedGroupId) {
     const ds = state.scenarioData.dropsites.find(d => d.id === state.selectedDropsiteId);
     if (ds) {
       div.innerHTML = renderDropsiteDetail(ds);
@@ -2542,14 +2641,14 @@ function renderDetail() {
       const canAntiWing = isAntiWing && canFire && !tgt && fitsLimit && !caBlocked && !limitedBlocked && enemyWingsExist;
       const extraTag = [wsp.highPower && eo!=='WF'?'High Power ×2':'', wsp.lowPower?'Low Power':'', wsp.linked?'Linked':'', limitedMax?`Limited ${limitedUsed}/${limitedMax}`:''].filter(Boolean).join(' · ');
       weaponsHTML += `<div class="weapon-row${tgt ? ' weapon-locked' : ''}${isAiming ? ' weapon-aiming' : ''}${detectorAiming ? ' weapon-aiming' : ''}${awAiming ? ' weapon-aiming' : ''}"
-          ${clickable ? `data-weapon-target="${state.selectedGroupId}|${si}|${wi}" style="cursor:pointer;"` : ''}>
+          ${clickable ? `data-weapon-target="${state.selectedGroupId}|${si}|${wi}" style="cursor:pointer;"` : canDetect ? `data-detector="${state.selectedGroupId}|${si}|${wi}" style="cursor:pointer;"` : ''}>
         <div class="weapon-name">${w.name}${tgt ? ` <span style="color:var(--hull-crit);font-size:9px;">▶ ${tgtName}</span>` : ''}${detectorUsed ? ` <span style="color:var(--text-mute);font-size:9px;">✓ used</span>` : ''}${limitedBlocked ? ` <span style="color:var(--hull-crit);font-size:9px;">spent</span>` : ''}</div>
         <div class="weapon-stats">${isDetector ? 'Line of Sight · place Spikes' : `${w.arc} · Att ${w.att} · Lock ${w.lock} · Dmg ${w.dmg} · ${w.type}`}${extraTag?` <span style="color:var(--text-mute)">· ${extraTag}</span>`:''}</div>
         ${w.special && w.special !== '—' ? `<div class="weapon-special">${w.special}</div>` : ''}
         ${isAiming ? `<div class="weapon-special" style="color:var(--hull-crit)">Click an enemy ship in arc & range · right-click cancels</div>` : ''}
         ${detectorAiming ? `<div class="weapon-special" style="color:#4ad6ff">Click an enemy ship in Line of Sight · right-click cancels</div>` : ''}
+        ${canDetect && !detectorAiming ? `<div class="weapon-special" style="color:#4ad6ff">Click to use Detector (forgoes this weapon)</div>` : ''}
         ${awAiming ? `<div class="weapon-special" style="color:#ffb547">Click an enemy Wing (asset) in arc & range · right-click cancels</div>` : ''}
-        ${canDetect ? `<button class="hp-btn" data-detector="${state.selectedGroupId}|${si}|${wi}" style="margin-top:3px;color:#4ad6ff;border-color:#4ad6ff;">${detectorAiming ? '✕ cancel' : '⌖ USE DETECTOR'}</button>` : ''}
         ${canAntiWing ? `<button class="hp-btn" data-antiwing="${state.selectedGroupId}|${si}|${wi}" style="margin-top:3px;color:#ffb547;border-color:#ffb547;">${awAiming ? '✕ cancel' : '✦ ANTI-WING'}</button>` : ''}
         ${tgt ? `<button class="hp-btn" data-weapon-unlock="${state.selectedGroupId}|${si}|${wi}" style="margin-top:3px;">✕ clear target</button>` : ''}
       </div>`;
@@ -2563,7 +2662,7 @@ function renderDetail() {
       else if (!moved) weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">Move this ship first, then assign weapon targets.</div>`;
       else if (limit === 0) weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">This Order cannot fire weapons.</div>`;
       else if (lockedCount > 0) {
-        weaponsHTML += `<button class="btn-finish-act" data-fire="${state.selectedGroupId}|${si}" style="background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">🔥 FIRE (${lockedCount})</button>`;
+        weaponsHTML += `<button class="btn-finish-act" data-fire="${state.selectedGroupId}|${si}" style="background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">🔥 ENGAGE (${lockedCount})</button>`;
       } else {
         weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">Click a weapon, then click an enemy ship to lock a target.</div>`;
       }
@@ -2613,9 +2712,12 @@ function renderDetail() {
   let launchHTML = '';
   if (def.launch && def.launch.length) {
     const selShip = state.selectedShipIdx !== null ? grp.ships[state.selectedShipIdx] : null;
-    const canLaunch = state.phase === 'play' && selShip && !selShip.destroyed && !selShip.offTable && !selShipOOF;
+    // Launch is disallowed on Max Thrust, Damage Control, and Silent Running.
+    const launchOrder = selShip ? effectiveOrder(def, grp, state.selectedShipIdx) : null;
+    const launchBlockedByOrder = ['MT','DC','SR'].includes(launchOrder);
+    const canLaunch = state.phase === 'play' && selShip && !selShip.destroyed && !selShip.offTable && !selShipOOF && !launchBlockedByOrder;
     launchHTML = `<div class="panel-section">
-      <div class="panel-title">Launch Assets${selShipOOF ? ' · <span style="color:var(--hull-crit)">disabled (out of formation)</span>' : ''}</div>`;
+      <div class="panel-title">Launch Assets${selShipOOF ? ' · <span style="color:var(--hull-crit)">disabled (out of formation)</span>' : launchBlockedByOrder ? ` · <span style="color:var(--hull-crit)">disabled (${launchOrder})</span>` : ''}</div>`;
     def.launch.forEach((l, li) => {
       const meta = launchMeta(l.type);
       const isActive = state.launching && state.launching.gid === gid
@@ -3252,6 +3354,15 @@ function renderBoard() {
         fill="${col}" text-anchor="middle" stroke="var(--bg)" stroke-width="2" paint-order="stroke"
         pointer-events="none">${lbl}</text>
     </g>`;
+    // Locked bomber-attack line to its target ship.
+    if (a.bomberTarget) {
+      const tg = state.groups[a.bomberTarget.gid];
+      const ts = tg && tg.ships[a.bomberTarget.si];
+      if (ts && !ts.destroyed && !ts.offTable) {
+        html += `<line x1="${a.x}" y1="${a.y}" x2="${ts.x}" y2="${ts.y}" stroke="var(--hull-crit)" stroke-width="1" stroke-dasharray="2 2" opacity="0.8"/>
+          <circle cx="${ts.x}" cy="${ts.y}" r="9" fill="none" stroke="var(--hull-crit)" stroke-width="1.2" opacity="0.85"/>`;
+      }
+    }
   });
 
   // Weapon target lines — red dotted lines from a ship to its locked targets.
@@ -3457,7 +3568,12 @@ function effectiveMaxMovePx(def, ship, order) {
 /* Targeting range in PIXELS = attacker Scan + (target Signature + target Spikes×3").
    Scenery on the LoS line can cause the target's Spikes (and, for Debris, Signature)
    to be ignored. */
-function targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, attackerShip) {
+function targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, attackerShip, w) {
+  // Close Action weapons target only within the attacker's Scan range (Sig & Spikes
+  // give the target no extra "visibility" range against Close Action).
+  if (w && /Close Action/i.test(w.special || '')) {
+    return effectiveScan(attackerDef, attackerShip) * INCH;
+  }
   let spikes = (targetGrp ? (targetGrp.spikes || 0) : 0) + (targetShip.spikes || 0);
   let sig = targetShip.sigSilent ? 0 : (targetDef.sig || 0);
   if (attackerShip) {
@@ -3492,7 +3608,7 @@ function weaponCanTarget(attackerDef, attackerShip, w, targetDef, targetShip, ta
   // Large Objects block Line of Sight (unless both ends in atmosphere).
   const eff = sceneryAttackEffects(attackerShip.x, attackerShip.y, targetShip.x, targetShip.y, attackerShip, targetShip);
   if (eff.blocked) return false;
-  const range = targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, attackerShip);
+  const range = targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, attackerShip, w);
   if (Math.hypot(targetShip.x - attackerShip.x, targetShip.y - attackerShip.y) > range) return false;
   return true;
 }
@@ -3643,27 +3759,36 @@ function shieldSaveVal(def) { const m = (def.special||'').match(/Shield-?(\d)/i)
 function openAttackModal(gid, si) {
   const aDef = getDef(gid);
   const grp = state.groups[gid];
-  const aShip = grp.ships[si];
-  if (!aShip || !aShip.weaponTargets) return;
-  // Build a list of weapon-shots: {wi, w, targetGid, targetSi}.
-  const shots = [];
-  Object.keys(aShip.weaponTargets).forEach(wi => {
-    const t = aShip.weaponTargets[wi];
-    const tg = state.groups[t.gid];
-    const ts = tg && tg.ships[t.si];
-    if (!ts || ts.destroyed || ts.offTable) return;
-    const w = aDef.weapons[parseInt(wi)];
-    const sp = parseWeaponSpecials(w);
-    // Volley-X: this weapon makes X separate attacks at the same target (each a
-    // distinct shot in the sequence).
-    const reps = sp.volley > 1 ? sp.volley : 1;
-    for (let r = 0; r < reps; r++) {
-      shots.push({ wi: parseInt(wi), w, targetGid: t.gid, targetSi: t.si, volleyIdx: reps > 1 ? r + 1 : 0, volleyOf: reps });
-    }
+  if (!grp) return;
+  // Gather locked weapons from EVERY ship in the Group (the whole group fires together).
+  // Combine identical weapon systems firing at the same target into one pooled-Att shot.
+  const combined = {}; // key: weaponName|targetGid|targetSi → shot
+  grp.ships.forEach((ship, sIdx) => {
+    if (ship.destroyed || ship.offTable || !ship.weaponTargets) return;
+    Object.keys(ship.weaponTargets).forEach(wi => {
+      const t = ship.weaponTargets[wi];
+      const tg = state.groups[t.gid];
+      const ts = tg && tg.ships[t.si];
+      if (!ts || ts.destroyed || ts.offTable) return;
+      const w = aDef.weapons[parseInt(wi)];
+      const sp = parseWeaponSpecials(w);
+      const reps = sp.volley > 1 ? sp.volley : 1;
+      for (let r = 0; r < reps; r++) {
+        const key = w.name + '|' + t.gid + '|' + t.si + (reps > 1 ? '|v' + r : '');
+        if (combined[key]) {
+          combined[key].w = { ...combined[key].w, att: combined[key].w.att + w.att }; // pool Att
+        } else {
+          combined[key] = { wi: parseInt(wi), w: { ...w }, targetGid: t.gid, targetSi: t.si,
+            volleyIdx: reps > 1 ? r + 1 : 0, volleyOf: reps };
+        }
+      }
+    });
   });
+  const shots = Object.values(combined);
   if (!shots.length) { flashLaunchMsg('No valid targets'); return; }
   state.attackModal = {
     attackerGid: gid, attackerSi: si,
+    groupFire: true,
     shots,
     step: 'intro',       // intro → hit → save → crippling → explosion → done
     shotIdx: 0,
@@ -3683,6 +3808,9 @@ function enemyShipsInBaseContact(side, x, y) {
     if (!def || def.side === side) return;
     state.groups[gid].ships.forEach((s, si) => {
       if (s.destroyed || s.offTable || s.attachedTo) return;
+      // Assets operate in Orbit and cannot attack ships in the Atmosphere layer
+      // (e.g. Descent ships that have dropped into atmosphere).
+      if ((s.layer || 'orbit') === 'atmosphere') return;
       if (Math.hypot(s.x - x, s.y - y) <= 1 * INCH + shipBaseRadiusPx(def)) out.push({ gid, si, def, ship: s });
     });
   });
@@ -3719,6 +3847,43 @@ function openBomberAttackModal(assetIds, targetGid, targetSi, side, kind) {
     hitResult: null, saveResult: null, crippleQueue: [], explodeQueue: []
   };
   renderAll();
+}
+
+/* Any launched assets currently locked onto a ship target (awaiting pooled attack)?
+   Optionally restricted to a side and a stage type. */
+function anyPendingBomberAttacks(side, type) {
+  const kinds = type ? kindsForAssetType(type) : null;
+  return (state.launchedAssets || []).some(a => a.bomberTarget && (!side || a.side === side) && (!kinds || kinds.includes(a.kind)));
+}
+
+/* Resolve the NEXT pending pooled attack (optionally scoped to a side + stage type).
+   All assets of the SAME kind & side locked onto the SAME target ship combine into one
+   attack. Chains via finishAttack → resolvePendingBomberAttacks until none remain for
+   the scope. When a stage-scoped run finishes, the asset stage advances. */
+function resolvePendingBomberAttacks(side, type) {
+  // Remember the scope so finishAttack can continue / hand back to the stage machine.
+  state._bomberResolveSide = side || null;
+  state._bomberResolveType = type || null;
+  const kinds = type ? kindsForAssetType(type) : null;
+  const inScope = a => a.bomberTarget && (!side || a.side === side) && (!kinds || kinds.includes(a.kind));
+  const locked = (state.launchedAssets || []).filter(inScope);
+  if (!locked.length) {
+    // No (more) attacks for this scope. If we were resolving for a stage, advance it.
+    if (side) { state._bomberResolveSide = null; state._bomberResolveType = null; advanceAssetStage({ type: type || 'bomber', side }); }
+    return false;
+  }
+  const first = locked[0];
+  const key = a => `${a.kind}|${a.side}|${a.bomberTarget.gid}|${a.bomberTarget.si}`;
+  const k0 = key(first);
+  const pool = locked.filter(a => key(a) === k0);
+  const tg = state.groups[first.bomberTarget.gid];
+  const ts = tg && tg.ships[first.bomberTarget.si];
+  if (!ts || ts.destroyed || ts.offTable) {
+    pool.forEach(a => { a.bomberTarget = null; });
+    return resolvePendingBomberAttacks(side, type);
+  }
+  openBomberAttackModal(pool.map(a => a.id), first.bomberTarget.gid, first.bomberTarget.si, first.side, first.kind);
+  return true;
 }
 
 /* Open the attack modal for a Dropsite Feature weapon (Missile Halo, Orbital Gun).
@@ -3908,8 +4073,18 @@ function renderAttackModal() {
     {
       const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null);
       const missCount = hr.dice.filter(d => !d.isHit).length;
-      if (!hr.rerolled && atkSide && state.planning && state.planning.ap[atkSide] >= 1 && missCount > 0)
-        body += `<div class="am-line"><button class="btn" data-am-reroll="hit" style="font-size:10px;">↻ AP Re-roll ${missCount} miss${missCount>1?'es':''} (${missCount} AP)</button></div>`;
+      if (!hr.rerolled && atkSide && state.planning && state.planning.ap[atkSide] >= 1 && missCount > 0) {
+        const maxRR = Math.min(missCount, state.planning.ap[atkSide]);
+        const n = Math.min(M.rerollN || maxRR, maxRR);
+        body += `<div class="am-line" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="font-size:10px;">Re-roll</span>
+          <button class="btn" data-rr-adj="-1" style="font-size:11px;padding:1px 7px;">−</button>
+          <b style="font-size:11px;">${n}</b>
+          <button class="btn" data-rr-adj="1" style="font-size:11px;padding:1px 7px;">+</button>
+          <span style="font-size:9px;color:var(--text-mute);">of ${missCount} miss${missCount>1?'es':''} · max ${maxRR} AP</span>
+          <button class="btn" data-am-reroll="hit" style="font-size:10px;">↻ Re-roll ${n} (${n} AP)</button>
+        </div>`;
+      }
     }
     footer = `<button class="btn" data-am-cancel="1">Abort</button>
       <button class="btn-primary ${sideClass==='shal'?'shal':''}" data-am-next="save">${hr.hits>0?'Roll Saves ▸':'No hits — Continue ▸'}</button>`;
@@ -3966,8 +4141,13 @@ function renderAttackModal() {
         M.shieldSpiked = M.shieldSpiked || {};
         if (!M.shieldSpiked[k]) { M.shieldSpiked[k] = true; ts.spikes = (ts.spikes || 0) + 1; }
       }
-      // Backup saves for hits not yet saved.
-      const backupVal = saveVal(td.bs);
+      // Backup saves for hits not yet saved. A Group in Formation grants a 6+ Backup
+      // Save (Formation Benefit); use the better of the listed BS and 6+.
+      let backupVal = saveVal(td.bs);
+      const tgrp = state.groups[s.targetGid];
+      if (tgrp && tgrp.ships.length > 1 && groupInFormation(td)) {
+        backupVal = (backupVal == null) ? 6 : Math.min(backupVal, 6);
+      }
       const backDice = [];
       if (backupVal != null) {
         hitsList.forEach(h => {
@@ -4018,8 +4198,49 @@ function renderAttackModal() {
       <div class="am-line"><b>${sr.unsaved}</b> unsaved → <b style="color:var(--hull-crit)">${sr.dmg} damage</b>${sr.flash?` · <span style="color:var(--hull-warn)">Flash-${sr.flash} (${sr.dmg>0?'+'+sr.flash+' spike':'no dmg'})</span>`:''}${sr.crippling&&sr.critDamaged?` · <span style="color:var(--hull-warn)">Crippling!</span>`:''}</div>`;
     {
       const failed = sr.primDice.filter(d => !d.ok).length;
-      if (!sr.rerolled && td.side && state.planning && state.planning.ap[td.side] >= 1 && failed > 0)
-        body += `<div class="am-line"><button class="btn" data-am-reroll="save" style="font-size:10px;">↻ AP Re-roll ${failed} failed save${failed>1?'s':''} (${failed} AP)</button></div>`;
+      if (!sr.rerolled && td.side && state.planning && state.planning.ap[td.side] >= 1 && failed > 0) {
+        const maxRR = Math.min(failed, state.planning.ap[td.side]);
+        const n = Math.min(M.rerollN || maxRR, maxRR);
+        body += `<div class="am-line" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="font-size:10px;">Re-roll</span>
+          <button class="btn" data-rr-adj="-1" style="font-size:11px;padding:1px 7px;">−</button>
+          <b style="font-size:11px;">${n}</b>
+          <button class="btn" data-rr-adj="1" style="font-size:11px;padding:1px 7px;">+</button>
+          <span style="font-size:9px;color:var(--text-mute);">of ${failed} failed · max ${maxRR} AP</span>
+          <button class="btn" data-am-reroll="save" style="font-size:10px;">↻ Re-roll ${n} (${n} AP)</button>
+        </div>`;
+      }
+    }
+    // ── CLOSE PROTECTION (Fighters) ──
+    // Vs Close Action / Bomber / Fire-Ship attacks, the defender may re-roll failed
+    // saves using friendly Fighters within Fighter Thrust range. Each re-roll spends
+    // one fighter; the player picks which Wing each comes from.
+    {
+      const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
+      const isCloseAction = /Close Action/i.test(s.w.special || '');
+      const failed = sr.primDice.filter(d => !d.ok).length;
+      if ((isBomberAtk || isCloseAction) && failed > 0 && td.side && !sr.fighterRerolled) {
+        const wings = friendlyFightersInRange(td.side, ts.x, ts.y);
+        const avail = wings.reduce((a, w) => a + w.count, 0);
+        if (avail > 0) {
+          M.fighterSpend = M.fighterSpend || {};
+          const spendTotal = wings.reduce((a, w) => a + (M.fighterSpend[w.id] || 0), 0);
+          const cap = Math.min(failed, avail);
+          body += `<div class="am-line" style="border-top:1px dashed var(--border);margin-top:6px;padding-top:6px;">
+            <div style="font-size:10px;color:#7fd6a0;margin-bottom:3px;">🛡 Close Protection — re-roll failed saves with Fighters (1 fighter each, max ${cap}):</div>`;
+          wings.forEach((w, i) => {
+            const cur = M.fighterSpend[w.id] || 0;
+            body += `<div style="display:flex;align-items:center;gap:6px;font-size:10px;margin:2px 0;">
+              <span style="flex:1;">Fighter Wing ${i + 1} <span style="color:var(--text-mute)">(${w.count} craft)</span></span>
+              <button class="btn" data-fp-adj="${w.id}|-1" style="font-size:11px;padding:1px 7px;">−</button>
+              <b>${cur}</b>
+              <button class="btn" data-fp-adj="${w.id}|1" style="font-size:11px;padding:1px 7px;">+</button>
+            </div>`;
+          });
+          body += `<button class="btn" data-am-fighter-reroll="1" style="font-size:10px;margin-top:3px;color:#7fd6a0;border-color:#7fd6a0;" ${spendTotal>0?'':'disabled'}>↻ Re-roll ${spendTotal} save${spendTotal!==1?'s':''} (spend ${spendTotal} fighter${spendTotal!==1?'s':''})</button>
+          </div>`;
+        }
+      }
     }
     footer = `<button class="btn-primary ${sideClass==='shal'?'shal':''}" data-am-next="apply">Apply Damage ▸</button>`;
   }
@@ -4160,39 +4381,105 @@ function renderAttackModal() {
       renderAll();
     });
   });
+  overlay.querySelectorAll('[data-rr-adj]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const delta = parseInt(btn.dataset.rrAdj);
+      // Compute the current max from whichever step we're in.
+      let maxRR = 1;
+      if (M.step === 'hit' && M.hitResult) {
+        const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null);
+        const miss = M.hitResult.dice.filter(d => !d.isHit).length;
+        maxRR = Math.min(miss, (state.planning && state.planning.ap[atkSide]) || 0);
+      } else if (M.step === 'save' && M.saveResult) {
+        const td = getDef(M.shots[M.shotIdx].targetGid);
+        const failed = M.saveResult.primDice.filter(d => !d.ok).length;
+        maxRR = Math.min(failed, (state.planning && state.planning.ap[td.side]) || 0);
+      }
+      const cur = Math.min(M.rerollN || maxRR, maxRR);
+      M.rerollN = Math.max(1, Math.min(maxRR, cur + delta));
+      renderAll();
+    });
+  });
+  // Close Protection: per-Wing fighter spend stepper.
+  overlay.querySelectorAll('[data-fp-adj]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const [wingId, deltaStr] = btn.dataset.fpAdj.split('|');
+      const delta = parseInt(deltaStr);
+      const sr = M.saveResult; if (!sr) return;
+      const s = M.shots[M.shotIdx]; const td = getDef(s.targetGid);
+      const ts = state.groups[s.targetGid].ships[s.targetSi];
+      const failed = sr.primDice.filter(d => !d.ok).length;
+      const wings = friendlyFightersInRange(td.side, ts.x, ts.y);
+      const avail = wings.reduce((a, w) => a + w.count, 0);
+      const cap = Math.min(failed, avail);
+      M.fighterSpend = M.fighterSpend || {};
+      const wing = wings.find(w => w.id === wingId);
+      if (!wing) return;
+      const curWing = M.fighterSpend[wingId] || 0;
+      const otherSpend = Object.keys(M.fighterSpend).reduce((a, k) => a + (k === wingId ? 0 : (M.fighterSpend[k] || 0)), 0);
+      const room = Math.max(0, cap - otherSpend); // total cap minus what other wings already spend
+      M.fighterSpend[wingId] = Math.max(0, Math.min(wing.count, room, curWing + delta));
+      renderAll();
+    });
+  });
+  // Close Protection: re-roll failed saves, spending the selected fighters.
+  const fpRerollBtn = overlay.querySelector('[data-am-fighter-reroll]');
+  if (fpRerollBtn) fpRerollBtn.addEventListener('click', () => {
+    const sr = M.saveResult; if (!sr) return;
+    const s = M.shots[M.shotIdx]; const td = getDef(s.targetGid);
+    const spend = M.fighterSpend || {};
+    let nSpend = Object.keys(spend).reduce((a, k) => a + (spend[k] || 0), 0);
+    if (nSpend <= 0) return;
+    // Remove the spent fighters from their Wings.
+    Object.keys(spend).forEach(wingId => {
+      const n = spend[wingId] || 0; if (!n) return;
+      const a = (state.launchedAssets || []).find(x => x.id === wingId);
+      if (a) a.count = Math.max(0, a.count - n);
+    });
+    state.launchedAssets = (state.launchedAssets || []).filter(a => a.count > 0);
+    // Re-roll up to nSpend failed primary saves.
+    const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
+    failedIdx.slice(0, nSpend).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(); d.ok = d.r >= d.sv; });
+    // Recompute saved flags from scratch using new primDice + existing backup/aegis saves.
+    let pIdx = 0;
+    sr.hitsList.forEach(h => { h.saved = false; h.savedBy = null; });
+    sr.hitsList.forEach(h => { if (h.sv == null || h.noSaveDie) return; const d = sr.primDice[pIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'primary'; } });
+    let bIdx = 0;
+    if (sr.backupVal != null) sr.hitsList.forEach(h => { if (h.saved) return; const d = sr.backDice[bIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'backup'; } });
+    sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+    sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
+    sr.fighterRerolled = true; M.fighterSpend = {};
+    M.log.push(`${factionName(td.side)} Close Protection: re-rolled ${nSpend} save${nSpend!==1?'s':''} (−${nSpend} fighters)`);
+    renderAll();
+  });
   const rerollBtn = overlay.querySelector('[data-am-reroll]');
   if (rerollBtn) rerollBtn.addEventListener('click', () => {
     const which = rerollBtn.dataset.amReroll;
     if (which === 'hit') {
-      const hr = M.hitResult; const s = M.shots[M.shotIdx];
+      const hr = M.hitResult;
       const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null);
-      const misses = hr.dice.filter(d => !d.isHit);
-      const cost = misses.length;
-      if (atkSide && state.planning && state.planning.ap[atkSide] >= cost && cost > 0) {
-        state.planning.ap[atkSide] -= cost;
-        hr.dice.forEach(d => { if (!d.isHit) { d.r = rollDie(); d.isHit = d.r >= hr.lock; d.isCrit = d.r >= hr.lock + 2; } });
+      const missIdx = hr.dice.map((d, i) => (!d.isHit ? i : -1)).filter(i => i >= 0);
+      const maxRR = Math.min(missIdx.length, (state.planning && state.planning.ap[atkSide]) || 0);
+      const n = Math.min(M.rerollN || maxRR, maxRR);
+      if (atkSide && n > 0) {
+        state.planning.ap[atkSide] -= n;
+        missIdx.slice(0, n).forEach(i => { const d = hr.dice[i]; d.r = rollDie(); d.isHit = d.r >= hr.lock; d.isCrit = d.r >= hr.lock + 2; });
         hr.hits = hr.dice.filter(d => d.isHit).length;
         hr.crits = hr.dice.filter(d => d.isCrit).length;
-        hr.rerolled = true;
-        M.log.push(`${factionName(atkSide)} AP Re-roll (${cost} AP)`);
+        hr.rerolled = true; M.rerollN = null;
+        M.log.push(`${factionName(atkSide)} AP Re-roll ${n} (${n} AP)`);
         renderAll();
       }
     } else if (which === 'save') {
       const sr = M.saveResult; const s = M.shots[M.shotIdx];
       const td = getDef(s.targetGid); const defSide = td.side;
-      const failed = sr.primDice.filter(d => !d.ok);
-      const cost = failed.length;
-      if (defSide && state.planning && state.planning.ap[defSide] >= cost && cost > 0) {
-        state.planning.ap[defSide] -= cost;
-        // Re-roll the failed primary saves and recompute. (Backup saves not re-rolled.)
-        let fi = 0;
-        sr.hitsList.forEach(h => {
-          if (h.sv == null || h.noSaveDie || h.savedBy === 'primary') return;
-          // find its primDie
-        });
-        // Simpler: re-roll failed primDice entries and re-evaluate saved status.
-        sr.primDice.forEach(d => { if (!d.ok) { d.r = rollDie(); d.ok = d.r >= d.sv; } });
-        // Recompute hitsList saved flags from scratch using new primDice + existing backups.
+      const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
+      const maxRR = Math.min(failedIdx.length, (state.planning && state.planning.ap[defSide]) || 0);
+      const n = Math.min(M.rerollN || maxRR, maxRR);
+      if (defSide && n > 0) {
+        state.planning.ap[defSide] -= n;
+        failedIdx.slice(0, n).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(); d.ok = d.r >= d.sv; });
+        // Recompute saved flags from scratch using new primDice + existing backups.
         let pIdx = 0;
         sr.hitsList.forEach(h => { h.saved = false; h.savedBy = null; });
         sr.hitsList.forEach(h => {
@@ -4203,8 +4490,8 @@ function renderAttackModal() {
         if (sr.backupVal != null) sr.hitsList.forEach(h => { if (h.saved) return; const d = sr.backDice[bIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'backup'; } });
         sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
         sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
-        sr.rerolled = true;
-        M.log.push(`${factionName(defSide)} AP Re-roll saves (${cost} AP)`);
+        sr.rerolled = true; M.rerollN = null;
+        M.log.push(`${factionName(defSide)} AP Re-roll ${n} saves (${n} AP)`);
         renderAll();
       }
     }
@@ -4215,8 +4502,9 @@ function renderAttackModal() {
 function advanceAttack(to) {
   const M = state.attackModal;
   if (!M) return;
-  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; }
+  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; M.rerollN = null; }
   else if (to === 'save') {
+    M.rerollN = null; M.fighterSpend = {};
     if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; }
     else { nextShotOrResolve(); }
   }
@@ -4226,6 +4514,11 @@ function advanceAttack(to) {
     const k = targetKey(s.targetGid, s.targetSi);
     const sr = M.saveResult;
     M.pendingDamage[k] = (M.pendingDamage[k] || 0) + sr.dmg;
+    // Track whether any NON-Focused damage hit this target (enables group spillover).
+    if (sr.dmg > 0 && !parseWeaponSpecials(s.w).focused) {
+      M.spillEligible = M.spillEligible || {};
+      M.spillEligible[k] = true;
+    }
     // Flash-X: target gains X spikes when this weapon inflicts damage.
     if (sr.flash && sr.dmg > 0) {
       M.pendingFlash = M.pendingFlash || {};
@@ -4483,7 +4776,33 @@ function resolveAccumulatedDamage() {
     const def = getDef(gid);
     const dmg = M.pendingDamage[k];
     const wasAboveHalf = ship.hull > ship.maxHull / 2;
+    const before = ship.hull;
     ship.hull = Math.max(0, ship.hull - dmg);
+    // Damage spillover: excess damage beyond destroying the targeted ship spills to
+    // other ships in the same Group (lowest-hull first), unless ALL damage was Focused.
+    let excess = dmg - before;
+    if (ship.hull <= 0 && excess > 0 && M.spillEligible && M.spillEligible[k]) {
+      const mates = grp.ships
+        .map((sh, idx) => ({ sh, idx }))
+        .filter(o => !o.sh.destroyed && !o.sh.offTable && o.idx !== parseInt(si))
+        .sort((a, b) => a.sh.hull - b.sh.hull);
+      for (const o of mates) {
+        if (excess <= 0) break;
+        const take = Math.min(excess, o.sh.hull);
+        const wasHalf = o.sh.hull > o.sh.maxHull / 2;
+        o.sh.hull = Math.max(0, o.sh.hull - take);
+        excess -= take;
+        M.log.push(`Spillover: ${take} → ${def.name} #${o.idx + 1}`);
+        if (o.sh.hull <= 0) {
+          o.sh.destroyed = true;
+          recordKill(def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null), false, targetKey(gid, o.idx));
+          if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, o.idx, def, o.sh));
+        } else if (isCapital(def) && !o.sh.crippledRolled && o.sh.hull <= o.sh.maxHull / 2 && wasHalf) {
+          o.sh.crippledRolled = true;
+          M.crippleQueue.push(makeCrippleRoll(gid, o.idx, def, o.sh));
+        }
+      }
+    }
     // Flash-X spikes accrued from weapons that damaged this ship.
     if (M.pendingFlash && M.pendingFlash[k]) ship.spikes = (ship.spikes || 0) + M.pendingFlash[k];
     // Arrest-X: reduce Thrust next activation (once per round).
@@ -4674,21 +4993,30 @@ function finishAttack() {
     }
     // Remove the attacking bombers after the attack.
     state.launchedAssets = state.launchedAssets.filter(a => !M.bomberAssetIds.includes(a.id));
+    state.attackModal = null;
+    // If more pooled attacks are pending in the current scope, resolve the next.
+    const scope = state._bomberResolveSide;
+    const scopeType = state._bomberResolveType;
+    if (anyPendingBomberAttacks(scope, scopeType)) { resolvePendingBomberAttacks(scope, scopeType); renderAll(); return; }
+    // Scope exhausted: if this was a stage-scoped run, advance the asset stage.
+    if (scope) { state._bomberResolveSide = null; state._bomberResolveType = null; advanceAssetStage({ type: scopeType || 'bomber', side: scope }); }
   } else {
-    // Mark the firing ship as having fired; record Limited-X uses; clear its locks.
+    // Whole Group fired: mark every ship fired, record Limited-X uses, clear all locks
+    // and remove their targeting lines.
     const aDef = getDef(M.attackerGid);
-    const aShip = state.groups[M.attackerGid].ships[M.attackerSi];
-    if (aShip) {
-      aShip.limitedUses = aShip.limitedUses || {};
-      // Count each distinct fired weapon group once toward its Limited allowance.
+    const grp = state.groups[M.attackerGid];
+    grp.ships.forEach(ship => {
+      if (!ship.weaponTargets) { ship.firedThisActivation = true; return; }
+      ship.limitedUses = ship.limitedUses || {};
       const seen = new Set();
-      Object.keys(aShip.weaponTargets || {}).forEach(wi => {
+      Object.keys(ship.weaponTargets).forEach(wi => {
         const sp = parseWeaponSpecials(aDef.weapons[wi]);
         const gk = weaponGroupKey(aDef, parseInt(wi));
-        if (sp.limited && !seen.has(gk)) { seen.add(gk); aShip.limitedUses[wi] = (aShip.limitedUses[wi] || 0) + 1; }
+        if (sp.limited && !seen.has(gk)) { seen.add(gk); ship.limitedUses[wi] = (ship.limitedUses[wi] || 0) + 1; }
       });
-      aShip.firedThisActivation = true; aShip.weaponTargets = {};
-    }
+      ship.firedThisActivation = true;
+      ship.weaponTargets = {};
+    });
   }
   state.attackModal = null;
   renderAll();
@@ -4745,6 +5073,52 @@ function openRepairPhase() {
   });
   state.repairPhase = { step: fireLog.length ? 'fire' : 'repair', fireLog, explosions: [], targets, idx: 0, log: [] };
   renderAll();
+}
+
+/* Modal to choose WHERE to land launched Battalions: on the Dropsite itself, or on
+   one of its Features. Appears once a Dropship/Bulk Lander/Drop Pod has targeted a
+   Dropsite (state.battalionDeploy). */
+function renderBattalionDeployModal() {
+  let overlay = document.getElementById('bat-deploy-overlay');
+  if (overlay) overlay.remove();
+  const dep = state.battalionDeploy;
+  if (!dep) return;
+  const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === dep.dsId);
+  if (!ds) return;
+  const side = dep.side;
+  const enemy = side === 'ucm' ? 'shal' : 'ucm';
+  const b = dsBattalions(ds);
+  // Build option rows: the Dropsite ground, then each (non-destroyed) Feature.
+  const optRow = (key, label, glyph, col) => {
+    const cur = (b[key] && b[key][side]) || 0;
+    const foe = (b[key] && b[key][enemy]) || 0;
+    return `<button class="btn" data-bat-deploy="${ds.id}|${key}" style="display:block;width:100%;text-align:left;margin-bottom:4px;border-left:3px solid ${col};">
+      <span style="color:${col};font-weight:600;">${glyph ? glyph + ' ' : ''}${label}</span>
+      <span style="float:right;font-size:9px;color:var(--text-mute);">${cur?`you ${cur} `:''}${foe?`· enemy ${foe}`:''}</span>
+    </button>`;
+  };
+  let opts = optRow('ground', ds.base.name + ' (Dropsite)', '◎', 'var(--' + side + ')');
+  (ds.features || []).forEach((fk, fi) => {
+    if ((ds.destroyedFeatures || []).includes(fi)) return;
+    const f = FEATURES[fk] || { name: fk };
+    opts += optRow('feat' + fi, f.name, f.glyph, f.color || 'var(--text)');
+  });
+  overlay = document.createElement('div');
+  overlay.id = 'bat-deploy-overlay';
+  overlay.className = 'setup-overlay';
+  overlay.innerHTML = `<div class="setup-panel" style="max-width:340px;">
+    <div class="setup-title" style="color:var(--${side});">Land ${dep.count} ${dep.asset} Battalion${dep.count>1?'s':''}</div>
+    <div style="font-size:10px;color:var(--text-dim);margin:4px 0 8px;">Choose a location on <b>${ds.base.name}</b>:</div>
+    ${opts}
+    <div class="setup-footer"><button class="btn" id="bat-deploy-cancel">CANCEL</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  // The deploy buttons reuse the existing [data-bat-deploy] click handler.
+  overlay.querySelector('#bat-deploy-cancel').addEventListener('click', () => {
+    if (dep.fromGid != null) { state.selectedDropsiteId = null; state.selectedGroupId = dep.fromGid; state.selectedShipIdx = dep.fromSi; }
+    state.battalionDeploy = null;
+    renderAll();
+  });
 }
 
 function renderRepairPhase() {
@@ -5174,6 +5548,37 @@ function assetThrust(asset) {
 /* Fighter re-rolls (Close Protection) for a side. */
 function fighterRerolls(side) {
   return (assetProfile(side, 'fighter').rerolls) || 0;
+}
+
+/* Apply scenery attrition to a moving asset stack along origin→current path.
+   Per asset, for each crossed piece: Large Object removes outright, Ring removes 2+,
+   Micrometeor 3+, Dense 5+. Mutates mover.count; returns the number removed. */
+function applyAssetScenery(mover, origX, origY) {
+  const sd = state.scenarioData;
+  if (!sd) return 0;
+  const thresholds = [];
+  (sd.largeObjects||[]).forEach(o => { if (largeObjectAt(mover.x,mover.y) || segCrossesCircle(origX,origY,mover.x,mover.y,inchToPx(o.x),inchToPx(o.y),inchToPx(o.diameter/2))) thresholds.push(1); });
+  (sd.rings||[]).forEach(r => { if (segCrossesRing(origX,origY,mover.x,mover.y,r)) thresholds.push(2); });
+  (sd.placedScenery||[]).forEach(s => { if (segCrossesRect(origX,origY,mover.x,mover.y,inchToPx(s.x),inchToPx(s.y),inchToPx(6),inchToPx(3),s.angle||0)) thresholds.push(s.type==='dense'?5:3); });
+  if (!thresholds.length) return 0;
+  const need = Math.min(...thresholds);
+  let survivors = 0;
+  for (let i = 0; i < mover.count; i++) { if (need === 1 || rollDie() < need) { /* removed */ } else survivors++; }
+  const removed = mover.count - survivors;
+  mover.count = survivors;
+  if (removed > 0) flashLaunchMsg(`Scenery: ${removed} ${mover.kind}${removed>1?'s':''} lost`);
+  return removed;
+}
+
+/* Close Protection: friendly Fighter Wings within Fighter Thrust range of a ship at
+   (x,y). Returns [{id, count}] for Wings of `side` with count>0. Used to re-roll failed
+   saves vs Close Action / Bomber / Fire-Ship attacks (each re-roll spends one fighter). */
+function friendlyFightersInRange(side, x, y) {
+  const thrPx = (assetProfile(side, 'fighter').thrust || 12) * INCH;
+  return (state.launchedAssets || [])
+    .filter(a => a.kind === 'fighter' && a.side === side && a.count > 0 &&
+                 Math.hypot(a.x - x, a.y - y) <= thrPx)
+    .map(a => ({ id: a.id, count: a.count }));
 }
 
 /* Battalion storage on a dropsite. Locations: 'ground' + 'feat<index>'.
@@ -6837,9 +7242,10 @@ function renderDropsiteActivation() {
   if (overlay) overlay.remove();
   const oldBanner = document.getElementById('da-launch-banner');
   if (oldBanner && !(state.dropsiteActivation && state.launching && state.launching.fromDropsite)) oldBanner.remove();
-  if (!state.dropsiteActivation) return;
+  if (!state.dropsiteActivation) { const b = document.getElementById('da-ds-banner'); if (b) b.remove(); return; }
   // While targeting a launch from a dropsite, show a counter banner (board usable).
   if (state.launching && state.launching.fromDropsite) {
+    const dsb = document.getElementById('da-ds-banner'); if (dsb) dsb.remove();
     let lb = document.getElementById('da-launch-banner');
     if (lb) lb.remove();
     const L = state.launching;
@@ -6874,32 +7280,41 @@ function renderDropsiteActivation() {
   const otherControlled = (state.scenarioData ? state.scenarioData.dropsites : [])
     .filter(d => dropsiteController(d) === otherSide && !da.done.includes(d.id));
 
-  let bodyHTML = '', footerHTML = '';
   const ds = da.dsId ? state.scenarioData.dropsites.find(d => d.id === da.dsId) : null;
 
+  // ── ACTIVATING A SPECIFIC DROPSITE ──
+  // Render the feature launch/fire options as a NON-BLOCKING banner so the board stays
+  // visible and clickable for targeting weapons / placing launched assets.
   if (ds) {
-    // Activating a specific dropsite — show its launchable features + weapon features.
     const lf = dropsiteLaunchFeatures(ds);
     const wf = dropsiteWeaponFeatures(ds);
-    bodyHTML = `<div class="ap-section">
-      <div class="ap-title">${ds.base.name} — ${sideName(da.side)} activates</div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:5px;">
-        ${lf.length || wf.length ? 'Click a Feature to launch / fire (then target on the board).' : 'No launch- or weapon-capable Features.'}
-      </div>`;
+    let banner = document.getElementById('da-ds-banner');
+    if (banner) banner.remove();
+    banner = document.createElement('div');
+    banner.id = 'da-ds-banner';
+    banner.className = 'deploy-hint';
+    banner.style.flexWrap = 'wrap';
+    let btns = `<span><b>${ds.base.name}</b> — ${sideName(da.side)} activates:</span>`;
     lf.forEach(({ fi, f }) => {
       f.launch.forEach(l => {
-        bodyHTML += `<button class="btn" data-da-launch="${ds.id}|${fi}|${l.type}" style="width:100%;margin-bottom:3px;">
-          ${f.glyph||''} ${f.name}: Launch ${l.name} (${l.n})</button>`;
+        btns += ` <button class="btn" data-da-launch="${ds.id}|${fi}|${l.type}" style="padding:4px 10px;font-size:10px;">${f.glyph||''} ${f.name}: ${l.name} (${l.n})</button>`;
       });
     });
     wf.forEach(({ fi, f }) => {
       const fired = (ds.firedFeatures || []).includes(fi);
-      bodyHTML += `<button class="btn" data-da-fire="${ds.id}|${fi}" ${fired?'disabled':''} style="width:100%;margin-bottom:3px;${fired?'opacity:0.5;':''}">
-        ${f.glyph||''} ${f.name}: Fire ${f.weapon.name} (Att ${f.weapon.att}, ${f.weapon.lock})${fired?' ✓':''}</button>`;
+      btns += ` <button class="btn" data-da-fire="${ds.id}|${fi}" ${fired?'disabled':''} style="padding:4px 10px;font-size:10px;${fired?'opacity:0.5;':''}">${f.glyph||''} ${f.name}: ${f.weapon.name} (Att ${f.weapon.att}, ${f.weapon.lock})${fired?' ✓':''}</button>`;
     });
-    bodyHTML += `</div>`;
-    footerHTML = `<button class="btn-primary" id="da-finish-ds">DONE WITH DROPSITE →</button>`;
-  } else {
+    if (!lf.length && !wf.length) btns += ` <span style="color:var(--text-mute);font-size:10px;">No launch/weapon Features.</span>`;
+    btns += ` <button class="btn-primary" id="da-finish-ds" style="padding:4px 12px;font-size:10px;">DONE WITH DROPSITE →</button>`;
+    banner.innerHTML = btns;
+    board.appendChild(banner);
+    return; // board remains usable
+  }
+  let dsBan = document.getElementById('da-ds-banner');
+  if (dsBan) dsBan.remove();
+
+  let bodyHTML = '', footerHTML = '';
+  {
     bodyHTML = `<div class="ap-section">
       <div class="ap-title">${sideName(da.side)} — activate Controlled Dropsites</div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:5px;">In initiative order, alternate activating Dropsites you Control (not Contest).</div>`;
@@ -6933,6 +7348,94 @@ function renderDropsiteActivation() {
   board.appendChild(overlay);
 }
 
+/* ── ASSET ACTIVATION SEQUENCING (rulebook order) ──
+   Persistent Assets activate by TYPE, then by initiative within each type:
+     Fighters (1st init, then 2nd) → Bombers (1st, then 2nd) → Torpedoes (1st, then 2nd).
+   Fire Ships activate within the Bomber step. After EACH player finishes moving their
+   Bombers/Fire Ships, that player's locked Bomber/Fire-Ship attacks resolve immediately.
+   Stages with no movable asset for that side/type are skipped. */
+
+/* Asset kinds that move in a given stage type. */
+function kindsForAssetType(type) {
+  if (type === 'fighter') return ['fighter'];
+  if (type === 'bomber') return ['bomber', 'fireship'];
+  if (type === 'torpedo') return ['torpedo'];
+  return [];
+}
+/* Does `side` have an unmoved asset of the given stage type still on the table? */
+function sideHasUnmovedOfType(side, type) {
+  const kinds = kindsForAssetType(type);
+  return (state.launchedAssets || []).some(a => a.side === side && !a.moved && kinds.includes(a.kind));
+}
+/* Ordered list of {type, side} stages for the current round, initiative side first. */
+function assetStageOrder() {
+  const init = state.initiativeHolder || 'ucm';
+  const other = init === 'ucm' ? 'shal' : 'ucm';
+  const stages = [];
+  ['fighter', 'bomber', 'torpedo'].forEach(type => {
+    stages.push({ type, side: init });
+    stages.push({ type, side: other });
+  });
+  return stages;
+}
+/* Set assetType + assetActiveSide to the FIRST stage (from `fromIdx`) that still has a
+   movable asset. If none remain, ends the step (assetActiveSide = null). Resolves any
+   bomber/fire-ship attacks owned by the side that just finished its bomber stage. */
+function advanceAssetStage(justFinished) {
+  // After a player finishes an ATTACKING stage (Bombers/Fire Ships, or Torpedoes),
+  // resolve THEIR locked attacks now, before the next player/type.
+  if (justFinished && (justFinished.type === 'bomber' || justFinished.type === 'torpedo')) {
+    if (sideHasPendingAttacks(justFinished.side, justFinished.type)) {
+      // Leave stage pointers as-is; caller resolves attacks then re-advances.
+      return { resolveAttacksFor: justFinished.side, resolveType: justFinished.type };
+    }
+  }
+  const order = assetStageOrder();
+  // Find the index of the stage we just finished (or -1 to start from the top).
+  let startIdx = 0;
+  if (justFinished) {
+    const i = order.findIndex(s => s.type === justFinished.type && s.side === justFinished.side);
+    startIdx = i + 1;
+  }
+  for (let i = startIdx; i < order.length; i++) {
+    if (sideHasUnmovedOfType(order[i].side, order[i].type)) {
+      state.assetPhase.assetType = order[i].type;
+      state.assetActiveSide = order[i].side;
+      return { stage: order[i] };
+    }
+  }
+  // Nothing left to move.
+  state.assetPhase.assetType = null;
+  state.assetActiveSide = null;
+  return { done: true };
+}
+/* Pending locked attacks owned by `side` for a given stage type (bomber covers
+   bombers+fire ships; torpedo covers torpedoes). */
+function sideHasPendingAttacks(side, type) {
+  const kinds = kindsForAssetType(type);
+  return (state.launchedAssets || []).some(a => a.bomberTarget && a.side === side && kinds.includes(a.kind));
+}
+
+/* Called after a single asset finishes moving. A player activates ALL their assets of
+   the current type before passing on. If the current side still has unmoved assets of
+   this type, it stays; otherwise advance to the next stage (resolving that side's
+   bomber attacks first if the bomber stage just ended). */
+function afterAssetMove() {
+  const ap = state.assetPhase;
+  if (!ap) return;
+  const cur = { type: ap.assetType, side: state.assetActiveSide };
+  // Same side still has unmoved assets of this type → keep activating.
+  if (cur.side && cur.type && sideHasUnmovedOfType(cur.side, cur.type)) return;
+  // This side has finished the current type. If it was the bomber stage, resolve
+  // its locked attacks now (before the other player moves their bombers).
+  const res = advanceAssetStage(cur);
+  if (res.resolveAttacksFor) {
+    // Resolve this side's attacks of the finished type; chain re-advances on completion.
+    state.assetMove = null;
+    resolvePendingBomberAttacks(res.resolveAttacksFor, res.resolveType);
+  }
+}
+
 function renderAssetPhase() {
   const board = document.querySelector('.board-wrap');
   let overlay = document.getElementById('asset-overlay');
@@ -6942,83 +7445,46 @@ function renderAssetPhase() {
   if (!state.assetPhase) return;
 
   const ap = state.assetPhase;
+  const sideName = (s) => FACTIONS[state.factions[s]] ? FACTIONS[state.factions[s]].name : s.toUpperCase();
 
   // ASSET COMBAT step — modal hidden, board interactive for moving assets.
   if (ap.step === 'assets') {
     banner = document.createElement('div');
     banner.id = 'asset-move-banner';
     banner.className = 'deploy-hint';
-    let msg;
-    let bomberAttackBtn = '';
-    if (state.assetMove) {
+    const typeLabel = { fighter: 'Fighters', bomber: 'Bombers & Fire Ships', torpedo: 'Torpedoes' }[ap.assetType] || 'Assets';
+    let msg, footer;
+    if (!state.assetActiveSide) {
+      // All stages exhausted — only DONE remains.
+      msg = `<span><b>Asset Combat complete</b> — all Fighters, Bombers and Torpedoes have activated.</span>`;
+      footer = `<button class="btn-primary" id="asset-move-done" style="padding:5px 14px;font-size:11px;">DONE →</button>`;
+    } else if (state.assetMove) {
       const a = state.launchedAssets.find(x => x.id === state.assetMove.id);
-      const thr = a ? assetThrust(a) : 0;
-      const c = state.assetMove.count;
-      const max = a ? a.count : 0;
-      let statHint = '';
-      if (a && (a.kind === 'bomber' || a.kind === 'fireship')) {
-        const p = assetProfile(a.side, a.kind);
-        statHint = ` · <span style="color:var(--text-mute)">${factionName(a.side)} ${a.kind}: Att ${p.att}/ea, Lock ${p.lock}, Dmg ${p.dmg} ${p.type}${p.special?', '+p.special:''}</span>`;
-      } else if (a && a.kind === 'fighter') {
-        statHint = ` · <span style="color:var(--text-mute)">${factionName(a.side)} fighter: ${fighterRerolls(a.side)} re-roll(s)</span>`;
-      }
-      msg = `<span><b>Move ${a?a.kind:''}:</b></span>
-        <button class="hp-btn" data-asm-adj="-1" ${c<=1?'disabled':''}>−</button>
-        <b style="color:var(--${a?a.side:'ucm'})">${c}</b><span>/${max}</span>
-        <button class="hp-btn" data-asm-adj="1" ${c>=max?'disabled':''}>+</button>
-        <span>· click destination ≤<b>${thr}"</b>${statHint}</span>`;
-      // Attack button: bombers, fire ships, and torpedoes may attack a ship in base contact.
-      if (a && (a.kind === 'bomber' || a.kind === 'fireship' || a.kind === 'torpedo')) {
-        const contacts = enemyShipsInBaseContact(a.side, a.x, a.y);
-        if (contacts.length) {
-          const lbl = a.kind === 'torpedo' ? '🚀 TORPEDO ATTACK ▸' : a.kind === 'fireship' ? '🔥 FIRE SHIP ATTACK ▸' : '💥 BOMBER ATTACK ▸';
-          bomberAttackBtn = `<button class="btn-finish-act" id="bomber-attack" data-attack-kind="${a.kind}" style="width:auto;padding:5px 14px;margin-top:0;background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">${lbl}</button>`;
-        }
-      }
+      const thr = a ? (a.t2t && a._t2tRange ? a._t2tRange : assetThrust(a)) : 0;
+      msg = `<span><b style="color:var(--${a?a.side:'ucm'})">${a?a.kind:''}</b> selected — ${a && !a.moved ? `click a destination ≤<b>${thr}"</b>` : 'use the right panel'} →</span>`;
+      footer = `<button class="btn" id="asset-finish-stage" style="padding:5px 12px;font-size:10px;">DONE WITH ${typeLabel.toUpperCase()} (${sideName(state.assetActiveSide)}) →</button>`;
     } else {
-      msg = `<span><b>Asset Combat</b> · click a Fighter / Bomber / Fire Ship / Torpedo to move (split with −/+). Bombers, Fire Ships & Torpedoes in base contact of a ship can attack.</span>`;
+      msg = `<span><b style="color:var(--${state.assetActiveSide})">${sideName(state.assetActiveSide)}</b> activates <b>${typeLabel}</b> · click one on the board to move it.</span>`;
+      footer = `<button class="btn" id="asset-finish-stage" style="padding:5px 12px;font-size:10px;">DONE WITH ${typeLabel.toUpperCase()} (${sideName(state.assetActiveSide)}) →</button>`;
     }
-    // Time to Target (2 AP): after a wing has moved, move it again up to 6".
-    let t2tBtn = '';
-    {
-      const a = state.assetMove && state.launchedAssets.find(x => x.id === state.assetMove.id);
-      if (a && (a.kind === 'fighter' || a.kind === 'bomber') && a.moved && !a.t2t &&
-          state.planning && state.planning.ap[a.side] >= 2) {
-        t2tBtn = `<button class="btn" id="time-to-target" style="padding:5px 12px;font-size:10px;">⚙ Time to Target (2 AP · +6")</button>`;
-      }
-    }
-    banner.innerHTML = `${msg}${bomberAttackBtn}${t2tBtn}
-      <button class="btn-primary" id="asset-move-done" style="padding:5px 14px;font-size:11px;">DONE →</button>`;
+    banner.innerHTML = `${msg}${footer}`;
     board.appendChild(banner);
-    const t2tB = banner.querySelector('#time-to-target');
-    if (t2tB) t2tB.addEventListener('click', () => {
-      const a = state.launchedAssets.find(x => x.id === state.assetMove.id);
-      if (a && state.planning && state.planning.ap[a.side] >= 2) {
-        state.planning.ap[a.side] -= 2; a.moved = false; a.t2t = true; a._t2tRange = 6;
-        flashLaunchMsg(`${factionName(a.side)} Time to Target: move again ≤6"`);
-        renderAll();
-      }
-    });
-    const baBtn = banner.querySelector('#bomber-attack');
-    if (baBtn) baBtn.addEventListener('click', () => {
-      const a = state.launchedAssets.find(x => x.id === state.assetMove.id);
-      if (!a) return;
-      const kind = baBtn.dataset.attackKind;
-      const contacts = enemyShipsInBaseContact(a.side, a.x, a.y);
-      if (!contacts.length) { flashLaunchMsg('No enemy ship in base contact'); return; }
-      const target = contacts[0];
-      let contributing;
-      if (kind === 'torpedo') {
-        contributing = [a]; // a single torpedo attacks alone
-      } else {
-        // Bombers/fire ships of the same kind in base contact of the SAME target combine.
-        contributing = state.launchedAssets.filter(b => b.kind === kind && b.side === a.side &&
-          Math.hypot(b.x - target.ship.x, b.y - target.ship.y) <= 1 * INCH + shipBaseRadiusPx(target.def));
-      }
-      openBomberAttackModal(contributing.map(b => b.id), target.gid, target.si, a.side, kind);
+    const fb = banner.querySelector('#asset-finish-stage');
+    if (fb) fb.addEventListener('click', () => {
+      // Force-finish the current side's current type: mark its remaining unmoved assets
+      // of this type as moved (skipping them), then advance the stage.
+      const side = state.assetActiveSide, type = ap.assetType;
+      (state.launchedAssets || []).forEach(a => { if (a.side === side && kindsForAssetType(type).includes(a.kind)) a.moved = true; });
       state.assetMove = null;
+      const cur = { type, side };
+      const res = advanceAssetStage(cur);
+      if (res.resolveAttacksFor) resolvePendingBomberAttacks(res.resolveAttacksFor, res.resolveType);
+      renderAll();
     });
-    banner.querySelector('#asset-move-done').addEventListener('click', () => {
+    const db = banner.querySelector('#asset-move-done');
+    if (db) db.addEventListener('click', () => {
+      // Resolve any straggler locked attacks, then exit the step.
+      if (anyPendingBomberAttacks()) { state.assetMove = null; resolvePendingBomberAttacks(); renderAll(); return; }
       state.assetMove = null;
       state.assetPhase = { resolved: true, log: ap.log, step: 'battalion_done' };
       renderAll();
@@ -7029,7 +7495,6 @@ function renderAssetPhase() {
   const bc = state.battalionCombat;
   const initSide = state.initiativeHolder || 'ucm';
   const otherSide = initSide === 'ucm' ? 'shal' : 'ucm';
-  const sideName = (s) => FACTIONS[state.factions[s]] ? FACTIONS[state.factions[s]].name : s.toUpperCase();
 
   // Battalion-presence summary (optionally highlighting the active dropsite).
   const battSummaryFor = (hlId) => {
@@ -7799,6 +8264,7 @@ function renderAll() {
   renderPayloadAssign();
   renderAttackModal();
   renderRepairPhase();
+  renderBattalionDeployModal();
   renderScoreboard();
   renderGameOver();
   renderSceneryPlacement();
@@ -7933,6 +8399,12 @@ document.addEventListener('click', (e) => {
     renderAll(); return;
   }
   if (e.target.matches('[data-bat-cancel]')) {
+    const dep = state.battalionDeploy;
+    if (dep && dep.fromGid != null) {
+      state.selectedDropsiteId = null;
+      state.selectedGroupId = dep.fromGid;
+      state.selectedShipIdx = dep.fromSi;
+    }
     state.battalionDeploy = null;
     renderAll(); return;
   }
@@ -7956,6 +8428,12 @@ document.addEventListener('click', (e) => {
       if (ds) {
         const b = dsBattalions(ds);
         if (b[key]) b[key][dep.side] = (b[key][dep.side] || 0) + dep.count;
+      }
+      // Reselect the launching ship so the player can continue its activation.
+      if (dep.fromGid != null) {
+        state.selectedDropsiteId = null;
+        state.selectedGroupId = dep.fromGid;
+        state.selectedShipIdx = dep.fromSi;
       }
       state.battalionDeploy = null;
     }
@@ -8170,6 +8648,14 @@ document.addEventListener('click', (e) => {
     // (WF, CC, MT add spikes at END of activation — handled in finish-activation)
     // NOTE: do NOT reset movedThisRound here. Each ship moves at most once per round,
     // regardless of how many times the Order is changed.
+    // Auto-select a ship to activate its movement immediately: pick the lead ship
+    // (or first on-table, not-yet-moved ship) so its move cone shows at once.
+    if (state.selectedShipIdx === null && ORDERS[order] && ORDERS[order].moveMax > 0) {
+      const leadIdx = grp.leadShipIdx || 0;
+      const pick = (i) => { const s = grp.ships[i]; return s && !s.destroyed && !s.offTable && !s.movedThisRound; };
+      let idx = pick(leadIdx) ? leadIdx : grp.ships.findIndex((s, i) => pick(i));
+      if (idx >= 0) state.selectedShipIdx = idx;
+    }
     renderAll(); return;
   }
   // Open Network: per-ship Order assignment.
@@ -8455,7 +8941,12 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('#asset-move-assets')) {
     state.assetPhase.step = 'assets';
     state.assetMove = null;
-    (state.launchedAssets || []).forEach(a => { a.moved = false; });
+    (state.launchedAssets || []).forEach(a => { a.moved = false; a.t2t = false; a.bomberTarget = null; a._preMove = null; });
+    // Assets activate by type (Fighters → Bombers/Fire Ships → Torpedoes), initiative
+    // side first within each type. Land on the first non-empty stage.
+    state.assetPhase.assetType = null;
+    state.assetActiveSide = null;
+    advanceAssetStage(null);
     renderAll(); return;
   }
   // Asset Combat: adjust the split count of the selected asset.
@@ -8466,6 +8957,52 @@ document.addEventListener('click', (e) => {
       state.assetMove.count = Math.max(1, Math.min(max, state.assetMove.count + parseInt(e.target.dataset.asmAdj)));
     }
     renderAll(); return;
+  }
+  // Asset detail panel: deselect the selected asset.
+  if (e.target.closest && e.target.closest('#asset-detail-deselect')) {
+    state.assetMove = null; renderAll(); return;
+  }
+  // Asset detail panel: reset this asset's move (restore position if a whole-stack
+  // move was recorded), so it can be activated again this turn.
+  if (e.target.closest && e.target.closest('#asset-detail-reset')) {
+    const a = state.assetMove && state.launchedAssets.find(x => x.id === state.assetMove.id);
+    if (a) {
+      if (a._preMove) { a.x = a._preMove.x; a.y = a._preMove.y; a._t2tRange = a._preMove.t2tRange; a._preMove = null; }
+      a.moved = false;
+      // Clear any locked bomber target tied to a now-undone move.
+      a.bomberTarget = null;
+      flashLaunchMsg(`${a.kind} move reset`);
+      renderAll();
+    }
+    return;
+  }
+  // Asset detail panel: Time to Target (move again ≤6").
+  if (e.target.closest && e.target.closest('#asset-detail-t2t')) {
+    const a = state.assetMove && state.launchedAssets.find(x => x.id === state.assetMove.id);
+    if (a && state.planning && state.planning.ap[a.side] >= 2) {
+      state.planning.ap[a.side] -= 2; a.moved = false; a.t2t = true; a._t2tRange = 6;
+      flashLaunchMsg(`${factionName(a.side)} Time to Target: move again ≤6"`);
+      renderAll();
+    }
+    return;
+  }
+  // Asset detail panel: LOCK a bomber/fire ship/torpedo target (resolved later, pooled).
+  if (e.target.closest && e.target.closest('[data-asset-target]')) {
+    const btn = e.target.closest('[data-asset-target]');
+    const a = state.assetMove && state.launchedAssets.find(x => x.id === state.assetMove.id);
+    if (a) {
+      const [gid, si] = btn.dataset.assetTarget.split('|');
+      a.bomberTarget = { gid, si: parseInt(si) };
+      flashLaunchMsg(`${a.kind} locked onto ${getDef(gid).name}`, true);
+      state.assetMove = null;
+    }
+    renderAll(); return;
+  }
+  // Asset detail panel: clear a locked bomber target.
+  if (e.target.closest && e.target.closest('#asset-detail-untarget')) {
+    const a = state.assetMove && state.launchedAssets.find(x => x.id === state.assetMove.id);
+    if (a) { a.bomberTarget = null; renderAll(); }
+    return;
   }
   // Battalion Combat / Asset Phase: destroy a feature (4+ battalions, no enemy).
   if (e.target.matches('[data-destroy-feature]')) {
@@ -8705,7 +9242,7 @@ function resolveLaunchClick(e) {
     ship.launchedThisRound = (ship.launchedThisRound || 0) + count;
     flashLaunchMsg(`${count} battalion${count>1?'s':''} via Voidgate → ${ds.base.name}`, true);
     state.selectedDropsiteId = ds.id;
-    state.battalionDeploy = { side: def.side, count, dsId: ds.id, asset: 'Dropship' };
+    state.battalionDeploy = { side: def.side, count, dsId: ds.id, asset: 'Dropship', fromGid: L.gid, fromSi: L.si };
     // If the Mothership still has dropships, keep launching (pick another gate).
     const stillLeft = cap - (ship.launchedThisRound || 0);
     if (stillLeft > 0) {
@@ -8767,10 +9304,10 @@ function resolveLaunchClick(e) {
     // Record linked-launch usage (Bulk Landers / Fire Ships share a hardpoint).
     if (L.link) { ship.usedLinks = ship.usedLinks || {}; ship.usedLinks[L.link] = L.type; }
     state.launching = null;
-    state.selectedDropsiteId = ds.id; // show the dropsite panel
+    state.selectedDropsiteId = ds.id; // show the dropsite panel for placement
     // Enter battalion-deploy mode so the player picks WHERE to land them.
     if (count > 0) {
-      state.battalionDeploy = { side: def.side, count, dsId: ds.id, asset: L.name };
+      state.battalionDeploy = { side: def.side, count, dsId: ds.id, asset: L.name, fromGid: L.gid, fromSi: L.si };
     } else {
       flashLaunchMsg('No battalions landed (halved to 0)');
     }
@@ -9092,11 +9629,16 @@ board.addEventListener('click', (e) => {
   if (state.assetPhase && state.assetPhase.step === 'assets') {
     const assetEl = e.target.closest && e.target.closest('[data-asset-id]');
     if (!state.assetMove) {
-      // Select an asset to move.
+      // Select an asset to move — must belong to the side whose turn it is.
       if (assetEl) {
         const a = state.launchedAssets.find(x => x.id === assetEl.dataset.assetId);
-        if (a && !a.moved) state.assetMove = { id: a.id, count: a.count };
-        else if (a && a.moved) flashLaunchMsg('Already moved this round');
+        const curType = state.assetPhase.assetType;
+        const inCurType = a && kindsForAssetType(curType).includes(a.kind);
+        // Already-moved assets stay selectable (to reach panel actions like Clear Target).
+        if (a && a.moved) { state.assetMove = { id: a.id, count: a.count }; }
+        else if (a && state.assetActiveSide && a.side !== state.assetActiveSide) flashLaunchMsg(`${sideName(state.assetActiveSide)} activates next`);
+        else if (a && curType && !inCurType) flashLaunchMsg(`${curType === 'fighter' ? 'Fighters' : curType === 'bomber' ? 'Bombers & Fire Ships' : 'Torpedoes'} activate now`);
+        else if (a) state.assetMove = { id: a.id, count: a.count };
         renderAll();
       }
       return;
@@ -9104,9 +9646,48 @@ board.addEventListener('click', (e) => {
     // Move the selected (sub-)group to the clicked point.
     const a = state.launchedAssets.find(x => x.id === state.assetMove.id);
     if (!a) { state.assetMove = null; renderAll(); return; }
+    if (a.moved) { return; } // already moved — board click does nothing (use Reset Move first)
     if (a.kind === 'mine') { flashLaunchMsg('Mines cannot move once launched'); state.assetMove = null; renderAll(); return; }
     const pt = svgPointFromEvent(e);
     const thrPx = (a._t2tRange ? a._t2tRange : assetThrust(a)) * INCH;
+    // ── AUTO-MOVE-AND-LOCK (bombers / fire ships / torpedoes) ──
+    // Clicking a valid enemy ship in move range flies the whole stack to base contact
+    // of that ship and locks the attack in one action. Excludes Descent ships in atmo.
+    if (a.kind === 'bomber' || a.kind === 'fireship' || a.kind === 'torpedo') {
+      const hit = enemyShipAtPoint(a.side, pt);
+      if (hit && (hit.ship.layer || 'orbit') !== 'atmosphere') {
+        const contactPx = 1 * INCH + shipBaseRadiusPx(hit.def); // base-contact distance
+        const dToShip = Math.hypot(hit.ship.x - a.x, hit.ship.y - a.y);
+        // Compute the landing point: along the line toward the ship, at base contact.
+        let lx, ly;
+        if (dToShip <= contactPx) { lx = a.x; ly = a.y; } // already in contact — stay put
+        else {
+          const ux = (hit.ship.x - a.x) / dToShip, uy = (hit.ship.y - a.y) / dToShip;
+          lx = hit.ship.x - ux * contactPx; ly = hit.ship.y - uy * contactPx;
+        }
+        const travel = Math.hypot(lx - a.x, ly - a.y);
+        if (travel > thrPx + 2) { flashLaunchMsg('Target out of move range'); return; }
+        // Move the whole stack to the contact point (split-on-attack isn't used here —
+        // the entire selected stack commits to the attack).
+        const aOrigX2 = a.x, aOrigY2 = a.y;
+        a._preMove = { x: a.x, y: a.y, t2tRange: a._t2tRange };
+        a.x = lx; a.y = ly; a.moved = true; a._t2tRange = undefined;
+        a.bomberTarget = { gid: hit.gid, si: hit.si };
+        const tn = hit.def.name + (hit.grp.ships.length > 1 ? ` #${hit.si + 1}` : '');
+        flashLaunchMsg(`${a.kind} → base contact, locked onto ${tn}`, true);
+        // Resolve scenery attrition along the path (same rules as a normal move).
+        applyAssetScenery(a, aOrigX2, aOrigY2);
+        if (a.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); a.bomberTarget = null; }
+        state.assetMove = null;
+        afterAssetMove();
+        // Keep it selected (if its stage still holds) so the lock is visible/clearable.
+        if (a.count > 0 && state.assetActiveSide && !state.attackModal &&
+            (state.launchedAssets || []).includes(a)) {
+          state.assetMove = { id: a.id, count: a.count };
+        }
+        renderAll(); return;
+      }
+    }
     if (Math.hypot(pt.x - a.x, pt.y - a.y) > thrPx + 2) { flashLaunchMsg('Out of move range'); return; }
     const moveCount = state.assetMove.count;
     const aOrigX = a.x, aOrigY = a.y; // path origin for scenery checks
@@ -9117,28 +9698,13 @@ board.addEventListener('click', (e) => {
       mover = { id: 'a' + (state._assetId = (state._assetId||0)+1), kind: a.kind, count: moveCount, side: a.side, x: pt.x, y: pt.y, moved: true };
       state.launchedAssets.push(mover);
     } else {
+      a._preMove = { x: a.x, y: a.y, t2tRange: a._t2tRange }; // snapshot for Reset Move
       a.x = pt.x; a.y = pt.y; a.moved = true; a._t2tRange = undefined; mover = a;
     }
     // ── SCENERY ATTRITION (assets count as moving in Orbit) ──
-    // Roll per asset for each scenery piece the path crosses: Ring 2+, Micrometeor
-    // 3+, Dense 5+ removes; Large Object removes outright.
     {
-      const sd = state.scenarioData;
-      const thresholds = [];
-      if (sd) {
-        (sd.largeObjects||[]).forEach(o => { if (largeObjectAt(mover.x,mover.y) || segCrossesCircle(aOrigX,aOrigY,mover.x,mover.y,inchToPx(o.x),inchToPx(o.y),inchToPx(o.diameter/2))) thresholds.push(1); });
-        (sd.rings||[]).forEach(r => { if (segCrossesRing(aOrigX,aOrigY,mover.x,mover.y,r)) thresholds.push(2); });
-        (sd.placedScenery||[]).forEach(s => { if (segCrossesRect(aOrigX,aOrigY,mover.x,mover.y,inchToPx(s.x),inchToPx(s.y),inchToPx(6),inchToPx(3),s.angle||0)) thresholds.push(s.type==='dense'?5:3); });
-      }
-      if (thresholds.length) {
-        const need = Math.min(...thresholds); // best (lowest) removal threshold among crossed pieces
-        let survivors = 0;
-        for (let i = 0; i < mover.count; i++) { if (need === 1 || rollDie() < need) { /* removed */ } else survivors++; }
-        const removed = mover.count - survivors;
-        mover.count = survivors;
-        if (removed > 0) flashLaunchMsg(`Scenery: ${removed} ${mover.kind}${removed>1?'s':''} lost`);
-        if (mover.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); state.assetMove = null; renderAll(); return; }
-      }
+      applyAssetScenery(mover, aOrigX, aOrigY);
+      if (mover.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); state.assetMove = null; afterAssetMove(); renderAll(); return; }
     }
     // Fighter combat: if a moving FIGHTER ends on an enemy launch asset, remove
     // equal numbers from each (Fighters vs Fighters/Bombers — equal removal).
@@ -9156,6 +9722,7 @@ board.addEventListener('click', (e) => {
         state.launchedAssets = state.launchedAssets.filter(x => x.count > 0);
         flashLaunchMsg(`Dogfight: ${removed} Fighter${removed>1?'s':''} vs ${removed} ${foeKind}${removed>1?'s':''} removed`, true);
         state.assetMove = null;
+        afterAssetMove();
         renderAll();
         return;
       }
@@ -9169,10 +9736,20 @@ board.addEventListener('click', (e) => {
       target.moved = true;
       state.launchedAssets = state.launchedAssets.filter(x => x.id !== mover.id);
       flashLaunchMsg(`Combined into ${target.count} ${target.kind}s`, true);
+      mover = target; // surviving stack (for possible re-selection below)
     } else {
       flashLaunchMsg(`Moved ${mover.count} ${mover.kind}${mover.count>1?'s':''}`, true);
     }
     state.assetMove = null;
+    // If this attacker moved into base contact of an enemy ship, keep it selected so
+    // the LOCK-target button is immediately available (only while its side/stage holds).
+    const moverInContact = mover && (mover.kind === 'bomber' || mover.kind === 'fireship' || mover.kind === 'torpedo')
+      && mover.count > 0 && enemyShipsInBaseContact(mover.side, mover.x, mover.y).length > 0;
+    const sideBefore = state.assetActiveSide, typeBefore = state.assetPhase.assetType;
+    afterAssetMove();
+    if (moverInContact && state.assetActiveSide === sideBefore && state.assetPhase.assetType === typeBefore && !state.attackModal) {
+      state.assetMove = { id: mover.id, count: mover.count };
+    }
     renderAll();
     return;
   }
