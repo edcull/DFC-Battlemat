@@ -467,6 +467,19 @@
   .panel-title.shal { color: var(--shal); }
 
   /* Group cards in the side panels */
+  .ap-chip {
+    display: flex; align-items: center; gap: 6px;
+    width: calc(100% - 16px);
+    margin: 0 8px 8px 8px;
+    padding: 6px 10px;
+    background: rgba(10,14,13,0.6);
+    border: 1px solid var(--border-bright);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--mono);
+    transition: all 0.1s;
+  }
+  .ap-chip:hover { border-color: var(--text); background: var(--bg-card-2); }
   .group-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -635,7 +648,8 @@
     margin-bottom: 4px;
     font-size: 10px;
   }
-  .weapon-row[data-weapon-target]:hover { border-color: var(--hull-crit); background: var(--bg-card-2); }
+  .weapon-row[data-weapon-target]:hover,
+  .weapon-row[data-da-fire]:hover { border-color: var(--hull-crit); background: var(--bg-card-2); }
   .weapon-row.weapon-locked { border-color: var(--hull-crit); background: rgba(255,82,82,0.07); }
   .weapon-row.weapon-aiming { border-color: var(--hull-crit); box-shadow: 0 0 0 1px var(--hull-crit); }
   .weapon-name {
@@ -1896,6 +1910,8 @@ const state = {
   captured: { ucm: 0, shal: 0 },      // points of captured enemy ships
   admiralKilled: { ucm: false, shal: false }, // was this side's admiral killed
   scoredRounds: [],                     // standard-scoring rounds already awarded
+  scoreLog: [],                         // structured VP award history {round,side,vp,reason}
+  lastScoring: null,                    // most recent R4/R6 standard-scoring breakdown
   gameOver: null,                       // end-of-game summary
   payloadAssign: null, // {slot:'f1'|'f2'} — open Payload→Porter modal for a chosen fleet
   payloadLinks: { f1: {}, f2: {} }, // per-fleet-slot: { '<payloadBaseId>:<si>': '<porterBaseId>:<si>' }
@@ -2025,6 +2041,24 @@ function renderPanels() {
   };
   const rStat = renderSide(rf, ucmDiv, 'ucm');
   const bStat = renderSide(bf, shalDiv, 'shal');
+  // AP chip at the top of each fleet list (play phase) — click to adjust that side's AP.
+  if (state.phase === 'play' && state.planning) {
+    const P = state.planning;
+    const apChip = (side, container) => {
+      const chip = document.createElement('button');
+      chip.className = 'ap-chip';
+      chip.dataset.apOpen = side;
+      chip.title = 'Ability Points — click to adjust';
+      chip.innerHTML = `<span style="font-size:8px;letter-spacing:0.12em;color:var(--text-mute);">AP</span>
+        <b style="color:var(--${side});font-size:15px;">${P.ap[side]}</b>
+        ${P.passTokens[side] ? `<span style="font-size:8px;color:var(--text-mute);">· ${P.passTokens[side]} PASS</span>` : ''}
+        <span style="font-size:9px;color:var(--text-mute);margin-left:auto;">⊕</span>`;
+      chip.addEventListener('click', () => { state.apEditOpen = side; renderAll(); });
+      container.insertBefore(chip, container.firstChild);
+    };
+    apChip('ucm', ucmDiv);
+    apChip('shal', shalDiv);
+  }
   ucmPts = rStat.pts; shalPts = bStat.pts;
   const redName = factionName('ucm');
   const blueName = factionName('shal');
@@ -2224,6 +2258,11 @@ function renderDropsiteDetail(ds) {
     ${(bestES !== base.es || bestKS !== base.ks) ? `<div style="font-size:9.5px;color:var(--text-dim);margin-top:4px;font-style:italic;">* improved by Feature save</div>` : ''}
   </div>`;
 
+  // When this Dropsite is being activated by the controlling side, its Feature cards
+  // gain ENGAGE / LAUNCH buttons (added inline below) and a Finish button at the bottom.
+  const daActive = state.dropsiteActivation && state.dropsiteActivation.dsId === ds.id;
+  const daSide = daActive ? state.dropsiteActivation.side : null;
+
   // Battalion data + deploy mode (shared by ground block and feature cards).
   const bats = dsBattalions(ds);
   // Renders the per-side +/− battalion controls for one location key.
@@ -2270,13 +2309,65 @@ function renderDropsiteDetail(ds) {
       const f = FEATURES[fk];
       const fcol = f.color || 'var(--text)';
       const bgTint = hexToRgba(fcol, 0.08);
-      html += `<div class="weapon-row" style="border-left:3px solid ${fcol};background:${bgTint};">
-        <div class="weapon-name"><span style="color:${fcol}">${f.glyph ? f.glyph + ' ' : ''}${f.name}</span></div>
+      const fdestroyed = (ds.destroyedFeatures || []).includes(fi);
+      // Activation buttons (only while this dropsite is being activated, not destroyed).
+      let weaponCardHTML = '';
+      let launchCardHTML = '';
+      if (daActive && !fdestroyed) {
+        if (f.weapon) {
+          const fired = (ds.firedFeatures || []).includes(fi);
+          // The weapon CARD itself is the activation control during dropsite activation
+          // (mirrors ship weapon cards) — no separate ENGAGE button.
+          const aiming = state.featureAttack && state.featureAttack.dsId === ds.id && state.featureAttack.fi === fi;
+          const wpnClickable = daActive && !fired && !fdestroyed;
+          const w = f.weapon;
+          weaponCardHTML = `<div class="weapon-row${fired ? ' weapon-locked' : ''}${aiming ? ' weapon-aiming' : ''}"
+              ${wpnClickable ? `data-da-fire="${ds.id}|${fi}" style="cursor:pointer;margin-top:6px;"` : `style="margin-top:6px;${(!daActive || fdestroyed) ? 'opacity:0.55;' : ''}"`}>
+            <div class="weapon-name">${w.name}${fired ? ' <span style="color:var(--hull-crit);font-size:9px;">✓ fired</span>' : ''}</div>
+            <div class="weapon-stats">${w.scan} scan · Att ${w.att} · Lock ${w.lock} · Dmg ${w.dmg} · ${w.type}</div>
+            ${w.special && w.special !== '—' ? `<div class="weapon-special">${w.special}</div>` : ''}
+            ${aiming ? `<div class="weapon-special" style="color:var(--hull-crit)">Click an enemy ship in range · right-click cancels</div>`
+              : wpnClickable ? `<div class="weapon-special" style="color:var(--text-mute)">Click to ENGAGE ▸ then click a target ship</div>` : ''}
+          </div>`;
+        }
+        if (f.launch && f.launch.length) {
+          f.launch.forEach(l => {
+            const meta = launchMeta(l.type);
+            const lActive = state.launching && state.launching.fromDropsite === ds.id &&
+              state.launching.fromFeature === fi && state.launching.type === l.type;
+            launchCardHTML += `<div class="weapon-row" data-da-launch="${ds.id}|${fi}|${l.type}"
+                style="cursor:pointer;margin-top:6px;${lActive ? 'border-left:3px solid var(--'+daSide+');background:rgba(74,214,255,0.06);' : ''}">
+              <div class="weapon-name">${l.name}${lActive ? ' <span style="color:var(--'+daSide+')">◉</span>' : ''}</div>
+              <div class="weapon-stats">Launch ${l.n} · ${meta.auraIn}" range · ${launchTargetLabel(meta.target)}</div>
+              ${lActive ? '' : `<div class="weapon-special" style="color:var(--text-mute);">Click to launch ▸ place on map ≤${meta.auraIn}"</div>`}
+            </div>`;
+          });
+        }
+      }
+      // When NOT activating, still show the launch profile as a (disabled) card for unity.
+      if (!launchCardHTML && f.launch && f.launch.length) {
+        f.launch.forEach(l => {
+          const meta = launchMeta(l.type);
+          launchCardHTML += `<div class="weapon-row" style="margin-top:6px;opacity:0.55;">
+            <div class="weapon-name">${l.name}</div>
+            <div class="weapon-stats">Launch ${l.n} · ${meta.auraIn}" range · ${launchTargetLabel(meta.target)}</div>
+          </div>`;
+        });
+      }
+      // When NOT activating, still show the weapon as a (disabled) card for unity.
+      if (!weaponCardHTML && f.weapon) {
+        const w = f.weapon;
+        weaponCardHTML = `<div class="weapon-row" style="margin-top:6px;opacity:0.55;">
+          <div class="weapon-name">${w.name}</div>
+          <div class="weapon-stats">${w.scan} scan · Att ${w.att} · Lock ${w.lock} · Dmg ${w.dmg} · ${w.type}</div>
+          ${w.special && w.special !== '—' ? `<div class="weapon-special">${w.special}</div>` : ''}
+        </div>`;
+      }
+      html += `<div class="weapon-row" style="border-left:3px solid ${fcol};background:${bgTint};${fdestroyed?'opacity:0.5;':''}">
+        <div class="weapon-name"><span style="color:${fcol}">${f.glyph ? f.glyph + ' ' : ''}${f.name}${fdestroyed?' <span style="color:var(--hull-crit);font-size:9px;">DESTROYED</span>':''}</span></div>
         <div class="weapon-stats">ES ${f.es} · KS ${f.ks}</div>
-        ${f.weapon ? `<div class="weapon-special">
-          <b>${f.weapon.name}:</b> ${f.weapon.scan} scan · ${f.weapon.att} att · ${f.weapon.lock} lock · ${f.weapon.dmg} dmg · ${f.weapon.type}<br>
-          <span style="color:var(--text-mute)">${f.weapon.special}</span>
-        </div>` : ''}
+        ${weaponCardHTML}
+        ${launchCardHTML}
         ${f.note ? `<div class="weapon-special">${f.note}</div>` : ''}
         <div style="margin-top:5px;">${batControls('feat' + fi)}</div>
       </div>`;
@@ -2286,6 +2377,13 @@ function renderDropsiteDetail(ds) {
     html += `<div class="panel-section">
       <div class="panel-title">Features</div>
       <div style="font-size:10px;color:var(--text-mute);font-style:italic;">No Features on this Dropsite.</div>
+    </div>`;
+  }
+
+  // Finish Activation — at the very bottom while this dropsite is being activated.
+  if (daActive) {
+    html += `<div class="panel-section">
+      <button class="btn-primary" id="da-finish-ds" style="width:100%;">✓ FINISH ACTIVATION</button>
     </div>`;
   }
 
@@ -2332,7 +2430,10 @@ function renderAssetDetail(a) {
         <b style="color:var(--${sideClass});font-size:13px;">${c}</b><span style="color:var(--text-mute);">/ ${max}</span>
         <button class="hp-btn" data-asm-adj="1" ${c>=max?'disabled':''}>+</button>
       </div>
-      <div class="weapon-special" style="color:var(--text-mute);margin-top:4px;">Click a destination on the board ≤ ${thr}". Split with −/+ to move part of the stack.</div>
+      <div class="weapon-special" style="color:var(--text-mute);margin-top:4px;">Click a destination on the board ≤ ${thr}".${
+        a.kind === 'fighter' ? ' Move onto an enemy Wing to dogfight.' :
+        (a.kind === 'bomber' || a.kind === 'fireship' || a.kind === 'torpedo') ? ' Click an enemy ship to fly in & lock an attack.' :
+        ' Split with −/+ to move part of the stack.'}</div>
     </div>`;
   } else if (a.kind === 'mine') {
     html += `<div class="panel-section"><div class="weapon-special" style="color:var(--text-mute);">Mines cannot move once launched.</div></div>`;
@@ -2965,6 +3066,7 @@ function renderDetail() {
           <div class="move-actions" style="margin-top:6px;">
             <button class="btn" data-clear-trail="${gid}|${state.selectedShipIdx}" style="width:100%;">⟲ UNDO MOVE</button>
             ${objectivesBeyondEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Objectives Beyond)</button>` : ''}
+            ${breakthroughFlyoffEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-bt-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Breakthrough · ${shipPoints(def)} pts)</button>` : ''}
             <button class="btn-finish-act" data-finish-activation="${gid}">FINISH ACTIVATION ▸</button>
           </div>
         </div>`;
@@ -3330,6 +3432,96 @@ function renderBoard() {
       paint-order="stroke" pointer-events="none">${L.name.toUpperCase()} ${L.auraIn}"</text>`;
   }
 
+  // Dropsite Feature WEAPON scan radius (while targeting a feature attack).
+  if (state.featureAttack) {
+    const fa = state.featureAttack;
+    const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === fa.dsId);
+    const f = ds && FEATURES[ds.features[fa.fi]];
+    if (ds && f && f.weapon) {
+      const scanPx = (parseInt(f.weapon.scan) || 6) * INCH;
+      const dsx = inchToPx(ds.x), dsy = inchToPx(ds.y);
+      const acol = fa.side === 'ucm' ? 'var(--ucm)' : 'var(--shal)';
+      html += `<circle cx="${dsx}" cy="${dsy}" r="${scanPx}"
+        fill="rgba(255,82,82,0.05)" stroke="var(--hull-crit)" stroke-width="1" stroke-dasharray="4 3"/>`;
+      html += `<text x="${dsx}" y="${dsy - scanPx - 4}" font-family="var(--mono)" font-size="8"
+        font-weight="700" fill="var(--hull-crit)" text-anchor="middle" stroke="var(--bg)" stroke-width="2"
+        paint-order="stroke" pointer-events="none">${f.weapon.name.toUpperCase()} ${parseInt(f.weapon.scan)||6}"</text>`;
+    }
+  }
+
+  // Enemy signature auras during Dropsite Activation (and while targeting a feature
+  // weapon): weapon range = Scan + (effective Signature + 3"/Spike), so show each
+  // enemy ship's detection bubble around its base.
+  if ((state.dropsiteActivation && state.dropsiteActivation.dsId) || state.featureAttack) {
+    const actSide = state.featureAttack ? state.featureAttack.side
+      : (state.dropsiteActivation ? state.dropsiteActivation.side : null);
+    // Sig/Spikes only extend range for NON-Close-Action weapons. Skip the auras when the
+    // weapon being targeted is Close Action, or (in general activation) when the dropsite
+    // has no non-Close-Action weapon feature.
+    let showSigAuras = true;
+    if (state.featureAttack) {
+      const fads = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === state.featureAttack.dsId);
+      const faf = fads && FEATURES[fads.features[state.featureAttack.fi]];
+      showSigAuras = !!(faf && faf.weapon && !/Close Action/i.test(faf.weapon.special || ''));
+    } else if (state.dropsiteActivation && state.dropsiteActivation.dsId) {
+      const ads = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === state.dropsiteActivation.dsId);
+      showSigAuras = !!(ads && (ads.features || []).some((fk, fi) => !(ads.destroyedFeatures||[]).includes(fi) && FEATURES[fk] && FEATURES[fk].weapon && !/Close Action/i.test(FEATURES[fk].weapon.special || '')));
+    }
+    if (actSide && showSigAuras) {
+      const enemySide = actSide === 'ucm' ? 'shal' : 'ucm';
+      fleetForSide(enemySide).forEach(edef => {
+        const eg = getGroup(edef.id);
+        if (!eg) return;
+        const spikes = eg.spikes || 0;
+        eg.ships.forEach(es => {
+          if (es.destroyed || es.offTable) return;
+          const sig = es.sigSilent ? 0 : (edef.sig || 0);
+          const sigPx = (sig + 3 * (spikes + (es.spikes || 0))) * INCH;
+          if (sigPx <= 0) return;
+          html += `<circle cx="${es.x}" cy="${es.y}" r="${sigPx}" fill="rgba(255,82,82,0.04)"
+                    stroke="var(--hull-crit)" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5"/>`;
+        });
+      });
+    }
+  }
+
+  // Auto-show a Dropsite's Scan (weapon) and Launch auras while it is being activated
+  // (not while actively targeting — those more specific circles above take over).
+  if (state.dropsiteActivation && state.dropsiteActivation.dsId && !state.featureAttack &&
+      !(state.launching && state.launching.fromDropsite)) {
+    const da = state.dropsiteActivation;
+    const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === da.dsId);
+    if (ds) {
+      const dsx = inchToPx(ds.x), dsy = inchToPx(ds.y);
+      const acol = da.side === 'ucm' ? 'var(--ucm)' : 'var(--shal)';
+      // Scan range: best weapon scan among weapon features, else base Scan, else 6".
+      let scanIn = 0;
+      (ds.features || []).forEach((fk, fi) => {
+        if ((ds.destroyedFeatures || []).includes(fi)) return;
+        const f = FEATURES[fk];
+        if (f && f.weapon) scanIn = Math.max(scanIn, parseInt(f.weapon.scan) || 6);
+      });
+      if (!scanIn && ds.base && ds.base.scan) scanIn = parseInt(ds.base.scan) || 0;
+      // Launch aura: 6" (Fighters/Bombers/Fire Ships/Torpedoes from a Dropsite feature).
+      const hasLaunch = (ds.features || []).some((fk, fi) => !(ds.destroyedFeatures||[]).includes(fi) && FEATURES[fk] && FEATURES[fk].launch && FEATURES[fk].launch.length);
+      const launchIn = hasLaunch ? 6 : 0;
+      if (scanIn > 0) {
+        const sPx = scanIn * INCH;
+        html += `<circle cx="${dsx}" cy="${dsy}" r="${sPx}" fill="none" stroke="var(--hull-crit)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>`;
+        html += `<text x="${dsx}" y="${dsy - sPx - 4}" font-family="var(--mono)" font-size="8" font-weight="700" fill="var(--hull-crit)" text-anchor="middle" stroke="var(--bg)" stroke-width="2" paint-order="stroke" pointer-events="none">SCAN ${scanIn}"</text>`;
+      }
+      if (launchIn > 0 && launchIn !== scanIn) {
+        const lPx = launchIn * INCH;
+        html += `<circle cx="${dsx}" cy="${dsy}" r="${lPx}" fill="none" stroke="${acol}" stroke-width="1" stroke-dasharray="5 3" opacity="0.7"/>`;
+        html += `<text x="${dsx}" y="${dsy + lPx + 11}" font-family="var(--mono)" font-size="8" font-weight="700" fill="${acol}" text-anchor="middle" stroke="var(--bg)" stroke-width="2" paint-order="stroke" pointer-events="none">LAUNCH ${launchIn}"</text>`;
+      } else if (launchIn > 0 && launchIn === scanIn) {
+        // Same radius — label the single ring as both.
+        const lPx = launchIn * INCH;
+        html += `<text x="${dsx}" y="${dsy + lPx + 11}" font-family="var(--mono)" font-size="8" font-weight="700" fill="${acol}" text-anchor="middle" stroke="var(--bg)" stroke-width="2" paint-order="stroke" pointer-events="none">LAUNCH ${launchIn}"</text>`;
+      }
+    }
+  }
+
   // Launched fighter/bomber/fireship asset markers.
   const assetMoveMode = state.assetPhase && state.assetPhase.step === 'assets';
   (state.launchedAssets || []).forEach((a, ai) => {
@@ -3340,7 +3532,7 @@ function renderBoard() {
     const isSel = state.assetMove && state.assetMove.id === a.id;
     // In Asset Combat, show the selected asset's move range.
     if (assetMoveMode && isSel) {
-      const thrPx = assetThrust(a) * INCH;
+      const thrPx = (a._t2tRange ? a._t2tRange : assetThrust(a)) * INCH;
       html += `<circle cx="${a.x}" cy="${a.y}" r="${thrPx}" fill="rgba(255,255,255,0.03)"
                 stroke="${col}" stroke-width="1" stroke-dasharray="5 4"/>`;
     }
@@ -3841,6 +4033,7 @@ function openBomberAttackModal(assetIds, targetGid, targetSi, side, kind) {
     special: [prof.special || '', saturation ? `Saturation −${saturation}` : ''].filter(Boolean).join(', ') };
   state.attackModal = {
     bomber: true, bomberKind: kind, bomberAssetIds: assetIds, bomberSide: side, saturation, cripplingFire,
+    attackerName: `${kindLabel} ×${total}`,
     attackerGid: null, attackerSi: null,
     shots: [{ wi: 0, w, targetGid, targetSi }],
     step: 'intro', shotIdx: 0, shieldsUp: {}, log: [], pendingDamage: {},
@@ -3894,6 +4087,7 @@ function openFeatureAttackModal(ds, fi, targetGid, targetSi, side) {
   const w = { name: `${f.name}: ${wp.name}`, arc: '—', att: wp.att, lock: wp.lock, dmg: wp.dmg, type: wp.type, special: wp.special || '' };
   state.attackModal = {
     bomber: true, bomberKind: 'feature', bomberAssetIds: [], bomberSide: side, saturation: 0, cripplingFire: 0,
+    attackerName: `${f.name}: ${wp.name}`,
     attackerGid: null, attackerSi: null,
     shots: [{ wi: 0, w, targetGid, targetSi }],
     step: 'intro', shotIdx: 0, shieldsUp: {}, log: [], pendingDamage: {},
@@ -3907,7 +4101,7 @@ function renderAttackModal() {
   if (overlay) overlay.remove();
   const M = state.attackModal;
   if (!M) return;
-  const aDef = M.bomber ? { name: 'Bombers', side: M.bomberSide } : getDef(M.attackerGid);
+  const aDef = M.bomber ? { name: M.attackerName || 'Bombers', side: M.bomberSide } : getDef(M.attackerGid);
   const aShip = M.bomber ? null : state.groups[M.attackerGid].ships[M.attackerSi];
   const sideClass = aDef.side === 'ucm' ? 'ucm' : 'shal';
 
@@ -4141,62 +4335,43 @@ function renderAttackModal() {
         M.shieldSpiked = M.shieldSpiked || {};
         if (!M.shieldSpiked[k]) { M.shieldSpiked[k] = true; ts.spikes = (ts.spikes || 0) + 1; }
       }
-      // Backup saves for hits not yet saved. A Group in Formation grants a 6+ Backup
-      // Save (Formation Benefit); use the better of the listed BS and 6+.
+      // Backup saves and Aegis are DEFERRED until after any re-rolls (AP / Fighter
+      // Close Protection) are applied to the primary ES/KS saves. Stored here so the
+      // backup step can use them; the dice are rolled in rollDeferredBackupSaves().
       let backupVal = saveVal(td.bs);
       const tgrp = state.groups[s.targetGid];
       if (tgrp && tgrp.ships.length > 1 && groupInFormation(td)) {
         backupVal = (backupVal == null) ? 6 : Math.min(backupVal, 6);
       }
       const backDice = [];
-      if (backupVal != null) {
-        hitsList.forEach(h => {
-          if (h.saved) return;
-          const r = rollDie(); const ok = r >= backupVal;
-          backDice.push({ r, ok });
-          if (ok) { h.saved = true; h.savedBy = 'backup'; }
-        });
-      }
-      // Aegis-X (§15.1): vs Bomber (any type) and Close Action attacks, the protected
-      // Group gains Y additional save dice (saving on the Backup value, or 4+ if none).
       const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
       const isCloseAction = /Close Action/i.test(s.w.special || '');
       const aegisDice = [];
       let aegisY = 0;
-      if ((isBomberAtk || isCloseAction) && !M.aegisUsed) {
-        aegisY = aegisValueForGroup(s.targetGid);
-        if (aegisY > 0) {
-          const av = backupVal != null ? backupVal : 4; // Aegis dice save on Backup (or 4+)
-          for (let i = 0; i < aegisY; i++) {
-            const unsavedHit = hitsList.find(h => !h.saved);
-            if (!unsavedHit) break;
-            const r = rollDie(); const ok = r >= av;
-            aegisDice.push({ r, ok });
-            if (ok) { unsavedHit.saved = true; unsavedHit.savedBy = 'aegis'; }
-          }
-          M.aegisUsed = true; // a Group benefits from Aegis only once per attack
-        }
-      }
       const dmg = hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
       const unsaved = hitsList.filter(h => !h.saved).length;
       // Status applies on a HIT (regardless of damage); Corruptor on damage.
       M.saveResult = { hitsList, primDice, backDice, backupVal, aegisDice, aegisY, unsaved, dmg,
+        backupRolled: false, targetGid: s.targetGid, isBomberAtk, isCloseAction,
         flash: sp.flash, crippling: sp.crippling, penetrator: sp.penetrator,
         status: sp.status && hitsList.length > 0, corruptor: (sp.corruptor && dmg > 0) ? sp.corruptor : 0,
         critDamaged: hitsList.some(h => h.isCrit && !h.saved) };
     }
     const sr = M.saveResult;
     const typeLabel = (t) => t === 'E' ? 'ES' : t === 'K' ? 'KS' : 'Shield/Core';
-    body = `<div class="am-step-head">Shot ${M.shotIdx+1}/${M.shots.length} · Saves</div>
+    const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
+    body = `<div class="am-step-head">Shot ${M.shotIdx+1}/${M.shots.length} · ${sr.backupRolled ? 'Saves' : 'ES / KS Saves'}</div>
       <div class="am-line">${td.name} — ${sr.hitsList.length} hit${sr.hitsList.length!==1?'s':''}${sr.penetrator?' (criticals → Core)':''}</div>
-      ${sr.primDice.length?`<div class="am-line" style="font-size:9px;color:var(--text-mute)">Saves (vs each hit's modified save):</div>
+      ${sr.primDice.length?`<div class="am-line" style="font-size:9px;color:var(--text-mute)">Primary saves (vs each hit's modified save):</div>
         <div class="am-dice">${sr.primDice.map(d=>`<span class="am-die ${d.ok?'hit':'miss'}" title="vs ${d.sv}+${d.crit?' (crit)':''}">${d.r}</span>`).join('')}</div>`:''}
-      ${sr.backDice.length?`<div class="am-line" style="font-size:9px;color:var(--text-mute)">Backup saves (${td.bs}):</div>
+      ${sr.backupRolled && sr.backDice.length?`<div class="am-line" style="font-size:9px;color:var(--text-mute)">Backup saves (${td.bs}):</div>
         <div class="am-dice">${sr.backDice.map(d=>`<span class="am-die ${d.ok?'hit':'miss'}">${d.r}</span>`).join('')}</div>`:''}
-      ${sr.aegisDice && sr.aegisDice.length?`<div class="am-line" style="font-size:9px;color:#4ad6ff">Aegis-${sr.aegisY} save dice:</div>
+      ${sr.backupRolled && sr.aegisDice && sr.aegisDice.length?`<div class="am-line" style="font-size:9px;color:#4ad6ff">Aegis-${sr.aegisY} save dice:</div>
         <div class="am-dice">${sr.aegisDice.map(d=>`<span class="am-die ${d.ok?'hit':'miss'}">${d.r}</span>`).join('')}</div>`:''}
-      <div class="am-line"><b>${sr.unsaved}</b> unsaved → <b style="color:var(--hull-crit)">${sr.dmg} damage</b>${sr.flash?` · <span style="color:var(--hull-warn)">Flash-${sr.flash} (${sr.dmg>0?'+'+sr.flash+' spike':'no dmg'})</span>`:''}${sr.crippling&&sr.critDamaged?` · <span style="color:var(--hull-warn)">Crippling!</span>`:''}</div>`;
-    {
+      ${sr.backupRolled
+        ? `<div class="am-line"><b>${sr.unsaved}</b> unsaved → <b style="color:var(--hull-crit)">${sr.dmg} damage</b>${sr.flash?` · <span style="color:var(--hull-warn)">Flash-${sr.flash} (${sr.dmg>0?'+'+sr.flash+' spike':'no dmg'})</span>`:''}${sr.crippling&&sr.critDamaged?` · <span style="color:var(--hull-warn)">Crippling!</span>`:''}</div>`
+        : `<div class="am-line" style="color:var(--text-mute);font-size:10px;"><b>${primFailedNow}</b> hit${primFailedNow!==1?'s':''} unsaved so far${sr.backupVal != null ? ` — Backup (${td.bs}) still to roll` : (sr.isBomberAtk || sr.isCloseAction) ? ' — Aegis still to roll' : ''}</div>`}`;
+    if (!sr.backupRolled) {
       const failed = sr.primDice.filter(d => !d.ok).length;
       if (!sr.rerolled && td.side && state.planning && state.planning.ap[td.side] >= 1 && failed > 0) {
         const maxRR = Math.min(failed, state.planning.ap[td.side]);
@@ -4210,39 +4385,45 @@ function renderAttackModal() {
           <button class="btn" data-am-reroll="save" style="font-size:10px;">↻ Re-roll ${n} (${n} AP)</button>
         </div>`;
       }
-    }
-    // ── CLOSE PROTECTION (Fighters) ──
-    // Vs Close Action / Bomber / Fire-Ship attacks, the defender may re-roll failed
-    // saves using friendly Fighters within Fighter Thrust range. Each re-roll spends
-    // one fighter; the player picks which Wing each comes from.
-    {
-      const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
-      const isCloseAction = /Close Action/i.test(s.w.special || '');
-      const failed = sr.primDice.filter(d => !d.ok).length;
-      if ((isBomberAtk || isCloseAction) && failed > 0 && td.side && !sr.fighterRerolled) {
-        const wings = friendlyFightersInRange(td.side, ts.x, ts.y);
-        const avail = wings.reduce((a, w) => a + w.count, 0);
-        if (avail > 0) {
-          M.fighterSpend = M.fighterSpend || {};
-          const spendTotal = wings.reduce((a, w) => a + (M.fighterSpend[w.id] || 0), 0);
-          const cap = Math.min(failed, avail);
-          body += `<div class="am-line" style="border-top:1px dashed var(--border);margin-top:6px;padding-top:6px;">
-            <div style="font-size:10px;color:#7fd6a0;margin-bottom:3px;">🛡 Close Protection — re-roll failed saves with Fighters (1 fighter each, max ${cap}):</div>`;
-          wings.forEach((w, i) => {
-            const cur = M.fighterSpend[w.id] || 0;
-            body += `<div style="display:flex;align-items:center;gap:6px;font-size:10px;margin:2px 0;">
-              <span style="flex:1;">Fighter Wing ${i + 1} <span style="color:var(--text-mute)">(${w.count} craft)</span></span>
-              <button class="btn" data-fp-adj="${w.id}|-1" style="font-size:11px;padding:1px 7px;">−</button>
-              <b>${cur}</b>
-              <button class="btn" data-fp-adj="${w.id}|1" style="font-size:11px;padding:1px 7px;">+</button>
+      // ── CLOSE PROTECTION (Fighters) ──
+      // Vs Close Action / Bomber / Fire-Ship attacks, the defender may re-roll failed
+      // PRIMARY saves using friendly Fighters within Fighter Thrust range (before Backup).
+      {
+        const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
+        const isCloseAction = parseWeaponSpecials(s.w).closeAction || /Close Action/i.test(s.w.special || '');
+        if ((isBomberAtk || isCloseAction) && failed > 0 && td.side && !sr.fighterRerolled) {
+          const wings = friendlyFightersInRange(td.side, ts.x, ts.y);
+          const avail = wings.reduce((a, w) => a + w.count, 0);
+          if (avail > 0) {
+            M.fighterSpend = M.fighterSpend || {};
+            const spendTotal = wings.reduce((a, w) => a + (M.fighterSpend[w.id] || 0), 0);
+            const cap = Math.min(failed, avail);
+            body += `<div class="am-line" style="border-top:1px dashed var(--border);margin-top:6px;padding-top:6px;">
+              <div style="font-size:10px;color:#7fd6a0;margin-bottom:3px;">🛡 Close Protection — re-roll failed saves with Fighters (1 fighter each, max ${cap}):</div>`;
+            wings.forEach((w, i) => {
+              const cur = M.fighterSpend[w.id] || 0;
+              body += `<div style="display:flex;align-items:center;gap:6px;font-size:10px;margin:2px 0;">
+                <span style="flex:1;">Fighter Wing ${i + 1} <span style="color:var(--text-mute)">(${w.count} craft)</span></span>
+                <button class="btn" data-fp-adj="${w.id}|-1" style="font-size:11px;padding:1px 7px;">−</button>
+                <b>${cur}</b>
+                <button class="btn" data-fp-adj="${w.id}|1" style="font-size:11px;padding:1px 7px;">+</button>
+              </div>`;
+            });
+            body += `<button class="btn" data-am-fighter-reroll="1" style="font-size:10px;margin-top:3px;color:#7fd6a0;border-color:#7fd6a0;" ${spendTotal>0?'':'disabled'}>↻ Re-roll ${spendTotal} save${spendTotal!==1?'s':''} (spend ${spendTotal} fighter${spendTotal!==1?'s':''})</button>
             </div>`;
-          });
-          body += `<button class="btn" data-am-fighter-reroll="1" style="font-size:10px;margin-top:3px;color:#7fd6a0;border-color:#7fd6a0;" ${spendTotal>0?'':'disabled'}>↻ Re-roll ${spendTotal} save${spendTotal!==1?'s':''} (spend ${spendTotal} fighter${spendTotal!==1?'s':''})</button>
-          </div>`;
+          }
         }
       }
     }
-    footer = `<button class="btn-primary ${sideClass==='shal'?'shal':''}" data-am-next="apply">Apply Damage ▸</button>`;
+    // Footer: if Backup/Aegis are still to roll and hits remain unsaved → roll them
+    // (after re-rolls); otherwise apply damage.
+    const needBackup = !sr.backupRolled && sr.hitsList.some(h => !h.saved && h.sv != null) &&
+      (sr.backupVal != null || ((sr.isBomberAtk || sr.isCloseAction) && !M.aegisUsed && aegisValueForGroup(sr.targetGid) > 0));
+    if (needBackup) {
+      footer = `<button class="btn-primary ${sideClass==='shal'?'shal':''}" data-am-next="rollbackup">Roll Backup Saves ▸</button>`;
+    } else {
+      footer = `<button class="btn-primary ${sideClass==='shal'?'shal':''}" data-am-next="apply">Apply Damage ▸</button>`;
+    }
   }
 
   else if (M.step === 'crippling') {
@@ -4508,7 +4689,15 @@ function advanceAttack(to) {
     if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; }
     else { nextShotOrResolve(); }
   }
+  else if (to === 'rollbackup') {
+    // Primary saves (and any re-rolls) are locked in — now roll Backup + Aegis saves.
+    rollDeferredBackupSaves(M);
+    renderAll();
+    return;
+  }
   else if (to === 'apply') {
+    // If backups weren't rolled yet (e.g. none available), roll them now (safe no-op).
+    if (M.saveResult && !M.saveResult.backupRolled) rollDeferredBackupSaves(M);
     // Accumulate damage onto the target.
     const s = M.shots[M.shotIdx];
     const k = targetKey(s.targetGid, s.targetSi);
@@ -4568,6 +4757,39 @@ function nextShotOrResolve() {
 
 /* Per-ship points value (group points divided by group size). */
 function shipPoints(def) { return Math.round((def.pts || 0) / (def.groupSize || 1)); }
+
+/* Award Victory Points: mutates the score, records a structured entry in state.scoreLog
+   (for the breakdown view), returns a text line (for round/end logs), and fires a
+   transient on-board notification. `vp` may be negative (e.g. Protect penalty). */
+function awardVP(side, vp, reason, round) {
+  if (!vp || !state.score || !state.score[side]) return null;
+  state.score[side].vp += vp;
+  state.scoreLog = state.scoreLog || [];
+  const entry = { round: round != null ? round : (state.round || 0), side, vp, reason };
+  state.scoreLog.push(entry);
+  notifyVP(side, vp, reason);
+  return `${factionName(side)} ${vp >= 0 ? '+' : ''}${vp} VP (${reason})`;
+}
+
+/* Transient VP-award toast, stacked at top-centre of the board. */
+function notifyVP(side, vp, reason) {
+  const board = document.querySelector('.board-wrap');
+  if (!board) return;
+  let tray = document.getElementById('vp-toasts');
+  if (!tray) {
+    tray = document.createElement('div');
+    tray.id = 'vp-toasts';
+    tray.style.cssText = 'position:absolute;top:46px;left:50%;transform:translateX(-50%);z-index:120;display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;';
+    board.appendChild(tray);
+  }
+  const t = document.createElement('div');
+  t.style.cssText = `background:rgba(10,14,13,0.94);border:1px solid var(--${side});border-left:4px solid var(--${side});border-radius:5px;padding:7px 13px;font-family:var(--mono);font-size:11px;color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,0.5);opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s;`;
+  t.innerHTML = `<b style="color:var(--${side})">${factionName(side)}</b> <b style="color:${vp>=0?'var(--hull-good,#6ec97a)':'var(--hull-crit)'}">${vp>=0?'+':''}${vp} VP</b> <span style="color:var(--text-mute)">· ${reason}</span>`;
+  tray.appendChild(t);
+  requestAnimationFrame(() => { t.style.opacity = '1'; t.style.transform = 'translateY(0)'; });
+  setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateY(-6px)'; setTimeout(() => t.remove(), 250); }, 3400);
+}
+
 /* Award a destroyed ship's points to the killer's Kill Points (2× if captured). */
 function recordKill(def, killerSide, captured, killedShipKey) {
   if (!killerSide || !state.score || !state.score[killerSide]) return;
@@ -4593,42 +4815,97 @@ function dropsiteSizeKey(ds) {
   if (t === 'l' || t === 'large') return 'L';
   return 'M';
 }
-/* Compute Standard Scoring VP gained this scoring round, per side. */
+/* Compute Standard Scoring VP gained this scoring round, per side.
+   Objective modifiers:
+   • Protect: a side's nominated Dropsite scores DOUBLE while intact; if Levelled, that
+     side instead takes a penalty equal to the Dropsite's control value.
+   • Raze: a Dropsite Levelled or Ruined ≥24" from a side's Zone scores DOUBLE for the
+     OPPOSING side that razed/contests it (handled in runScoring's raze block, not here).
+   Returns { ucm, shal } VP for this round. */
 function computeStandardScoring() {
   const out = { ucm: 0, shal: 0 };
+  const rows = []; // per-dropsite breakdown for the scoring modal
+  const obj = state.scenario && state.scenario.objective;
+  const noms = state.protectNom || {};
   ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => {
-    if (ds.destroyed) return;
     const sz = dropsiteSizeKey(ds);
     const vp = DROPSITE_VP[sz] || DROPSITE_VP.M;
     const ctrl = dropsiteController(ds);
-    if (ctrl) out[ctrl] += vp.control;
-    else if (dropsiteContested(ds)) { out.ucm += vp.contest; out.shal += vp.contest; }
+    const isLevelled = !!ds.destroyed;
+    let ucmGain = 0, shalGain = 0, statusNote = '';
+    if (obj === 'protect') {
+      ['ucm','shal'].forEach(s => { if (noms[s] === ds.id && isLevelled) { out[s] -= vp.control; if (s==='ucm') ucmGain -= vp.control; else shalGain -= vp.control; statusNote = 'Protect penalty'; } });
+    }
+    if (isLevelled) {
+      rows.push({ name: ds.base.name, sz, status: 'Levelled' + (statusNote?' · '+statusNote:''), ctrl: null, ucm: ucmGain, shal: shalGain });
+      return;
+    }
+    if (ctrl) {
+      let gain = vp.control;
+      if (obj === 'protect' && noms[ctrl] === ds.id) { gain *= 2; statusNote = 'Protected ×2'; }
+      out[ctrl] += gain;
+      if (ctrl === 'ucm') ucmGain += gain; else shalGain += gain;
+      rows.push({ name: ds.base.name, sz, status: 'Controlled' + (statusNote?' · '+statusNote:''), ctrl, ucm: ucmGain, shal: shalGain });
+    } else if (dropsiteContested(ds)) {
+      out.ucm += vp.contest; out.shal += vp.contest;
+      rows.push({ name: ds.base.name, sz, status: 'Contested', ctrl: null, ucm: ucmGain + vp.contest, shal: shalGain + vp.contest });
+    } else {
+      rows.push({ name: ds.base.name, sz, status: 'Uncontrolled', ctrl: null, ucm: ucmGain, shal: shalGain });
+    }
   });
+  out.rows = rows;
   return out;
 }
 /* Run end-of-round Victory Point scoring (rounds 4 & 6 for standard scoring),
    plus the scenario's scoring-variant bonuses where computable. */
 function runScoring(round) {
   const log = [];
+  state.lastScoring = null; // set below for the R4/R6 standard-scoring modal
   if ((round === 4 || round === 6) && !state.scoredRounds.includes(round)) {
     state.scoredRounds.push(round);
     const std = computeStandardScoring();
-    state.score.ucm.vp += std.ucm; state.score.shal.vp += std.shal;
-    log.push(`Standard Scoring (R${round}): ${factionName('ucm')} +${std.ucm} VP · ${factionName('shal')} +${std.shal} VP`);
+    const l1 = awardVP('ucm', std.ucm, `Standard Scoring R${round}`, round);
+    const l2 = awardVP('shal', std.shal, `Standard Scoring R${round}`, round);
+    if (l1) log.push(l1); if (l2) log.push(l2);
+    if (!l1 && !l2) log.push(`Standard Scoring (R${round}): no VP scored`);
+    // Stash the per-dropsite breakdown for the scoring modal.
+    state.lastScoring = { round, rows: std.rows, ucm: std.ucm, shal: std.shal };
   }
   // Scoring variant bonuses applied at game end (round 6).
   if (round === 6) {
     const obj = state.scenario && state.scenario.objective;
     const objName = (obj && OBJECTIVES[obj]) ? OBJECTIVES[obj].name : '';
-    // Attrition / Raze / Breakthrough: +VP per 500 pts destroyed.
-    if (/Attrition|Raze|Breakthrough/i.test(objName)) {
-      ['ucm','shal'].forEach(s => { const bonus = Math.floor(state.score[s].kp / 500) * 2; if (bonus) { state.score[s].vp += bonus; log.push(`${factionName(s)} +${bonus} VP (${objName}: pts destroyed)`); } });
+    const push = (line) => { if (line) log.push(line); };
+    // Attrition: +2 VP per 500 pts destroyed (both sides).
+    if (obj === 'attrition') {
+      ['ucm','shal'].forEach(s => push(awardVP(s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
+    }
+    // Raze: +2 VP per 500 pts destroyed, PLUS double Standard Scoring value for each
+    // Dropsite Levelled or Ruined that lies ≥24" from the scoring side's own Zone.
+    if (obj === 'raze') {
+      ['ucm','shal'].forEach(s => push(awardVP(s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
+      const razeVP = { ucm: 0, shal: 0 };
+      ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => {
+        const remHull = (ds.maxHull || 0) - (ds.damage || 0);
+        const levelled = ds.destroyed || remHull <= 0;
+        const ruined = !levelled && ds.maxHull && (remHull / ds.maxHull) < 0.5;
+        if (!levelled && !ruined) return;
+        const vp = (DROPSITE_VP[dropsiteSizeKey(ds)] || DROPSITE_VP.M).control;
+        ['ucm','shal'].forEach(s => { if (distFromZoneIn(s, inchToPx(ds.y)) >= 24) razeVP[s] += vp; });
+      });
+      ['ucm','shal'].forEach(s => push(awardVP(s, razeVP[s], 'Raze: distant Levelled/Ruined', round)));
+    }
+    // Breakthrough: Red scores 1 VP per 200 pts flown off; the OTHER side scores kills.
+    if (obj === 'breakthrough') {
+      const flown = state.breakthroughFlyoff || { ucm: 0, shal: 0 };
+      push(awardVP('ucm', Math.floor((flown.ucm || 0) / 200), `Breakthrough: ${flown.ucm} pts flown off`, round));
+      push(awardVP('shal', Math.floor(state.score.shal.kp / 500) * 2, 'Breakthrough: pts destroyed', round));
     }
     // Survey: +1 VP per Dropsite Surveyed.
     if (obj === 'survey') {
       const surv = { ucm: 0, shal: 0 };
       ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => (ds.surveyedBy || []).forEach(s => surv[s]++));
-      ['ucm','shal'].forEach(s => { if (surv[s]) { state.score[s].vp += surv[s]; log.push(`${factionName(s)} +${surv[s]} VP (Survey)`); } });
+      ['ucm','shal'].forEach(s => push(awardVP(s, surv[s], 'Survey', round)));
     }
     // Extract: 2 VP per Recon Operative still aboard a surviving Ship.
     if (obj === 'extract' && state.shipReconOps) {
@@ -4639,11 +4916,8 @@ function runScoring(round) {
         const ship = state.groups[gid] && state.groups[gid].ships[parseInt(si)];
         if (ship && !ship.destroyed) ex[getDef(gid).side] += n * 2;
       });
-      ['ucm','shal'].forEach(s => { if (ex[s]) { state.score[s].vp += ex[s]; log.push(`${factionName(s)} +${ex[s]} VP (Recon Operatives aboard)`); } });
-      // +1 VP per enemy Ship destroyed while it was carrying Recon Operatives.
-      if (state.reconKills) {
-        ['ucm','shal'].forEach(s => { const rk = state.reconKills[s] || 0; if (rk) { state.score[s].vp += rk; log.push(`${factionName(s)} +${rk} VP (destroyed operative-carriers)`); } });
-      }
+      ['ucm','shal'].forEach(s => push(awardVP(s, ex[s], 'Recon Operatives aboard', round)));
+      if (state.reconKills) ['ucm','shal'].forEach(s => push(awardVP(s, state.reconKills[s] || 0, 'destroyed operative-carriers', round)));
     }
     // Secondary Objectives (each side scores its one chosen scoring secondary).
     log.push(...scoreSecondaries());
@@ -4701,6 +4975,17 @@ function objectivesBeyondEligible(gid, si) {
   return distFromZoneIn(enemy, ship.y) <= 6;
 }
 
+/* Breakthrough objective: a Red (UCM-slot) Ship that has moved and reached within 6"
+   of the opponent's Zone edge may fly off for 1 VP per 200 pts. */
+function breakthroughFlyoffEligible(gid, si) {
+  if (!state.scenario || state.scenario.objective !== 'breakthrough') return false;
+  const def = getDef(gid);
+  if (!def || def.side !== 'ucm') return false; // only Red flies off for Breakthrough
+  const ship = state.groups[gid] && state.groups[gid].ships[si];
+  if (!ship || ship.destroyed || ship.offTable || !ship.movedThisRound) return false;
+  return distFromZoneIn('shal', ship.y) <= 6; // within 6" of the opponent's (north) edge
+}
+
 /* Score each side's selected Secondary Objective at game end. Returns log lines. */
 function scoreSecondaries() {
   const log = [];
@@ -4723,7 +5008,7 @@ function scoreSecondaries() {
       }
       if (vp > best) { best = vp; bestName = SECONDARY_OBJECTIVES[key] ? SECONDARY_OBJECTIVES[key].name : key; }
     });
-    if (best > 0) { state.score[side].vp += best; log.push(`${factionName(side)} +${best} VP (${bestName})`); }
+    if (best > 0) { const l = awardVP(side, best, `Secondary: ${bestName}`, 6); if (l) log.push(l); }
   });
   return log;
 }
@@ -4977,6 +5262,43 @@ function applyExplosionEffect(ex, M) {
     });
   }
 }
+/* Roll Backup saves (and Aegis save dice) on hits still unsaved AFTER primary ES/KS
+   saves and any re-rolls have been applied. Mutates sr in place and recomputes damage.
+   Called when the player advances past the primary-save sub-step. */
+function rollDeferredBackupSaves(M) {
+  const sr = M.saveResult;
+  if (!sr || sr.backupRolled) return;
+  // Backup saves for hits not yet saved.
+  if (sr.backupVal != null) {
+    sr.hitsList.forEach(h => {
+      if (h.saved || h.sv == null) return;
+      const r = rollDie(); const ok = r >= sr.backupVal;
+      sr.backDice.push({ r, ok });
+      if (ok) { h.saved = true; h.savedBy = 'backup'; }
+    });
+  }
+  // Aegis-X (§15.1): vs Bomber/Close Action, Y extra save dice (on Backup, or 4+).
+  if ((sr.isBomberAtk || sr.isCloseAction) && !M.aegisUsed) {
+    const aegisY = aegisValueForGroup(sr.targetGid);
+    sr.aegisY = aegisY;
+    if (aegisY > 0) {
+      const av = sr.backupVal != null ? sr.backupVal : 4;
+      for (let i = 0; i < aegisY; i++) {
+        const unsavedHit = sr.hitsList.find(h => !h.saved);
+        if (!unsavedHit) break;
+        const r = rollDie(); const ok = r >= av;
+        sr.aegisDice.push({ r, ok });
+        if (ok) { unsavedHit.saved = true; unsavedHit.savedBy = 'aegis'; }
+      }
+      M.aegisUsed = true;
+    }
+  }
+  sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+  sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
+  sr.critDamaged = sr.hitsList.some(h => h.isCrit && !h.saved);
+  sr.backupRolled = true;
+}
+
 function finishAttack() {
   const M = state.attackModal;
   if (!M) return;
@@ -5075,6 +5397,34 @@ function openRepairPhase() {
   renderAll();
 }
 
+/* Dogfight result modal: when a Fighter Wing moves onto an enemy launch asset, equal
+   numbers are removed from each. This shows the before/after counts and losses. */
+function renderDogfightModal() {
+  let overlay = document.getElementById('dogfight-overlay');
+  if (overlay) overlay.remove();
+  const r = state.dogfightResult;
+  if (!r) return;
+  const an = factionName(r.attackerSide), fn = factionName(r.foeSide);
+  const foeLabel = { fighter: 'Fighters', bomber: 'Bombers', fireship: 'Fire Ships', torpedo: 'Torpedoes', mine: 'Mines' }[r.foeKind] || r.foeKind;
+  const row = (label, col, before, after, lost) => `<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">
+    <span style="flex:1;color:${col};font-weight:600;">${label}</span>
+    <span style="font-family:var(--mono);font-size:13px;">${before} → <b>${after}</b></span>
+    <span style="font-family:var(--mono);font-size:11px;color:var(--hull-crit);min-width:54px;text-align:right;">−${lost} lost</span>
+  </div>`;
+  overlay = document.createElement('div');
+  overlay.id = 'dogfight-overlay';
+  overlay.className = 'setup-overlay';
+  overlay.innerHTML = `<div class="setup-panel" style="max-width:340px;">
+    <div class="setup-title">⚔ Dogfight</div>
+    <div style="font-size:10px;color:var(--text-dim);margin:4px 0 10px;">Fighters and the enemy Wing trade losses one-for-one.</div>
+    ${row(an + ' Fighters', 'var(--' + r.attackerSide + ')', r.attackerBefore, r.attackerAfter, r.removed)}
+    ${row(fn + ' ' + foeLabel, 'var(--' + r.foeSide + ')', r.foeBefore, r.foeAfter, r.removed)}
+    <div class="setup-footer"><button class="btn-primary" id="dogfight-ok" style="width:100%;">OK ▸</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#dogfight-ok').addEventListener('click', () => { state.dogfightResult = null; renderAll(); });
+}
+
 /* Modal to choose WHERE to land launched Battalions: on the Dropsite itself, or on
    one of its Features. Appears once a Dropship/Bulk Lander/Drop Pod has targeted a
    Dropsite (state.battalionDeploy). */
@@ -5088,13 +5438,19 @@ function renderBattalionDeployModal() {
   const side = dep.side;
   const enemy = side === 'ucm' ? 'shal' : 'ucm';
   const b = dsBattalions(ds);
-  // Build option rows: the Dropsite ground, then each (non-destroyed) Feature.
+  const remainingHull = Math.max(0, (ds.maxHull || 0) - (ds.damage || 0));
+  const ruined = ds.maxHull && (remainingHull / ds.maxHull) < 0.5 && remainingHull > 0;
+  const destroyed = remainingHull === 0 && ds.maxHull;
+  // Per-location row showing the label plus BOTH sides' current battalion counts.
   const optRow = (key, label, glyph, col) => {
     const cur = (b[key] && b[key][side]) || 0;
     const foe = (b[key] && b[key][enemy]) || 0;
-    return `<button class="btn" data-bat-deploy="${ds.id}|${key}" style="display:block;width:100%;text-align:left;margin-bottom:4px;border-left:3px solid ${col};">
-      <span style="color:${col};font-weight:600;">${glyph ? glyph + ' ' : ''}${label}</span>
-      <span style="float:right;font-size:9px;color:var(--text-mute);">${cur?`you ${cur} `:''}${foe?`· enemy ${foe}`:''}</span>
+    return `<button class="btn" data-bat-deploy="${ds.id}|${key}" style="display:block;width:100%;text-align:left;margin-bottom:5px;border-left:3px solid ${col};">
+      <div style="color:${col};font-weight:600;">${glyph ? glyph + ' ' : ''}${label}</div>
+      <div style="font-size:9px;margin-top:2px;display:flex;gap:10px;">
+        <span style="color:var(--${side});">${factionName(side)}: <b>${cur}</b></span>
+        <span style="color:var(--${enemy});">${factionName(enemy)}: <b>${foe}</b></span>
+      </div>
     </button>`;
   };
   let opts = optRow('ground', ds.base.name + ' (Dropsite)', '◎', 'var(--' + side + ')');
@@ -5103,12 +5459,18 @@ function renderBattalionDeployModal() {
     const f = FEATURES[fk] || { name: fk };
     opts += optRow('feat' + fi, f.name, f.glyph, f.color || 'var(--text)');
   });
+  // Header: dropsite name, layer, and current Hull / state.
+  const hullStr = ds.maxHull
+    ? `Hull ${remainingHull}/${ds.maxHull}${destroyed ? ' · <span style="color:var(--hull-crit)">LEVELLED</span>' : ruined ? ' · <span style="color:var(--hull-warn)">RUINED</span>' : ''}`
+    : '';
   overlay = document.createElement('div');
   overlay.id = 'bat-deploy-overlay';
   overlay.className = 'setup-overlay';
   overlay.innerHTML = `<div class="setup-panel" style="max-width:340px;">
     <div class="setup-title" style="color:var(--${side});">Land ${dep.count} ${dep.asset} Battalion${dep.count>1?'s':''}</div>
-    <div style="font-size:10px;color:var(--text-dim);margin:4px 0 8px;">Choose a location on <b>${ds.base.name}</b>:</div>
+    <div style="font-size:10px;color:var(--text-dim);margin:4px 0 2px;">On <b>${ds.base.name}</b>${ds.base.layer ? ` · ${ds.base.layer}` : ''}</div>
+    ${hullStr ? `<div style="font-size:11px;font-family:var(--mono);margin:0 0 9px;">${hullStr}</div>` : '<div style="margin-bottom:9px;"></div>'}
+    <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Choose a location:</div>
     ${opts}
     <div class="setup-footer"><button class="btn" id="bat-deploy-cancel">CANCEL</button></div>
   </div>`;
@@ -5229,6 +5591,8 @@ function advanceRoundNow() {
     state.gameOver = { winner, scoreLog };
     return;
   }
+  // Standard scoring happened this round (R4) — show the breakdown modal before advancing.
+  if (state.lastScoring) state.scoringModal = { ...state.lastScoring, log: scoreLog };
   state.round = state.round + 1;
   Object.values(state.groups).forEach(g => {
     g.activated = false;
@@ -6321,7 +6685,15 @@ function renderDropsite(d) {
       if (targetsThis) html += `<text x="${cx - 5 + idx*10}" y="${cy - r - 13}" font-size="9" fill="var(--${sd})" text-anchor="middle" pointer-events="none">★</text>`;
     });
   }
-  // Feature glyphs orbiting the dropsite — bare glyphs, no backdrop circle
+  // Protect objective: shield marker on each side's nominated Dropsite.
+  if (state.protectNom) {
+    ['ucm','shal'].forEach((sd, idx) => {
+      if (state.protectNom[sd] === d.id) html += `<text x="${cx - 5 + idx*10}" y="${cy + r + 22}" font-size="10" fill="var(--${sd})" text-anchor="middle" pointer-events="none">🛡</text>`;
+    });
+  }
+  // Feature glyphs orbiting the dropsite — bare glyphs, no backdrop circle.
+  // During this dropsite's activation, weapon/launch features become clickable.
+  const daActive = state.dropsiteActivation && state.dropsiteActivation.dsId === d.id && !state.launching && !state.featureAttack;
   if (d.features && d.features.length) {
     d.features.forEach((fkey, fi) => {
       const f = FEATURES[fkey];
@@ -6330,9 +6702,19 @@ function renderDropsite(d) {
       const fx = cx + Math.cos(angle) * fr;
       const fy = cy + Math.sin(angle) * fr;
       const fcol = f.color || ringCol;
+      const dead = (d.destroyedFeatures || []).includes(fi);
+      const usable = daActive && !dead && (f.weapon || (f.launch && f.launch.length));
+      const fired = f.weapon && (d.firedFeatures || []).includes(fi);
+      if (usable) {
+        // Clickable hit-area + highlight ring; small badge shows weapon (⚔) or launch (⊕).
+        html += `<circle data-da-feat="${d.id}|${fi}" cx="${fx}" cy="${fy}" r="9"
+          fill="rgba(255,255,255,0.04)" stroke="${fired?'var(--text-mute)':fcol}" stroke-width="1"
+          stroke-dasharray="${fired?'2 2':'none'}" style="cursor:pointer;${fired?'opacity:0.5;':''}"/>`;
+        html += `<text x="${fx + 7}" y="${fy - 6}" font-size="7" fill="${f.weapon?'var(--hull-crit)':fcol}" text-anchor="middle" pointer-events="none">${f.weapon?(fired?'✓':'⚔'):'⊕'}</text>`;
+      }
       html += `<text x="${fx}" y="${fy + 1}" font-family="var(--mono)" font-size="9" font-weight="700"
-                fill="${fcol}" text-anchor="middle" dominant-baseline="middle"
-                pointer-events="none">${f.glyph}</text>`;
+                fill="${dead?'var(--text-mute)':fcol}" text-anchor="middle" dominant-baseline="middle"
+                pointer-events="none" ${dead?'opacity="0.4"':''}>${f.glyph}</text>`;
     });
   }
   // Hull damage indicator (if damaged)
@@ -6608,6 +6990,25 @@ function commitScenario() {
     });
   }
   state.shipReconOps = {}; state.reconKills = { ucm:0, shal:0 }; state.nominationPhase = false; // ship key → Recon Operatives carried
+  // Breakthrough: track points flown off the opponent's table edge (Red = ucm slot).
+  state.breakthroughFlyoff = { ucm: 0, shal: 0 };
+  state.scoreLog = []; state.lastScoring = null; state.scoredRounds = [];
+  // Protect: each side nominates a unique Dropsite to defend. Auto-nominate the
+  // highest-value Dropsite nearest each side's own Zone (the player may re-nominate).
+  state.protectNom = { ucm: null, shal: null };
+  if (state.scenario.objective === 'protect') {
+    const dss = scenData.dropsites.slice();
+    ['ucm','shal'].forEach(side => {
+      const cands = dss.filter(ds => !Object.values(state.protectNom).includes(ds.id));
+      cands.sort((a,b) => {
+        const va = (DROPSITE_VP[dropsiteSizeKey(a)]||DROPSITE_VP.M).control;
+        const vb = (DROPSITE_VP[dropsiteSizeKey(b)]||DROPSITE_VP.M).control;
+        if (vb !== va) return vb - va;                         // highest value first
+        return distFromZoneIn(side, inchToPx(a.y)) - distFromZoneIn(side, inchToPx(b.y)); // then nearest own zone
+      });
+      if (cands.length) state.protectNom[side] = cands[0].id;
+    });
+  }
   // Position-based Secondary nominations (declared before the 1st Planning Phase).
   // Auto-nominate a valid default; the player may override via the nomination editor.
   state.secondaryNominations = { ucm: {}, shal: {} };
@@ -7252,18 +7653,30 @@ function renderDropsiteActivation() {
     lb = document.createElement('div');
     lb.id = 'da-launch-banner';
     lb.className = 'deploy-hint';
-    const f = L.fighters||0, b = L.bombers||0;
-    lb.innerHTML = `<span><b>${L.name}:</b></span>
-      <span>Ftr</span>
-      <button class="hp-btn" data-da-fb="fighters|-1" ${b>0||f<=0?'disabled':''}>−</button>
-      <b style="color:var(--${L.side})">${f}</b>
-      <button class="hp-btn" data-da-fb="fighters|1" ${b>0?'disabled':''}>+</button>
-      <span>Bmr</span>
-      <button class="hp-btn" data-da-fb="bombers|-1" ${f>0||b<=0?'disabled':''}>−</button>
-      <b style="color:var(--${L.side})">${b}</b>
-      <button class="hp-btn" data-da-fb="bombers|1" ${f>0?'disabled':''}>+</button>
-      <span>· click ≤${L.auraIn}" to place</span>
-      <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
+    if (L.type === 'fighter_bomber') {
+      const f = L.fighters||0, b = L.bombers||0;
+      lb.innerHTML = `<span><b>${L.name}:</b></span>
+        <span>Ftr</span>
+        <button class="hp-btn" data-da-fb="fighters|-1" ${b>0||f<=0?'disabled':''}>−</button>
+        <b style="color:var(--${L.side})">${f}</b>
+        <button class="hp-btn" data-da-fb="fighters|1" ${b>0?'disabled':''}>+</button>
+        <span>Bmr</span>
+        <button class="hp-btn" data-da-fb="bombers|-1" ${f>0||b<=0?'disabled':''}>−</button>
+        <b style="color:var(--${L.side})">${b}</b>
+        <button class="hp-btn" data-da-fb="bombers|1" ${f>0?'disabled':''}>+</button>
+        <span>· click ≤${L.auraIn}" to place</span>
+        <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
+    } else {
+      const cnt = L.type === 'fireship' ? (L.fireships||0) : (L.assetCount||1);
+      const cntCtl = L.type === 'fireship'
+        ? `<button class="hp-btn" data-da-fb="fireships|-1" ${cnt<=0?'disabled':''}>−</button>
+           <b style="color:var(--${L.side})">${cnt}</b>
+           <button class="hp-btn" data-da-fb="fireships|1">+</button>`
+        : `<b style="color:var(--${L.side})">${cnt}</b>`;
+      lb.innerHTML = `<span><b>${L.name}:</b></span> ${cntCtl}
+        <span>· click ≤${L.auraIn}" to place</span>
+        <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
+    }
     document.querySelector('.board-wrap').appendChild(lb);
     return;
   }
@@ -7283,32 +7696,12 @@ function renderDropsiteActivation() {
   const ds = da.dsId ? state.scenarioData.dropsites.find(d => d.id === da.dsId) : null;
 
   // ── ACTIVATING A SPECIFIC DROPSITE ──
-  // Render the feature launch/fire options as a NON-BLOCKING banner so the board stays
-  // visible and clickable for targeting weapons / placing launched assets.
+  // Controls now live in the right detail panel (renderDropsiteDetail). The board stays
+  // fully usable for targeting weapons / placing launched assets; no bottom banner.
   if (ds) {
-    const lf = dropsiteLaunchFeatures(ds);
-    const wf = dropsiteWeaponFeatures(ds);
     let banner = document.getElementById('da-ds-banner');
     if (banner) banner.remove();
-    banner = document.createElement('div');
-    banner.id = 'da-ds-banner';
-    banner.className = 'deploy-hint';
-    banner.style.flexWrap = 'wrap';
-    let btns = `<span><b>${ds.base.name}</b> — ${sideName(da.side)} activates:</span>`;
-    lf.forEach(({ fi, f }) => {
-      f.launch.forEach(l => {
-        btns += ` <button class="btn" data-da-launch="${ds.id}|${fi}|${l.type}" style="padding:4px 10px;font-size:10px;">${f.glyph||''} ${f.name}: ${l.name} (${l.n})</button>`;
-      });
-    });
-    wf.forEach(({ fi, f }) => {
-      const fired = (ds.firedFeatures || []).includes(fi);
-      btns += ` <button class="btn" data-da-fire="${ds.id}|${fi}" ${fired?'disabled':''} style="padding:4px 10px;font-size:10px;${fired?'opacity:0.5;':''}">${f.glyph||''} ${f.name}: ${f.weapon.name} (Att ${f.weapon.att}, ${f.weapon.lock})${fired?' ✓':''}</button>`;
-    });
-    if (!lf.length && !wf.length) btns += ` <span style="color:var(--text-mute);font-size:10px;">No launch/weapon Features.</span>`;
-    btns += ` <button class="btn-primary" id="da-finish-ds" style="padding:4px 12px;font-size:10px;">DONE WITH DROPSITE →</button>`;
-    banner.innerHTML = btns;
-    board.appendChild(banner);
-    return; // board remains usable
+    return; // panel-driven; board remains usable
   }
   let dsBan = document.getElementById('da-ds-banner');
   if (dsBan) dsBan.remove();
@@ -7461,7 +7854,13 @@ function renderAssetPhase() {
     } else if (state.assetMove) {
       const a = state.launchedAssets.find(x => x.id === state.assetMove.id);
       const thr = a ? (a.t2t && a._t2tRange ? a._t2tRange : assetThrust(a)) : 0;
-      msg = `<span><b style="color:var(--${a?a.side:'ucm'})">${a?a.kind:''}</b> selected — ${a && !a.moved ? `click a destination ≤<b>${thr}"</b>` : 'use the right panel'} →</span>`;
+      let hint;
+      if (a && !a.moved) {
+        if (a.kind === 'fighter') hint = `click a destination ≤<b>${thr}"</b> · move onto an enemy Wing to dogfight`;
+        else if (a.kind === 'bomber' || a.kind === 'fireship' || a.kind === 'torpedo') hint = `click a destination ≤<b>${thr}"</b> · click an enemy ship to fly in & lock it`;
+        else hint = `click a destination ≤<b>${thr}"</b>`;
+      } else hint = 'use the right panel';
+      msg = `<span><b style="color:var(--${a?a.side:'ucm'})">${a?a.kind:''}</b> selected — ${hint} →</span>`;
       footer = `<button class="btn" id="asset-finish-stage" style="padding:5px 12px;font-size:10px;">DONE WITH ${typeLabel.toUpperCase()} (${sideName(state.assetActiveSide)}) →</button>`;
     } else {
       msg = `<span><b style="color:var(--${state.assetActiveSide})">${sideName(state.assetActiveSide)}</b> activates <b>${typeLabel}</b> · click one on the board to move it.</span>`;
@@ -7731,19 +8130,137 @@ function rollInitiative() {
 
 /* Persistent scoreboard HUD (top-left of board) showing VP + KP per side. */
 function renderScoreboard() {
-  const board = document.querySelector('.board-wrap');
-  let el = document.getElementById('scoreboard');
+  // On-board score box removed — VP/KP are shown in the topbar VP counter (and its
+  // breakdown modal). This just clears any lingering element.
+  const el = document.getElementById('scoreboard');
   if (el) el.remove();
-  if (state.phase !== 'play' || !state.score) return;
-  el = document.createElement('div');
-  el.id = 'scoreboard';
-  el.style.cssText = 'position:absolute;top:8px;left:8px;z-index:40;background:rgba(10,14,13,0.82);border:1px solid var(--border-bright);border-radius:5px;padding:6px 9px;font-family:var(--mono);font-size:10px;pointer-events:none;';
-  const row = (side) => `<div style="display:flex;gap:8px;align-items:center;">
-    <b style="color:var(--${side})">${factionName(side)}</b>
-    <span title="Victory Points">VP <b>${state.score[side].vp}</b></span>
-    <span style="color:var(--text-mute)" title="Kill Points">KP ${state.score[side].kp}</span></div>`;
-  el.innerHTML = `<div style="font-size:8px;letter-spacing:0.15em;color:var(--text-mute);margin-bottom:2px;">SCORE</div>${row('ucm')}${row('shal')}`;
-  board.appendChild(el);
+}
+
+/* R4/R6 Standard-Scoring breakdown modal (shown after the round's scoring runs). */
+function renderScoringModal() {
+  let overlay = document.getElementById('scoring-overlay');
+  if (overlay) overlay.remove();
+  const M = state.scoringModal;
+  if (!M) return;
+  const rows = (M.rows || []).map(r => `<div class="am-line" style="display:flex;gap:8px;font-size:10px;align-items:center;">
+    <span style="flex:1;">${r.name} <span style="color:var(--text-mute)">(${r.sz})</span></span>
+    <span style="color:${r.ctrl?`var(--${r.ctrl})`:'var(--text-mute)'};font-size:9px;">${r.status}</span>
+    <span style="font-family:var(--mono);min-width:78px;text-align:right;">
+      ${r.ucm?`<b style="color:var(--ucm)">${r.ucm>0?'+':''}${r.ucm}</b>`:'<span style="color:var(--text-mute)">·</span>'}
+      / ${r.shal?`<b style="color:var(--shal)">${r.shal>0?'+':''}${r.shal}</b>`:'<span style="color:var(--text-mute)">·</span>'}
+    </span>
+  </div>`).join('');
+  overlay = document.createElement('div');
+  overlay.id = 'scoring-overlay';
+  overlay.className = 'setup-overlay';
+  overlay.style.zIndex = '305';
+  overlay.innerHTML = `<div class="setup-card" style="max-width:420px;">
+    <div class="setup-header"><h2 class="setup-title" style="color:var(--hull-good,#6ec97a)">⊕ STANDARD SCORING · ROUND ${M.round}</h2>
+      <div class="setup-sub">Control / Contest of Dropsites</div></div>
+    <div class="setup-body">
+      <div class="init-grid" style="margin-bottom:10px;">
+        <div class="init-slot"><div class="init-name" style="color:var(--ucm)">${factionName('ucm')}</div>
+          <div style="font-size:22px;font-weight:700;color:var(--ucm)">${M.ucm>=0?'+':''}${M.ucm}</div>
+          <div style="font-size:9px;color:var(--text-mute)">VP this round · ${state.score.ucm.vp} total</div></div>
+        <div class="init-vs">vs</div>
+        <div class="init-slot"><div class="init-name" style="color:var(--shal)">${factionName('shal')}</div>
+          <div style="font-size:22px;font-weight:700;color:var(--shal)">${M.shal>=0?'+':''}${M.shal}</div>
+          <div style="font-size:9px;color:var(--text-mute)">VP this round · ${state.score.shal.vp} total</div></div>
+      </div>
+      <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">PER DROPSITE (${factionName('ucm')} / ${factionName('shal')})</div>
+      ${rows || '<div class="am-line" style="color:var(--text-mute)">No Dropsites scored.</div>'}
+    </div>
+    <div class="setup-footer"><button class="btn-primary" id="scoring-ok" style="width:100%;">CONTINUE →</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#scoring-ok').addEventListener('click', () => { state.scoringModal = null; renderAll(); });
+}
+
+/* AP adjuster modal — opened from a fleet's AP chip. Manual −/+ control of that side's
+   Ability Points for the round (referee / correction aid). */
+function renderApEditModal() {
+  let overlay = document.getElementById('ap-edit-overlay');
+  if (overlay) overlay.remove();
+  const side = state.apEditOpen;
+  if (!side || !state.planning) return;
+  const P = state.planning;
+  overlay = document.createElement('div');
+  overlay.id = 'ap-edit-overlay';
+  overlay.className = 'setup-overlay';
+  overlay.style.zIndex = '312';
+  overlay.innerHTML = `<div class="setup-card" style="max-width:320px;">
+    <div class="setup-header"><h2 class="setup-title" style="color:var(--${side})">${factionName(side)} · ABILITY POINTS</h2>
+      <div class="setup-sub">Adjust this round's AP</div></div>
+    <div class="setup-body">
+      <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin:6px 0 12px;">
+        <button class="hp-btn" data-ap-adj="${side}|-1" style="font-size:18px;width:38px;height:38px;" ${P.ap[side]<=0?'disabled':''}>−</button>
+        <b style="color:var(--${side});font-size:40px;font-family:var(--mono);min-width:54px;text-align:center;">${P.ap[side]}</b>
+        <button class="hp-btn" data-ap-adj="${side}|1" style="font-size:18px;width:38px;height:38px;">+</button>
+      </div>
+      ${P.passTokens[side] ? `<div style="font-size:10px;color:var(--text-mute);text-align:center;">${P.passTokens[side]} Pass Token${P.passTokens[side]>1?'s':''} remaining</div>` : ''}
+    </div>
+    <div class="setup-footer"><button class="btn-primary" id="ap-edit-close" style="width:100%;">DONE</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('[data-ap-adj]').forEach(btn => btn.addEventListener('click', () => {
+    const [s, d] = btn.dataset.apAdj.split('|');
+    P.ap[s] = Math.max(0, (P.ap[s] || 0) + parseInt(d));
+    renderAll();
+  }));
+  overlay.querySelector('#ap-edit-close').addEventListener('click', () => { state.apEditOpen = null; renderAll(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) { state.apEditOpen = null; renderAll(); } });
+}
+
+/* Full Victory-Point breakdown modal — opened from the topbar VP counter. Groups the
+   structured scoreLog by side, newest first, plus current totals. */
+function renderVPBreakdown() {
+  let overlay = document.getElementById('vpbreak-overlay');
+  if (overlay) overlay.remove();
+  if (!state.vpBreakdownOpen || !state.score) return;
+  const sideBlock = (side) => {
+    const entries = (state.scoreLog || []).filter(e => e.side === side);
+    const lines = entries.length
+      ? entries.map(e => `<div style="display:flex;gap:8px;font-size:10px;padding:2px 0;">
+          <span style="color:var(--text-mute);min-width:24px;">R${e.round}</span>
+          <span style="flex:1;">${e.reason}</span>
+          <b style="color:${e.vp>=0?`var(--${side})`:'var(--hull-crit)'};">${e.vp>=0?'+':''}${e.vp}</b>
+        </div>`).join('')
+      : `<div style="font-size:10px;color:var(--text-mute);padding:4px 0;">No VP yet.</div>`;
+    return `<div style="flex:1;min-width:0;">
+      <div class="init-name" style="color:var(--${side})">${factionName(side)}</div>
+      <div style="font-size:26px;font-weight:700;color:var(--${side});line-height:1;">${state.score[side].vp}<span style="font-size:11px;color:var(--text-mute);font-weight:400;"> VP</span></div>
+      <div style="font-size:9px;color:var(--text-mute);margin-bottom:6px;">${state.score[side].kp} Kill Points</div>
+      ${lines}
+    </div>`;
+  };
+  const obj = state.scenario && state.scenario.objective ? OBJECTIVES[state.scenario.objective] : null;
+  const objExpanded = !!state.vpObjOpen;
+  const objBlock = obj ? `<button id="vp-obj-toggle" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:rgba(74,214,255,0.06);border:1px solid var(--ucm);border-radius:5px;padding:7px 11px;cursor:pointer;margin-bottom:12px;">
+      <span style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);">OBJECTIVE</span>
+      <b style="color:var(--ucm);flex:1;">${obj.name}</b>
+      <span style="color:var(--text-mute);font-size:11px;">${objExpanded ? '▾' : '▸'}</span>
+    </button>
+    ${objExpanded ? `<div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin:-6px 0 12px;padding:0 4px;">
+      ${obj.desc}${obj.bonus ? `<div style="margin-top:6px;color:var(--hull-good,#6ec97a);">▸ ${obj.bonus}</div>` : ''}
+    </div>` : ''}` : '';
+  overlay = document.createElement('div');
+  overlay.id = 'vpbreak-overlay';
+  overlay.className = 'setup-overlay';
+  overlay.style.zIndex = '310';
+  overlay.innerHTML = `<div class="setup-card" style="max-width:480px;">
+    <div class="setup-header"><h2 class="setup-title">VICTORY POINTS</h2>
+      <div class="setup-sub">Round ${state.round} / 6 · VP decides the game (Kill Points break ties)</div></div>
+    <div class="setup-body">
+      ${objBlock}
+      <div style="display:flex;gap:18px;">${sideBlock('ucm')}${sideBlock('shal')}</div>
+    </div>
+    <div class="setup-footer"><button class="btn-primary" id="vpbreak-close" style="width:100%;">CLOSE</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const objToggle = overlay.querySelector('#vp-obj-toggle');
+  if (objToggle) objToggle.addEventListener('click', () => { state.vpObjOpen = !state.vpObjOpen; renderAll(); });
+  overlay.querySelector('#vpbreak-close').addEventListener('click', () => { state.vpBreakdownOpen = false; state.vpObjOpen = false; renderAll(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) { state.vpBreakdownOpen = false; state.vpObjOpen = false; renderAll(); } });
 }
 
 /* End-of-game summary modal. */
@@ -7781,8 +8298,9 @@ function renderGameOver() {
   </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector('#gameover-reset').addEventListener('click', () => {
-    state.gameOver = null; state.score = { ucm:{vp:0,kp:0}, shal:{vp:0,kp:0} }; state.scoredRounds = []; state.captured = {ucm:0,shal:0}; state.admiralKilled = {ucm:false,shal:false};
+    state.gameOver = null; state.score = { ucm:{vp:0,kp:0}, shal:{vp:0,kp:0} }; state.scoredRounds = []; state.scoreLog = []; state.lastScoring = null; state.captured = {ucm:0,shal:0}; state.admiralKilled = {ucm:false,shal:false};
     state.secondaryNominations = { ucm:{}, shal:{} }; state.shipReconOps = {}; state.reconKills = { ucm:0, shal:0 }; state.nominationPhase = false;
+    state.protectNom = { ucm:null, shal:null }; state.breakthroughFlyoff = { ucm:0, shal:0 };
     state.phase = 'setup'; state.scenario = null; state.scenarioData = null; state.groups = {};
     state.selectedGroupId = null; state.selectedShipIdx = null; state.round = 1;
     rebuildFleets(); renderAll();
@@ -8040,6 +8558,7 @@ function renderSetupOverlay() {
         </div>` : ''}
       </div>
       <div class="setup-footer">
+        <button class="btn" id="test-setup" title="UCM vs Scourge · no admirals/secondaries · Line / Close Enough / Diagonal / Guarded Sectors / Standard">⚡ TEST SETUP</button>
         <button class="btn" data-reroll="all" ${payloadsLocked ? 'disabled' : ''}>⚄ RANDOMISE ALL</button>
         <button class="btn-primary" id="commit-scenario" ${payloadsLocked ? 'disabled' : ''}>CONFIRM SCENARIO →</button>
       </div>
@@ -8101,6 +8620,20 @@ function renderSetupOverlay() {
     });
   });
   overlay.querySelector('#commit-scenario').addEventListener('click', commitScenario);
+  const testBtn = overlay.querySelector('#test-setup');
+  if (testBtn) testBtn.addEventListener('click', () => {
+    // Quick deterministic test game: UCM vs Scourge, no admirals/secondaries,
+    // Line deployment · Close Enough approach · Diagonal layout · Guarded Sectors
+    // variant · Standard scoring. Then commit straight to play.
+    state.fleetChoices = { f1: 'ucm', f2: 'scourge' };
+    state.admiralChoice = { f1: 0, f2: 0 };
+    state.secondaryChoice = { f1: [], f2: [] };
+    state.scenario = {
+      deployment: 'line', approach: 'close_enough', layout: 'diagonal',
+      variant: 'guarded_sectors', objective: 'standard'
+    };
+    commitScenario();
+  });
 }
 
 function renderDeployHint() {
@@ -8203,6 +8736,35 @@ function renderScenBanner() {
 }
 
 function renderPhaseNav() {
+  const nav = document.getElementById('phase-nav');
+  if (nav && state.phase === 'play' && state.score) {
+    // During play, the phase steps are replaced by a clickable VP counter that opens
+    // the full Victory-Point breakdown.
+    const u = state.score.ucm, s = state.score.shal;
+    nav.innerHTML = `<button id="vp-counter" title="Click for the full Victory Point breakdown"
+      style="display:flex;align-items:center;gap:10px;background:rgba(10,14,13,0.6);border:1px solid var(--border-bright);border-radius:6px;padding:5px 14px;cursor:pointer;font-family:var(--display);">
+      <span style="font-size:9px;letter-spacing:0.15em;color:var(--text-mute);">VP</span>
+      <span style="color:var(--ucm);font-weight:700;font-size:16px;">${u.vp}</span>
+      <span style="font-size:9px;color:var(--text-mute);">${factionName('ucm')}</span>
+      <span style="color:var(--text-mute);">·</span>
+      <span style="font-size:9px;color:var(--text-mute);">${factionName('shal')}</span>
+      <span style="color:var(--shal);font-weight:700;font-size:16px;">${s.vp}</span>
+      <span style="font-size:10px;color:var(--text-mute);margin-left:4px;">⊕</span>
+    </button>`;
+    const btn = nav.querySelector('#vp-counter');
+    if (btn) btn.addEventListener('click', () => { state.vpBreakdownOpen = true; renderAll(); });
+    return;
+  }
+  // Setup/scenery/deploy: restore the phase-step breadcrumb if it was replaced.
+  if (nav && !nav.querySelector('.phase-step')) {
+    nav.innerHTML = `<span class="phase-step" data-phase="setup">1 · SETUP</span>
+      <span class="phase-arrow">→</span>
+      <span class="phase-step" data-phase="scenery">2 · SCENERY</span>
+      <span class="phase-arrow">→</span>
+      <span class="phase-step" data-phase="deploy">3 · DEPLOY</span>
+      <span class="phase-arrow">→</span>
+      <span class="phase-step" data-phase="play">4 · PLAY</span>`;
+  }
   document.querySelectorAll('.phase-step').forEach(el => {
     el.classList.toggle('active', el.dataset.phase === state.phase);
     const phases = ['setup','scenery','deploy','play'];
@@ -8231,17 +8793,9 @@ function renderTopbarControls() {
     `;
   } else { // play
     const P = state.planning;
-    let apHud = '';
-    if (P) {
-      apHud = `<div class="round-display" style="font-size:9px;" title="Ability Points / Pass Tokens">
-        <span style="color:var(--ucm)">AP ${P.ap.ucm}${P.passTokens.ucm?'·P'+P.passTokens.ucm:''}</span> ·
-        <span style="color:var(--shal)">AP ${P.ap.shal}${P.passTokens.shal?'·P'+P.passTokens.shal:''}</span>
-      </div>`;
-    }
     const canPass = P && state.activeSide && P.passTokens[state.activeSide] > 0;
     ctrl.innerHTML = `
       <div class="round-display">RND <b id="round-num">${state.round}</b> / 6</div>
-      ${apHud}
       ${canPass ? `<button class="btn" id="pass-activation" title="Spend a Pass Token to pass">⏭ PASS (${P.passTokens[state.activeSide]})</button>` : ''}
       <button class="btn" id="end-round">END ROUND ▸</button>
       <button class="btn" id="reset-game" title="Reset all">↻ RESET</button>
@@ -8265,7 +8819,11 @@ function renderAll() {
   renderAttackModal();
   renderRepairPhase();
   renderBattalionDeployModal();
+  renderDogfightModal();
   renderScoreboard();
+  renderApEditModal();
+  renderScoringModal();
+  renderVPBreakdown();
   renderGameOver();
   renderSceneryPlacement();
   renderAssetPhase();
@@ -8701,6 +9259,18 @@ document.addEventListener('click', (e) => {
     }
     renderAll(); return;
   }
+  if (e.target.matches('[data-bt-flyoff]')) {
+    const [gid, si] = e.target.dataset.btFlyoff.split('|');
+    const ship = state.groups[gid] && state.groups[gid].ships[parseInt(si)];
+    if (ship && breakthroughFlyoffEligible(gid, parseInt(si))) {
+      const def = getDef(gid);
+      ship.flewOff = true; ship.offTable = true;
+      state.breakthroughFlyoff = state.breakthroughFlyoff || { ucm: 0, shal: 0 };
+      state.breakthroughFlyoff[def.side] += shipPoints(def);
+      flashLaunchMsg(`${def.name} flies off (Breakthrough · +${shipPoints(def)} pts)`, true);
+    }
+    renderAll(); return;
+  }
   if (e.target.matches('[data-clear-trail]')) {
     const [gid, si] = e.target.dataset.clearTrail.split('|');
     const grp = state.groups[gid];
@@ -8833,24 +9403,59 @@ document.addEventListener('click', (e) => {
   // Dropsite Activation: pick a Controlled dropsite to activate.
   if (e.target.matches('[data-da-pick]')) {
     state.dropsiteActivation.dsId = e.target.dataset.daPick;
+    state.selectedDropsiteId = e.target.dataset.daPick; // show it in the right detail panel
+    state.selectedGroupId = null; state.selectedShipIdx = null;
+    renderAll(); return;
+  }
+  // Dropsite Activation: click a Feature glyph directly on the board (weapon or launch).
+  if (e.target.matches('[data-da-feat]')) {
+    const [dsId, fiStr] = e.target.dataset.daFeat.split('|');
+    const fi = parseInt(fiStr);
+    const ds = state.scenarioData.dropsites.find(d => d.id === dsId);
+    const da = state.dropsiteActivation;
+    if (!ds || !da) { renderAll(); return; }
+    const f = FEATURES[ds.features[fi]];
+    if (!f) { renderAll(); return; }
+    if (f.weapon) {
+      if ((ds.firedFeatures || []).includes(fi)) { flashLaunchMsg(`${f.weapon.name} already fired this round`); return; }
+      state.featureAttack = { dsId, fi, side: da.side };
+      flashLaunchMsg(`${f.name}: click an enemy ship within ${parseInt(f.weapon.scan)||6}" of the Dropsite`, true);
+      renderAll(); return;
+    }
+    if (f.launch && f.launch.length) {
+      const lentry = f.launch[0]; const type = lentry.type; // each launch feature has a single launch type
+      const meta = launchMeta(type);
+      state.launching = {
+        gid: null, si: null, type, name: meta.label, auraIn: meta.auraIn,
+        fromDropsite: dsId, fromFeature: fi, side: da.side,
+        x: inchToPx(ds.x), y: inchToPx(ds.y), fighters: 0, bombers: 0, fireships: 0,
+        assetCount: (type === 'torpedo' || type === 'mine') ? (lentry.n || 1) : undefined
+      };
+      renderAll(); return;
+    }
     renderAll(); return;
   }
   // Dropsite Activation: launch from a feature (acts like a ship launch).
-  if (e.target.matches('[data-da-fire]')) {
-    const [dsId, fi] = e.target.dataset.daFire.split('|');
+  if (e.target.closest && e.target.closest('[data-da-fire]')) {
+    const [dsId, fi] = e.target.closest('[data-da-fire]').dataset.daFire.split('|');
     state.featureAttack = { dsId, fi: parseInt(fi), side: state.dropsiteActivation.side };
-    flashLaunchMsg('Click an enemy ship within 6" of the Dropsite', true);
+    const ds2 = state.scenarioData.dropsites.find(d => d.id === dsId);
+    const f2 = ds2 && FEATURES[ds2.features[parseInt(fi)]];
+    flashLaunchMsg(`${f2 ? f2.name + ': ' : ''}click an enemy ship in range`, true);
     renderAll(); return;
   }
-  if (e.target.matches('[data-da-launch]')) {
-    const [dsId, fi, type] = e.target.dataset.daLaunch.split('|');
+  if (e.target.closest && e.target.closest('[data-da-launch]')) {
+    const [dsId, fi, type] = e.target.closest('[data-da-launch]').dataset.daLaunch.split('|');
     const ds = state.scenarioData.dropsites.find(d => d.id === dsId);
     const da = state.dropsiteActivation;
     const meta = launchMeta(type);
+    const f = FEATURES[ds.features[parseInt(fi)]];
+    const lentry = f && f.launch && f.launch.find(x => x.type === type);
     state.launching = {
       gid: null, si: null, type, name: meta.label, auraIn: meta.auraIn,
       fromDropsite: dsId, fromFeature: parseInt(fi), side: da.side,
-      x: inchToPx(ds.x), y: inchToPx(ds.y), fighters: 0, bombers: 0, fireships: 0
+      x: inchToPx(ds.x), y: inchToPx(ds.y), fighters: 0, bombers: 0, fireships: 0,
+      assetCount: (type === 'torpedo' || type === 'mine') ? ((lentry && lentry.n) || 1) : undefined
     };
     renderAll(); return;
   }
@@ -8858,9 +9463,13 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('[data-da-fb]')) {
     const [which, delta] = e.target.dataset.daFb.split('|');
     if (state.launching && state.launching.fromDropsite) {
-      const other = which === 'fighters' ? 'bombers' : 'fighters';
-      const next = Math.max(0, (state.launching[which]||0) + parseInt(delta));
-      if (!(next > 0 && (state.launching[other]||0) > 0)) state.launching[which] = next;
+      if (which === 'fireships') {
+        state.launching.fireships = Math.max(0, (state.launching.fireships||0) + parseInt(delta));
+      } else {
+        const other = which === 'fighters' ? 'bombers' : 'fighters';
+        const next = Math.max(0, (state.launching[which]||0) + parseInt(delta));
+        if (!(next > 0 && (state.launching[other]||0) > 0)) state.launching[which] = next;
+      }
     }
     renderAll(); return;
   }
@@ -8873,17 +9482,25 @@ document.addEventListener('click', (e) => {
     const da = state.dropsiteActivation;
     if (da.dsId && !da.done.includes(da.dsId)) da.done.push(da.dsId);
     da.dsId = null;
+    // Cancel any in-progress weapon targeting / launch placement and remove its radius.
+    state.featureAttack = null;
+    state.launching = null;
+    state.selectedDropsiteId = null;
     renderAll(); return;
   }
   // Dropsite Activation: alternate to the other side (or finish).
   if (e.target.matches('#da-next-side')) {
     const da = state.dropsiteActivation;
     da.side = da.side === 'ucm' ? 'shal' : 'ucm';
+    state.featureAttack = null;
+    state.launching = null;
     renderAll(); return;
   }
   // Dropsite Activation: done — proceed to the Asset Phase.
   if (e.target.matches('#da-done')) {
     state.dropsiteActivation = null;
+    state.featureAttack = null;
+    state.launching = null;
     state.assetPhase = { resolved: false, log: [] };
     renderAll(); return;
   }
@@ -8942,6 +9559,7 @@ document.addEventListener('click', (e) => {
     state.assetPhase.step = 'assets';
     state.assetMove = null;
     (state.launchedAssets || []).forEach(a => { a.moved = false; a.t2t = false; a.bomberTarget = null; a._preMove = null; });
+    state.dogfightResult = null;
     // Assets activate by type (Fighters → Bombers/Fire Ships → Torpedoes), initiative
     // side first within each type. Land on the first non-empty stage.
     state.assetPhase.assetType = null;
@@ -9066,7 +9684,7 @@ document.addEventListener('click', (e) => {
       state.round = 1;
       state.phase = 'setup';
       state.score = { ucm:{vp:0,kp:0}, shal:{vp:0,kp:0} };
-      state.scoredRounds = [];
+      state.scoredRounds = []; state.scoreLog = []; state.lastScoring = null;
       state.captured = { ucm:0, shal:0 };
       state.admiralKilled = { ucm:false, shal:false };
       state.secondaryNominations = { ucm:{}, shal:{} };
@@ -9132,6 +9750,7 @@ function resolveLaunchClick(e) {
     if (meta.target === 'point') {
       let count, kind, kindLabel;
       if (L.type === 'fireship') { count = L.fireships||0; kind='fireship'; kindLabel='Fire Ship'; }
+      else if (L.type === 'torpedo' || L.type === 'mine') { count = L.assetCount || 1; kind = L.type; kindLabel = L.type === 'torpedo' ? 'Torpedo' : 'Mine'; }
       else { const f=L.fighters||0, b=L.bombers||0; count = f>0?f:b; kind = f>0?'fighter':(b>0?'bomber':null); kindLabel = kind==='fighter'?'Fighter':'Bomber'; }
       if (!kind || count <= 0) { flashLaunchMsg('Set Fighters or Bombers first'); return false; }
       state.launchedAssets.push({ id:'a'+(state._assetId=(state._assetId||0)+1), kind, count, side: L.side, x: pt.x, y: pt.y, moved:false });
@@ -9419,6 +10038,13 @@ board.addEventListener('contextmenu', (e) => {
     renderAll();
     return;
   }
+  if (state.featureAttack) {
+    e.preventDefault();
+    state.featureAttack = null;
+    flashLaunchMsg('Targeting cancelled');
+    renderAll();
+    return;
+  }
   if (state.aiming || state.vectoredSecondMove) {
     e.preventDefault();
     state.aiming = null;
@@ -9573,9 +10199,12 @@ board.addEventListener('click', (e) => {
     if (!hit) { flashLaunchMsg('Click an enemy ship'); return; }
     const dsx = inchToPx(ds.x), dsy = inchToPx(ds.y);
     const ts = state.groups[hit.gid].ships[hit.si];
-    // Range = feature Scan (6") + target Sig + spikes (Close Action → within scan only).
+    // Range: Close Action weapons reach the feature's Scan only (target Sig & Spikes
+    // give no extra range); other weapons add the target's effective Sig + 3"/Spike.
     const scanPx = (parseInt(f.weapon.scan) || 6) * INCH;
-    const reach = scanPx + ((ts.sigSilent ? 0 : (getDef(hit.gid).sig || 0)) + ((state.groups[hit.gid].spikes||0)+(ts.spikes||0)) * 3) * INCH;
+    const isCA = /Close Action/i.test(f.weapon.special || '');
+    const sigBonusIn = isCA ? 0 : ((ts.sigSilent ? 0 : (getDef(hit.gid).sig || 0)) + ((state.groups[hit.gid].spikes||0)+(ts.spikes||0)) * 3);
+    const reach = scanPx + sigBonusIn * INCH;
     if (Math.hypot(ts.x - dsx, ts.y - dsy) > reach) { flashLaunchMsg('Target out of range'); return; }
     openFeatureAttackModal(ds, fa.fi, hit.gid, hit.si, fa.side);
     ds.firedFeatures = ds.firedFeatures || [];
@@ -9714,13 +10343,19 @@ board.addEventListener('click', (e) => {
         x.id !== mover.id && x.side === enemySide &&
         Math.hypot(x.x - mover.x, x.y - mover.y) <= shipBaseRadiusPx({tonnage:'L'}));
       if (foe) {
+        const moverBefore = mover.count, foeBefore = foe.count;
         const removed = Math.min(mover.count, foe.count);
         mover.count -= removed;
         foe.count -= removed;
         const foeKind = foe.kind;
         // Remove emptied stacks.
         state.launchedAssets = state.launchedAssets.filter(x => x.count > 0);
-        flashLaunchMsg(`Dogfight: ${removed} Fighter${removed>1?'s':''} vs ${removed} ${foeKind}${removed>1?'s':''} removed`, true);
+        // Show a result modal with the numbers and losses (dismissed before play continues).
+        state.dogfightResult = {
+          attackerSide: mover.side, foeSide: enemySide, foeKind,
+          attackerBefore: moverBefore, attackerAfter: mover.count,
+          foeBefore: foeBefore, foeAfter: foe.count, removed
+        };
         state.assetMove = null;
         afterAssetMove();
         renderAll();
@@ -9902,6 +10537,9 @@ board.addEventListener('click', (e) => {
   // Did we click on a ship or dropsite?
   let el = e.target;
   while (el && el !== board) {
+    // A Feature hit-circle (Dropsite Activation) is handled by the document click
+    // handler — don't also select the parent Dropsite here.
+    if (el.dataset && el.dataset.daFeat) return;
     if (el.dataset && el.dataset.ship) {
       const [gid, si] = el.dataset.ship.split('|');
       if (state.selectedGroupId !== gid) {
@@ -9917,7 +10555,10 @@ board.addEventListener('click', (e) => {
     }
     if (el.dataset && el.dataset.dropsite) {
       const did = el.dataset.dropsite;
-      state.selectedDropsiteId = (state.selectedDropsiteId === did) ? null : did;
+      // During Dropsite Activation, clicking the activated dropsite keeps it selected
+      // (re-shows its detail panel) rather than toggling the selection off.
+      const isActivating = state.dropsiteActivation && state.dropsiteActivation.dsId === did;
+      state.selectedDropsiteId = (state.selectedDropsiteId === did && !isActivating) ? null : did;
       // Deselect any ship so the right panel shows the dropsite
       state.selectedGroupId = null;
       state.selectedShipIdx = null;
