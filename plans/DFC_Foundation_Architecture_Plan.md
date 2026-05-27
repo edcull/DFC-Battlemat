@@ -1,8 +1,11 @@
 # DFC Battlemat — Foundational Architecture Plan
 
-> **Status (May 2026): PHASE 1 COMPLETE — engine extracted and browser hotseat working via modules.**
-> Phase 2 (Node server + WebSocket rooms) and Phase 3 (online client) are not yet implemented.
-> See section 3 for what was delivered and how it differs from the original plan.
+> **Status (May 2026): PHASES 1–3 COMPLETE except `gating.js`.** Engine extracted; browser hotseat
+> working via modules; Node server with WebSocket rooms running; online client (mode selector +
+> side-gating) working as a trusted relay.
+> Outstanding: `gating.js` (Phase 1d), which unblocks server-authoritative turn enforcement.
+> Phase 4 (fleet import, AI) and Phase 5 (production deploy) are not yet started.
+> See section 3 for Phase 1 delivery notes and section 8 for the full phase-by-phase status table.
 
 ---
 
