@@ -1566,3 +1566,38 @@ export function resolveBoardingActions(state, rng) {
   });
   return log;
 }
+
+/* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
+   An "intent" is a small serialisable action object { type, ...payload }.
+   `apply(state, intent, rng)` is the single entry point the server runs after
+   `isLegal` (see gating.js) and that the local client runs in hotseat mode.
+   Only turn-flow intents are modelled so far; more families migrate over from
+   the inline client handlers incrementally. Each intent maps to one mutator. */
+
+/* Active side spends a Pass Token and hands activation to the opponent
+   (mirrors the alternation done after a finished activation). */
+export function passActivation(state) {
+  const P = state.planning;
+  if (!P || !state.activeSide || !(P.passTokens[state.activeSide] > 0)) return state;
+  const passer = state.activeSide;
+  P.passTokens[passer]--;
+  const other = passer === 'ucm' ? 'shal' : 'ucm';
+  if (sideHasPendingActivation(state, other)) state.activeSide = other;
+  else if (!sideHasPendingActivation(state, passer)) state.activeSide = null;
+  return state;
+}
+
+/* End the Activation Phase: open the end-of-round Dropsite Activation step. */
+export function beginEndRound(state) {
+  state.dropsiteActivation = { side: state.initiativeHolder || 'ucm', done: [], dsId: null };
+  return state;
+}
+
+/* Dispatch an intent to its mutator. Mutates `state` in place; returns it. */
+export function apply(state, intent, rng) {
+  switch (intent && intent.type) {
+    case 'pass':     return passActivation(state);
+    case 'endRound': return beginEndRound(state);
+    default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
+  }
+}

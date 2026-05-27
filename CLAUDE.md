@@ -23,16 +23,19 @@ There are three entry points:
 
 ### Engine modules (`src/engine/`)
 
-The pure game logic has been extracted from the monolith into four ES modules (Phase 1 of the foundation refactor — complete except `gating.js`, see Planned Features). The engine has zero DOM dependencies and runs identically in the browser and on the server:
+The pure game logic has been extracted from the monolith into ES modules. The engine has zero DOM dependencies and runs identically in the browser and on the server:
 
 | File | Contents |
 |---|---|
 | `src/engine/constants.js` | All fleet defs (6 factions), `FACTIONS`, `ORDERS`, `LAYOUTS`, `DEPLOYMENTS`, `ASSET_PROFILES`, etc. |
 | `src/engine/rng.js` | Seeded PRNG (`makeRng(seed)`) + `localRng` (Math.random wrapper for browser play) |
 | `src/engine/state.js` | `createState()` factory, `buildSideFleet()`, `rebuildFleets()` |
-| `src/engine/mutators.js` | All state-mutating functions: movement, combat, scoring, asset resolution, etc. |
+| `src/engine/mutators.js` | All state-mutating functions (movement, combat, scoring, asset resolution…) plus `apply(state, intent, rng)`, the intent dispatcher. |
+| `src/engine/gating.js` | Intent legality: `isLegal(state, intent, side)` + `legalActions(state, side)`. Phase 1d / the intent layer — **in progress**: turn-flow intents (`pass`, `endRound`) are modelled; other action families still live inline in client handlers and migrate over incrementally. |
 
 All engine functions take `state` (and `rng` where randomness is needed) as explicit parameters — no globals, safe for concurrent server use.
+
+**Intent layer:** an "intent" is a small serialisable action `{ type, ...payload }`. `gating.js#isLegal` is the single legality gate (run by the server before applying, and by the client before mutating in hotseat); `mutators.js#apply` dispatches an intent to its mutator. Every intent type `apply()` handles must have a matching `isLegal` case. This is the mechanism by which the server becomes authoritative — see Planned Features for the migration status.
 
 ### Server (`server.js`, `src/api.js`, `src/rooms.js`)
 
@@ -44,7 +47,11 @@ The Node.js server (Phase 2 of the refactor — complete) hosts online two-playe
 | `src/api.js` | REST routes (`POST /api/rooms`, `GET /api/rooms/:id`) and the WebSocket connection/message handler. |
 | `src/rooms.js` | In-memory room lifecycle: create/join/leave, side slots (`ucm`/`shal`) + spectators, broadcast/send helpers, and a 4-hour inactivity TTL. No persistence. |
 
-Each room holds the authoritative `state` and a seeded `rng` (from `makeRng`). **The current model is a trusted relay:** the active client mutates its own `state` and pushes the full object (`{type:'state'}`); the server stores it and rebroadcasts (`{type:'full'}`) to the other side and spectators. Server-side legality/turn enforcement is intentionally deferred until `gating.js` exists — `api.js` carries an `intent` message stub that currently returns "not yet implemented".
+Each room holds the authoritative `state` and a seeded `rng` (from `makeRng`). The server is **migrating from trusted relay to server-authoritative**, and currently runs both paths:
+- **Intent path (authoritative):** `{type:'intent', intent}` → `isLegal(room.state, intent, side)` (reject + resync if illegal) → `apply(room.state, intent, room.rng)` → broadcast `{type:'full'}` to everyone. Migrated action families use this; the client does **not** mutate locally for these.
+- **Relay path (legacy, trusted):** `{type:'state'}` → store as authoritative → rebroadcast `{type:'full'}` to the others. Used by every action family not yet migrated to an intent.
+
+As more families move to intents, the relay path shrinks toward removal.
 
 ### Module-based client (`client/`)
 
@@ -55,7 +62,9 @@ Each room holds the authoritative `state` and a seeded `rng` (from `makeRng`). *
 
 **Shim pattern:** `client/index.html` exports state-bound wrapper functions (e.g. `function moveShip(...args) { return _moveShip(state, rng, ...args); }`) so the render/handler code can call engine functions without passing `state` explicitly. The shims live in a block immediately after the import block.
 
-**Online mode:** the originally-planned separate `client/net.js` and `client/render.js` were never created — networking and rendering live inline in `client/index.html` (same pragmatic choice as the shims). In online mode the client opens a WebSocket to `/ws?room=…&side=…`, pushes full state after each local action, and re-renders on each incoming state. UI gating blocks the non-active side from acting on the opponent's groups.
+**Online mode:** the originally-planned separate `client/net.js` and `client/render.js` were never created — networking and rendering live inline in `client/index.html` (same pragmatic choice as the shims). In online mode the client opens a WebSocket to `/ws?room=…&side=…` and re-renders on each incoming state. UI gating blocks the non-active side from acting on the opponent's groups.
+
+**`dispatch(intent)`** is the migration seam toward server authority. Handlers that have been migrated call `dispatch(intent)` instead of mutating directly: in hotseat it validates with `isLegal` then applies locally and re-renders; online it emits `{type:'intent'}` and waits for the server's authoritative broadcast (no local mutation). Un-migrated handlers still mutate `state` directly and rely on `netAfterRender()` pushing the full state via the relay path.
 
 ### Legacy monolith (`web/index.html`)
 
@@ -95,14 +104,18 @@ Ships are cloned with side-prefixed IDs (`'ucm:u1'`, `'shal:s1'`) into `state.gr
 Architecture plans live in `plans/`. The Foundation plan's section 8 holds the authoritative phase-by-phase status table.
 
 **Done:**
-- **Foundation Phase 1** (`DFC_Foundation_Architecture_Plan.md`) — engine extraction (`constants`, `rng`, `state`, `mutators`). Complete *except* `gating.js`.
-- **Foundation Phase 2** — Node server + WebSocket rooms (`server.js`, `src/api.js`, `src/rooms.js`), trusted-relay model.
+- **Foundation Phase 1** (`DFC_Foundation_Architecture_Plan.md`) — engine extraction (`constants`, `rng`, `state`, `mutators`).
+- **Foundation Phase 2** — Node server + WebSocket rooms (`server.js`, `src/api.js`, `src/rooms.js`).
 - **Foundation Phase 3** — online client: mode selector (hotseat / host / join), WebSocket networking, and UI side-gating in `client/index.html`.
 
-**Pending:**
-- **`src/engine/gating.js`** — the `legalActions()` / `isLegal()` API (Foundation Phase 1d). Gating logic still lives inline in `client/index.html` handlers/render functions. This is the key blocker: extracting it lets the server move from trusted relay to authoritative intent dispatch with real turn enforcement.
+**In progress — Phase 1d / server authority (intent migration):**
+- `src/engine/gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` exist; the server's intent path validates and applies authoritatively.
+- **Migrated so far:** turn-flow `pass` and `endRound`.
+- **Remaining:** migrate the other action families (orders, movement, combat/attack modal, launches, deploy, scoring, dropsite/asset/battalion steps) out of the inline `client/index.html` handlers, each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. The interactive combat/asset modals will likely commit their *resolved result* as a single intent rather than atomising every click. Once all families are migrated the legacy relay path can be removed.
+
+**Pending (later phases):**
 - **Custom Fleet Import** (`DFC_Fleet_Import_Plan.md`) — `src/fleet/` parser + ship/weapon DBs for the New Recruit export format.
-- **AI Opponent** (`DFC_AI_Opponent_Plan.md`) — `src/ai/` rules-based heuristics + optional LLM commander; depends on `gating.js` (`legalActions`).
+- **AI Opponent** (`DFC_AI_Opponent_Plan.md`) — `src/ai/` rules-based heuristics + optional LLM commander; consumes `legalActions`/`apply`.
 - **Production deploy** (`DFC_Multiplayer_Plan.md`) — nginx/TLS/systemd hosting for live online play.
 
 ## Known Limitations
@@ -110,5 +123,5 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 - Named admirals not implemented (uses generic admiral stats)
 - No custom fleet import yet (only built-in faction rosters)
 - No AI opponent yet
-- Online multiplayer is a **trusted relay** — no server-side legality/turn enforcement (deferred until `gating.js`); the client UI does the gating. Online play also requires running the Node server (the GitHub Pages deploy is hotseat-only)
-- `src/engine/gating.js` not yet extracted — gating logic is still inline in `client/index.html`
+- Online multiplayer is **partly server-authoritative**: migrated intents (`pass`, `endRound`) are validated/applied by the server; all other actions still use the trusted-relay path (client mutates and pushes full state, no server-side legality check). Online play also requires running the Node server (the GitHub Pages deploy is hotseat-only)
+- `src/engine/gating.js` covers only the turn-flow intents so far — the full legality surface (range, arc, fire limits, AP, coherency) is not yet extracted from `client/index.html`

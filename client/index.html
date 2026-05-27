@@ -1037,8 +1037,11 @@ import {
   resolveBoardingActions as _resolveBoardingActions,
   activeGroupIdForSide as _activeGroupIdForSide,
   sideHasPendingActivation as _sideHasPendingActivation,
-  advanceActiveSide as _advanceActiveSide, rollInitiative as _rollInitiative
+  advanceActiveSide as _advanceActiveSide, rollInitiative as _rollInitiative,
+  apply as _apply
 } from '../src/engine/mutators.js';
+
+import { isLegal as _isLegal, legalActions as _legalActions } from '../src/engine/gating.js';
 
 // ─── STATE INIT ───────────────────────────────────────────────────────────────
 const DROPSITE_VP = { S: { control: 2, contest: 0 }, M: { control: 3, contest: 1 }, L: { control: 4, contest: 2 } };
@@ -7243,19 +7246,15 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('#pass-activation')) {
     const P = state.planning;
     if (P && state.activeSide && P.passTokens[state.activeSide] > 0) {
-      P.passTokens[state.activeSide]--;
       flashLaunchMsg(`${FACTIONS[state.factions[state.activeSide]].name} passes`);
-      // Hand activation to the other side (mirrors finish-activation alternation).
-      const other = state.activeSide === 'ucm' ? 'shal' : 'ucm';
-      if (sideHasPendingActivation(other)) state.activeSide = other;
-      else if (!sideHasPendingActivation(state.activeSide)) state.activeSide = null;
+      dispatch({ type: 'pass' });
     }
-    renderAll(); return;
+    return;
   }
   if (e.target.matches('#end-round')) {
     // End of Activation Phase → Dropsite Activation, then the Asset Phase.
-    state.dropsiteActivation = { side: state.initiativeHolder || 'ucm', done: [], dsId: null };
-    renderAll(); return;
+    dispatch({ type: 'endRound' });
+    return;
   }
   // Dropsite Activation: pick a Controlled dropsite to activate.
   if (e.target.matches('[data-da-pick]')) {
@@ -9040,6 +9039,26 @@ function netIsMyTurn() {
 function netIsMySide(side) {
   if (!_netSide) return true;
   return _netSide === side;
+}
+
+// ---------------------------------------------------------------------------
+// Intent dispatch — the migration path toward server authority.
+// ---------------------------------------------------------------------------
+// Perform a game action as an intent (see src/engine/gating.js + apply()).
+//   Hotseat: validate, mutate the shared state locally, re-render.
+//   Online : the server is authoritative — emit the intent and wait for the
+//            broadcast of the new state (we do NOT mutate locally here).
+// Handlers not yet migrated to dispatch() still mutate state directly and rely
+// on netAfterRender()'s full-state relay.
+function dispatch(intent) {
+  const side = _netSide || state.activeSide;
+  if (!_isLegal(state, intent, side)) return;
+  if (_netSide) {
+    if (_netWs && _netConnected) _netWs.send(JSON.stringify({ type: 'intent', intent }));
+  } else {
+    _apply(state, intent, rng);
+    renderAll();
+  }
 }
 
 // ---------------------------------------------------------------------------

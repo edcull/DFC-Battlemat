@@ -2,6 +2,8 @@
 
 import { Router } from 'express';
 import { createRoom, getRoom, joinRoom, leaveRoom, broadcast, send, sideOf } from './rooms.js';
+import { isLegal } from './engine/gating.js';
+import { apply } from './engine/mutators.js';
 
 export const router = Router();
 
@@ -99,9 +101,24 @@ function onMessage(room, ws, side, msg) {
       break;
     }
 
-    // Placeholder for future server-authority intent dispatch (Phase 2c+).
+    // Server-authoritative intent dispatch. The server validates the action
+    // against gating.js and applies it to the authoritative state itself, then
+    // broadcasts the result to everyone (including the sender, who did not
+    // mutate locally). Migrated action families use this path; everything not
+    // yet migrated still uses the trusted-relay `state` path above.
     case 'intent': {
-      send(ws, { type: 'error', reason: 'Intent-based dispatch not yet implemented. Use type:state.' });
+      const intent = msg.intent;
+      if (!intent || typeof intent !== 'object') {
+        send(ws, { type: 'error', reason: 'Invalid intent payload.' });
+        return;
+      }
+      if (!isLegal(room.state, intent, side)) {
+        send(ws, { type: 'error', reason: `Illegal action: ${intent.type}` });
+        send(ws, { type: 'full', state: room.state }); // resync the rejected client
+        return;
+      }
+      apply(room.state, intent, room.rng);
+      broadcast(room, { type: 'full', state: room.state }); // to all, incl. sender
       break;
     }
 

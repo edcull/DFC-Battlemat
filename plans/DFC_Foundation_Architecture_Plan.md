@@ -1,9 +1,12 @@
 # DFC Battlemat — Foundational Architecture Plan
 
-> **Status (May 2026): PHASES 1–3 COMPLETE except `gating.js`.** Engine extracted; browser hotseat
-> working via modules; Node server with WebSocket rooms running; online client (mode selector +
-> side-gating) working as a trusted relay.
-> Outstanding: `gating.js` (Phase 1d), which unblocks server-authoritative turn enforcement.
+> **Status (May 2026): PHASES 1–3 COMPLETE; Phase 1d / server-authority migration IN PROGRESS.**
+> Engine extracted; browser hotseat working via modules; Node server with WebSocket rooms running;
+> online client (mode selector + side-gating) working.
+> `gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` now exist; the server has an
+> authoritative intent path alongside the legacy trusted relay. **Turn-flow intents (`pass`,
+> `endRound`) are migrated**; the remaining action families move over incrementally, after which
+> the relay path is removed.
 > Phase 4 (fleet import, AI) and Phase 5 (production deploy) are not yet started.
 > See section 3 for Phase 1 delivery notes and section 8 for the full phase-by-phase status table.
 
@@ -326,11 +329,11 @@ one-line guard in each handler).
 | **1a** | Extract `constants.js` | Pure data module, zero risk | ✅ Done |
 | **1b** | Parameterize RNG; extract `rng.js` | Deterministic randomness | ✅ Done |
 | **1c** | Extract `mutators.js` (grouped by area) | Headless engine | ✅ Done |
-| **1d** | Extract `gating.js`; expose `legalActions` / `isLegal` | Engine API | ⏳ Pending |
+| **1d** | Extract `gating.js`; expose `legalActions` / `isLegal` + `apply` dispatcher | Engine API | 🔄 In progress (turn-flow intents `pass`/`endRound` done; other families pending) |
 | **1e** | Wire `client/local.js`; browser hotseat via modules | Browser hotseat via modules | ✅ Done |
 | **2a** | `package.json`, Express skeleton, WebSocket rooms | Server running locally | ✅ Done |
 | **2b** | Intent protocol end-to-end; two tabs in sync | Local two-player networking | ✅ Done |
-| **2c** | Reconnect, turn enforcement, spectator broadcast | Robust rooms | ✅ Done (relay model; server-authority deferred to gating.js) |
+| **2c** | Reconnect, turn enforcement, spectator broadcast | Robust rooms | ✅ Done (relay + authoritative intent path; turn enforcement live for migrated intents) |
 | **3a** | Mode selector screen (hotseat / host / join) | Online client | ✅ Done |
 | **3b** | Side gating in UI | Player can only act on their turn | ✅ Done |
 | **4a** | `src/fleet/parser.js` + UCM `SHIP_DB`/`WEAPON_DB`; import UI | Fleet import (UCM) | ⏳ Pending |
@@ -339,9 +342,11 @@ one-line guard in each handler).
 | **4d** | `src/ai/llm-bot.js` via `/api/ai-move` | LLM commander | ⏳ Pending |
 | **5** | nginx + TLS + systemd; production deploy | Live online play | ⏳ Pending |
 
-**Do not start Phase 2 until Phase 1d (gating.js) is complete** — the server needs
-`legalActions()` / `isLegal()` to enforce turn rules, and extracting gating before building
-the server ensures the API contract is correct.
+**Note (actual sequence):** Phase 2 was built first as a trusted relay (server stores and
+rebroadcasts whatever the active client pushes), deferring 1d. Phase 1d / server authority is
+now being layered on afterward: `gating.js` + `apply` give the server an authoritative intent
+path, and action families are migrated from the relay to intents one at a time. The relay path
+stays working for un-migrated families throughout, and is removed once migration completes.
 
 ---
 
