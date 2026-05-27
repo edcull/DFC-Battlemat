@@ -162,11 +162,20 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 ## File structure
 
 ```
-web/index.html        — The entire app (~11,400 lines, self-contained)
-plans/DFC_Fleet_Import_Plan.md  — New Recruit custom fleet import design
-plans/DFC_Multiplayer_Plan.md   — WebSocket two-player design
-plans/DFC_AI_Opponent_Plan.md   — Rules bot + LLM commander design
-README.md                 — This file
+web/index.html                  — Legacy self-contained app (~11,400 lines); deployed to GitHub Pages
+client/
+  index.html                    — Module-based client (imports from src/engine/)
+  local.js                      — Hotseat glue: shared state + localRng
+src/engine/
+  constants.js                  — All fleet defs, ORDERS, LAYOUTS, ASSET_PROFILES, etc.
+  rng.js                        — Seeded PRNG + Math.random wrapper for local play
+  state.js                      — createState() factory, buildSideFleet(), rebuildFleets()
+  mutators.js                   — All state-mutating functions (movement, combat, scoring…)
+plans/
+  DFC_Foundation_Architecture_Plan.md  — Engine extraction + server + online client (Phase 1 done)
+  DFC_Fleet_Import_Plan.md             — New Recruit custom fleet import design
+  DFC_Multiplayer_Plan.md              — WebSocket two-player design
+  DFC_AI_Opponent_Plan.md              — Rules bot + LLM commander design
 ```
 
 ---
@@ -174,3 +183,5 @@ README.md                 — This file
 ## Browser compatibility
 
 Chrome, Firefox, and Edge (current versions). SVG, CSS Grid, and ES2020 are required — any browser from 2020+ will work. No internet connection required after the file is downloaded.
+
+The module-based client (`client/index.html`) requires ES modules to be served over HTTP — use any static file server (e.g. `python -m http.server`) rather than opening the file directly.
