@@ -1,6 +1,6 @@
 # DFC Battlemat
 
-A fully self-contained, single-file tactical assistant for **Dropfleet Commander**. No server, no install, no dependencies — open `dfc_battlemat.html` in any modern browser and play.
+A browser-based tactical assistant for **Dropfleet Commander**. The legacy single-file app (`web/index.html`) is fully self-contained — no server, no install, no dependencies; just open it in any modern browser and play. A newer module-based client (`client/index.html`) adds optional online two-player rooms via a small Node.js server.
 
 ---
 
@@ -14,7 +14,7 @@ Designed for **two players at the same screen** (hotseat), though the layout is 
 
 ## Quick start
 
-1. Open `dfc_battlemat.html` in Chrome, Firefox, or Edge.
+1. Open `web/index.html` in Chrome, Firefox, or Edge. (For online play instead, run `npm install && npm start` and open `http://localhost:3000/client/index.html`.)
 2. **Setup** — choose factions, admirals, secondary objectives for each side, then pick deployment/approach/layout/variant/scoring objective. Hit **⚡ TEST SETUP** for an instant UCM vs Scourge game if you just want to try it.
 3. **Scenery** — place or randomise scenery objects.
 4. **Deploy** — click a group in the left panel, then click in your deployment zone to place ships. Set facing by clicking after placement. Use **↩ UNDO DEPLOY** to take a group back off-table.
@@ -153,7 +153,7 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 
 - **Named / Famous Admiral abilities** are not implemented (generic Admiral Level + Command Ship-X are).
 - **Custom fleet import** is not implemented — the six built-in rosters cover the included ships only. A full New Recruit import system is designed and documented (`DFC_Fleet_Import_Plan.md`).
-- **Multiplayer** is single-screen hotseat only. A WebSocket two-player plan exists (`DFC_Multiplayer_Plan.md`).
+- **Multiplayer**: the legacy `web/index.html` is single-screen hotseat only. The module client (`client/index.html`) adds online two-player rooms via the Node server (`server.js`) — currently a trusted relay with no server-side rules enforcement (production hosting still to do; see `DFC_Multiplayer_Plan.md`).
 - **Single-player AI** is not implemented. A rules-bot + LLM-commander design is documented (`DFC_AI_Opponent_Plan.md`).
 - A few §12 Dropsite interactions (Collateral Damage, attack-damage → feature removal) are partially implemented and worth confirming in play.
 
@@ -162,17 +162,22 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 ## File structure
 
 ```
+package.json                    — Node project + deps (express, ws, fast-json-patch); npm start / npm run dev
+server.js                       — Node server: Express static + REST API + WebSocket upgrade
 web/index.html                  — Legacy self-contained app (~11,400 lines); deployed to GitHub Pages
 client/
-  index.html                    — Module-based client (imports from src/engine/)
+  index.html                    — Module-based client (imports src/engine/; hotseat + online, networking inline)
   local.js                      — Hotseat glue: shared state + localRng
-src/engine/
-  constants.js                  — All fleet defs, ORDERS, LAYOUTS, ASSET_PROFILES, etc.
-  rng.js                        — Seeded PRNG + Math.random wrapper for local play
-  state.js                      — createState() factory, buildSideFleet(), rebuildFleets()
-  mutators.js                   — All state-mutating functions (movement, combat, scoring…)
+src/
+  api.js                        — REST routes + WebSocket message handler
+  rooms.js                      — In-memory room lifecycle (slots, spectators, broadcast, TTL)
+  engine/
+    constants.js                — All fleet defs, ORDERS, LAYOUTS, ASSET_PROFILES, etc.
+    rng.js                      — Seeded PRNG + Math.random wrapper for local play
+    state.js                    — createState() factory, buildSideFleet(), rebuildFleets()
+    mutators.js                 — All state-mutating functions (movement, combat, scoring…)
 plans/
-  DFC_Foundation_Architecture_Plan.md  — Engine extraction + server + online client (Phase 1 done)
+  DFC_Foundation_Architecture_Plan.md  — Engine extraction + server + online client (Phases 1–3 done bar gating.js)
   DFC_Fleet_Import_Plan.md             — New Recruit custom fleet import design
   DFC_Multiplayer_Plan.md              — WebSocket two-player design
   DFC_AI_Opponent_Plan.md              — Rules bot + LLM commander design

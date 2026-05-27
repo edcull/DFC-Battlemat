@@ -1,12 +1,13 @@
 # DFC Battlemat — Single-Player vs a Scripted / LLM Opponent
 
 > **Status (May 2026): NOT YET IMPLEMENTED — plan document only.**
-> The battlemat is now a ~11,500-line single HTML file with a complete rules engine.
-> The engine/DOM split and `legalActions`/`apply` API described in §1 remain the prerequisite.
-> All game mechanics the bot would need to drive (orders, movement, firing, launches, scoring,
-> asset combat, etc.) are fully implemented — the logic just isn't yet accessible headlessly.
-> The `state.activeSide` alternation, activation locking, and group-action tracking are all
-> in place, so the turn-loop integration point is well-defined.
+> The engine/DOM split is now done: pure game logic lives in `src/engine/` and runs headlessly
+> on the Node server, so the bot can drive the engine directly. The remaining prerequisite is the
+> `legalActions`/`isLegal` API (`src/engine/gating.js`), which has not been extracted yet — the
+> rules bot scores candidate actions returned by `legalActions`, so it is blocked on that.
+> All game mechanics the bot would need (orders, movement, firing, launches, scoring, asset
+> combat, etc.) are fully implemented, and `state.activeSide` alternation, activation locking, and
+> group-action tracking are all in place, so the turn-loop integration point is well-defined.
 
 
 Goal: let one human play against the computer controlling the other side. Two engines proposed —

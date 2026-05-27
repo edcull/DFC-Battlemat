@@ -1,10 +1,12 @@
 # DFC Battlemat — Two-Player Online Play (Node.js + WebSocket + nginx)
 
-> **Status (May 2026): NOT YET IMPLEMENTED — plan document only.**
-> The battlemat is now a ~11,500-line single HTML file with a complete rules engine.
-> The engine/DOM split described in §3 remains the prerequisite for both this and the AI plan.
-> All game mechanics described below have been fully implemented in the HTML engine,
-> so the "what the engine does" descriptions are accurate — only the networking layer is missing.
+> **Status (May 2026): PARTIALLY IMPLEMENTED — networking relay live; production hosting pending.**
+> The engine/DOM split (the prerequisite for this plan) is done: pure game logic lives in
+> `src/engine/`. A Node server (`server.js`, `src/api.js`, `src/rooms.js`) and online client
+> (`client/index.html`) now provide working two-player rooms over WebSocket as a **trusted relay**
+> (clients push full state; no server-side rules enforcement yet — that waits on `gating.js`).
+> Still to do: the nginx/TLS/systemd production deployment described below, and the move to
+> server-authoritative dispatch once `gating.js` exists.
 
 
 Goal: let two people in different browsers play one shared game, each controlling their own
