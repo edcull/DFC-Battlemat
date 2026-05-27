@@ -6992,42 +6992,12 @@ document.addEventListener('click', (e) => {
     if (grp.order && order !== grp.order && grp.ships.some(s => !s.destroyed && s.movedThisRound)) {
       return;
     }
-    grp.order = order;
-    logEvent(`${getDef(gid).name} → ${ORDERS[order].label}`);
-    // Once an Order is chosen, the deploy-point adjust window closes for arrived ships.
-    grp.ships.forEach(s => { s.justArrived = false; });
-    // Activating again ends the previous Silent Running sig reduction.
-    grp.ships.forEach(s => { s.sigSilent = false; });
-    // Apply Spike effects from the chosen Order:
-    if (order === 'GQ') grp.spikes = Math.max(0, grp.spikes - 2);
-    if (order === 'SR') grp.spikes = 0;
-    // Damage Control: each ship recovers Hull (1, or D3 for H/C tonnage) once,
-    // and is flagged to roll 2D6 per crippling effect in the Repair step.
-    if (order === 'DC') {
-      const ddef = getDef(gid);
-      grp.ships.forEach(s => {
-        if (s.destroyed || s.offTable) return;
-        s.dcThisRound = true;
-        if (!s.dcRepaired) {
-          s.dcRepaired = true;
-          const rec = (ddef.tonnage === 'H' || ddef.tonnage === 'C') ? Math.ceil(rollDie() / 2) : 1; // D3 for H/C
-          s.hull = Math.min(s.maxHull, s.hull + rec);
-          flashLaunchMsg(`${ddef.name} Damage Control: +${rec} Hull`, true);
-        }
-      });
-    }
-    // (WF, CC, MT add spikes at END of activation — handled in finish-activation)
-    // NOTE: do NOT reset movedThisRound here. Each ship moves at most once per round,
-    // regardless of how many times the Order is changed.
-    // Auto-select a ship to activate its movement immediately: pick the lead ship
-    // (or first on-table, not-yet-moved ship) so its move cone shows at once.
-    if (state.selectedShipIdx === null && ORDERS[order] && ORDERS[order].moveMax > 0) {
-      const leadIdx = grp.leadShipIdx || 0;
-      const pick = (i) => { const s = grp.ships[i]; return s && !s.destroyed && !s.offTable && !s.movedThisRound; };
-      let idx = pick(leadIdx) ? leadIdx : grp.ships.findIndex((s, i) => pick(i));
-      if (idx >= 0) state.selectedShipIdx = idx;
-    }
-    renderAll(); return;
+    // (WF, CC, MT add spikes at END of activation — handled in finish-activation.)
+    // movedThisRound is intentionally NOT reset: each ship moves at most once per
+    // round regardless of how many times the Order is changed. The Order effects
+    // (Spikes, Damage Control roll, auto-select) live in the engine applyOrder().
+    dispatch({ type: 'applyOrder', gid, order });
+    return;
   }
   // Open Network: per-ship Order assignment.
   if (e.target.matches('[data-ship-order]')) {
@@ -9051,7 +9021,7 @@ function netIsMySide(side) {
 // Handlers not yet migrated to dispatch() still mutate state directly and rely
 // on netAfterRender()'s full-state relay.
 function dispatch(intent) {
-  const side = _netSide || state.activeSide;
+  const side = _netSide || _intentSide(intent);
   if (!_isLegal(state, intent, side)) return;
   if (_netSide) {
     if (_netWs && _netConnected) _netWs.send(JSON.stringify({ type: 'intent', intent }));
@@ -9059,6 +9029,15 @@ function dispatch(intent) {
     _apply(state, intent, rng);
     renderAll();
   }
+}
+
+// The side performing an intent. Online, the server uses the connection's side;
+// locally (hotseat) the operator acts for whichever side the intent concerns —
+// an intent targeting a Group belongs to that Group's owner, otherwise it is an
+// active-side action (pass / endRound).
+function _intentSide(intent) {
+  if (intent && intent.gid) { const d = getDef(intent.gid); if (d) return d.side; }
+  return state.activeSide;
 }
 
 // ---------------------------------------------------------------------------

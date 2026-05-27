@@ -1593,11 +1593,51 @@ export function beginEndRound(state) {
   return state;
 }
 
+/* Assign an Order to a Group, applying its immediate effects (Spike changes and
+   Damage Control hull recovery). Legality is checked by gating.js#isLegal — this
+   only mutates. The DC hull roll uses `rng`, so it resolves on whichever runtime
+   applies the intent (seeded server rng online, localRng in hotseat). */
+export function applyOrder(state, rng, gid, order) {
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const def = getDef(state, gid);
+  grp.order = order;
+  logEvent(state, `${def.name} → ${ORDERS[order].label}`);
+  // Re-activating ends any prior deploy-adjust window and Silent Running reduction.
+  grp.ships.forEach(s => { s.justArrived = false; s.sigSilent = false; });
+  // Immediate Spike effects.
+  if (order === 'GQ') grp.spikes = Math.max(0, grp.spikes - 2);
+  if (order === 'SR') grp.spikes = 0;
+  // Damage Control: each ship recovers Hull once (1, or D3 for H/C tonnage) and
+  // is flagged to roll crippling-repair in the Repair step.
+  if (order === 'DC') {
+    grp.ships.forEach(s => {
+      if (s.destroyed || s.offTable) return;
+      s.dcThisRound = true;
+      if (!s.dcRepaired) {
+        s.dcRepaired = true;
+        const rec = (def.tonnage === 'H' || def.tonnage === 'C') ? Math.ceil(rollDie(rng) / 2) : 1;
+        s.hull = Math.min(s.maxHull, s.hull + rec);
+        logEvent(state, `${def.name} Damage Control: +${rec} Hull`);
+      }
+    });
+  }
+  // Auto-select a ship so its move cone shows immediately (view convenience).
+  if (state.selectedShipIdx === null && ORDERS[order] && ORDERS[order].moveMax > 0) {
+    const leadIdx = grp.leadShipIdx || 0;
+    const pick = (i) => { const s = grp.ships[i]; return s && !s.destroyed && !s.offTable && !s.movedThisRound; };
+    const idx = pick(leadIdx) ? leadIdx : grp.ships.findIndex((s, i) => pick(i));
+    if (idx >= 0) state.selectedShipIdx = idx;
+  }
+  return state;
+}
+
 /* Dispatch an intent to its mutator. Mutates `state` in place; returns it. */
 export function apply(state, intent, rng) {
   switch (intent && intent.type) {
-    case 'pass':     return passActivation(state);
-    case 'endRound': return beginEndRound(state);
+    case 'pass':       return passActivation(state);
+    case 'endRound':   return beginEndRound(state);
+    case 'applyOrder': return applyOrder(state, rng, intent.gid, intent.order);
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }

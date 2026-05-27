@@ -11,6 +11,10 @@
 // apply() dispatcher in mutators.js — every intent type apply() handles must
 // have a matching case here.
 
+import { ORDERS } from './constants.js';
+import { getDef } from './state.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide } from './mutators.js';
+
 const INTENT_TYPES = ['pass', 'endRound'];
 
 export function isLegal(state, intent, side) {
@@ -27,6 +31,23 @@ export function isLegal(state, intent, side) {
       // The active side ends the round. If no side is active (all activations
       // are done) either player may trigger it.
       return state.activeSide === side || state.activeSide === null;
+    }
+    case 'applyOrder': {
+      const { gid, order } = intent;
+      if (!ORDERS[order]) return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;            // only order your own Group
+      if (nextUndeployedShipIdx(state, gid) >= 0) return false; // all ships must be deployed
+      if (state.phase === 'play') {
+        if (state.activeSide && state.activeSide !== side) return false; // not your turn
+        const activatingGid = activeGroupIdForSide(state, def.side);
+        if (activatingGid && activatingGid !== gid) return false;        // another Group mid-activation
+      }
+      // Order is locked once a ship has moved under the current Order.
+      if (grp.order && order !== grp.order && grp.ships.some(s => !s.destroyed && s.movedThisRound)) return false;
+      return true;
     }
     default:
       return false;

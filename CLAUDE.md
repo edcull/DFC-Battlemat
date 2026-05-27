@@ -31,7 +31,7 @@ The pure game logic has been extracted from the monolith into ES modules. The en
 | `src/engine/rng.js` | Seeded PRNG (`makeRng(seed)`) + `localRng` (Math.random wrapper for browser play) |
 | `src/engine/state.js` | `createState()` factory, `buildSideFleet()`, `rebuildFleets()` |
 | `src/engine/mutators.js` | All state-mutating functions (movement, combat, scoring, asset resolution…) plus `apply(state, intent, rng)`, the intent dispatcher. |
-| `src/engine/gating.js` | Intent legality: `isLegal(state, intent, side)` + `legalActions(state, side)`. Phase 1d / the intent layer — **in progress**: turn-flow intents (`pass`, `endRound`) are modelled; other action families still live inline in client handlers and migrate over incrementally. |
+| `src/engine/gating.js` | Intent legality: `isLegal(state, intent, side)` + `legalActions(state, side)`. Phase 1d / the intent layer — **in progress**: `pass`, `endRound`, and group Orders (`applyOrder`) are modelled; other action families still live inline in client handlers and migrate over incrementally. |
 
 All engine functions take `state` (and `rng` where randomness is needed) as explicit parameters — no globals, safe for concurrent server use.
 
@@ -110,8 +110,8 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 
 **In progress — Phase 1d / server authority (intent migration):**
 - `src/engine/gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` exist; the server's intent path validates and applies authoritatively.
-- **Migrated so far:** turn-flow `pass` and `endRound`.
-- **Remaining:** migrate the other action families (orders, movement, combat/attack modal, launches, deploy, scoring, dropsite/asset/battalion steps) out of the inline `client/index.html` handlers, each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. The interactive combat/asset modals will likely commit their *resolved result* as a single intent rather than atomising every click. Once all families are migrated the legacy relay path can be removed.
+- **Migrated so far:** turn-flow `pass` / `endRound`, and group Orders (`applyOrder`).
+- **Remaining:** migrate the other action families (movement, combat/attack modal, launches, deploy, scoring, dropsite/asset/battalion steps) out of the inline `client/index.html` handlers, each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. The interactive combat/asset modals will likely commit their *resolved result* as a single intent rather than atomising every click. Movement also needs a decision on how deeply the server re-validates geometry (and how the rng-driven scenery move-hits are resolved). Once all families are migrated the legacy relay path can be removed.
 
 **Pending (later phases):**
 - **Custom Fleet Import** (`DFC_Fleet_Import_Plan.md`) — `src/fleet/` parser + ship/weapon DBs for the New Recruit export format.
@@ -123,5 +123,5 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 - Named admirals not implemented (uses generic admiral stats)
 - No custom fleet import yet (only built-in faction rosters)
 - No AI opponent yet
-- Online multiplayer is **partly server-authoritative**: migrated intents (`pass`, `endRound`) are validated/applied by the server; all other actions still use the trusted-relay path (client mutates and pushes full state, no server-side legality check). Online play also requires running the Node server (the GitHub Pages deploy is hotseat-only)
+- Online multiplayer is **partly server-authoritative**: migrated intents (`pass`, `endRound`, `applyOrder`) are validated/applied by the server; all other actions still use the trusted-relay path (client mutates and pushes full state, no server-side legality check). Online play also requires running the Node server (the GitHub Pages deploy is hotseat-only)
 - `src/engine/gating.js` covers only the turn-flow intents so far — the full legality surface (range, arc, fire limits, AP, coherency) is not yet extracted from `client/index.html`
