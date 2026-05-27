@@ -96,6 +96,23 @@ export function isLegal(state, intent, side) {
       const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
       return dist <= v.remaining + 0.5 && angOff <= 20;
     }
+    case 'attackStep':
+    case 'attackReroll':
+    case 'attackFighterReroll':
+    case 'finishAttack':
+    case 'attackDeclare': {
+      if (state.phase !== 'play' || !state.attackModal) return false;
+      const atk = state.assetActiveSide || state.activeSide;            // attacker drives the flow
+      const def = atk === 'ucm' ? 'shal' : atk === 'shal' ? 'ucm' : null; // defender owns defensive choices
+      // Defensive decisions (Shields / Brace / Contain, save re-rolls, Close
+      // Protection) belong to the defender; the rest (advances, hit re-rolls,
+      // Overcharge / Escort / Impel, finish) to the attacker.
+      const defensive =
+        (intent.type === 'attackFighterReroll') ||
+        (intent.type === 'attackReroll' && intent.which === 'save') ||
+        (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'));
+      return side === (defensive ? def : atk);
+    }
     default:
       return false;
   }

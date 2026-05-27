@@ -1043,7 +1043,14 @@ import {
   rollCrippleEffect as _rollCrippleEffect, rollExplosionEffect as _rollExplosionEffect,
   applyExplosionEffect as _applyExplosionEffect,
   effectiveOrder as _effectiveOrder, onIndividualOrders as _onIndividualOrders,
-  shipInNetwork as _shipInNetwork
+  shipInNetwork as _shipInNetwork,
+  resolveAttackDamage as _resolveAttackDamage, proceedQueues as _proceedQueues,
+  rollDeferredBackupSaves as _rollDeferredBackupSaves,
+  coherencyInches as _coherencyInches, outOfFormationSet as _outOfFormationSet,
+  groupInFormation as _groupInFormation,
+  advanceAttack as _advanceAttack, nextShotOrResolve as _nextShotOrResolve,
+  applyCripplingNext as _applyCripplingNext, applyExplosionNext as _applyExplosionNext,
+  finishAttack as _finishAttack
 } from '../src/engine/mutators.js';
 
 import { isLegal as _isLegal, legalActions as _legalActions } from '../src/engine/gating.js';
@@ -2133,13 +2140,7 @@ function renderDetail() {
 
     // Wire up buttons
     const containBtn = div.querySelector('#expl-contain-btn');
-    if (containBtn) containBtn.addEventListener('click', () => {
-      if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !ex.contained) {
-        state.planning.ap[defSide] -= 2; ex.contained = true;
-        M.log.push(`${factionName(defSide)} Contained Reactor (explosion → 2)`);
-        renderAll();
-      }
-    });
+    if (containBtn) containBtn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'contain' }));
     const rollBtn = div.querySelector('#expl-roll-btn');
     if (rollBtn) rollBtn.addEventListener('click', () => advanceAttack('explosion-roll'));
     const resolveBtn = div.querySelector('#expl-resolve-btn');
@@ -3642,85 +3643,6 @@ function renderAttackModal() {
     const td = getDef(s.targetGid);
     const ts = state.groups[s.targetGid].ships[s.targetSi];
     const sp = parseWeaponSpecials(s.w);
-    if (!M.hitResult) {
-      // Lock: Mauler uses the target's relevant save as Lock; Calibre improves Lock
-      // by 1 vs listed tonnages.
-      let lock = lockVal(s.w);
-      if (sp.mauler) {
-        const sv = s.w.type === 'K' ? saveVal(td.ks) : s.w.type === 'E' ? saveVal(td.es) : (shieldSaveVal(td) || 6);
-        if (sv != null) lock = sv;
-      }
-      if (sp.calibre && sp.calibre.toUpperCase().includes(td.tonnage)) lock = Math.max(2, lock - 1);
-      // ── ATMOSPHERE ATTACK RULES (§4.1.2) ──
-      // forceSix: hit only on 6+ and cannot critical. Otherwise apply Lock modifiers.
-      let forceSix = false;
-      if (!M.bomber && M.attackerGid) {
-        const ash = state.groups[M.attackerGid].ships[M.attackerSi];
-        const aL = ash && (ash.layer || 'orbit'), tL = ts.layer || 'orbit';
-        const isCity = td.category === 'city';
-        const targetDescent = /Descent/i.test(td.special || '');
-        const isBombardment = /Bombardment/i.test(s.w.special || '');
-        if (isCity && isBombardment) {
-          lock = Math.max(2, lock - 2);            // Bombardment improves Lock by 2 vs Cities
-        } else if (tL === 'atmosphere' && (isCity || targetDescent)) {
-          forceSix = true;                          // City / Descent ship in Atmosphere → 6+, no crit
-        } else if (aL === 'atmosphere' && tL === 'orbit') {
-          forceSix = true;                          // firing Atmosphere → Orbit → 6+, no crit
-        } else if (aL === 'orbit' && tL === 'atmosphere') {
-          lock = Math.min(6, lock + 1);             // Orbit → non-Descent ship in Atmosphere: −1 Lock
-        }
-      }
-      // Fusillade-X: for pooled group fire it's already baked per-ship at combine time
-      // (s.fusilladeBaked). For single-ship / non-grouped attacks, apply it here.
-      let att = s.w.att;
-      if (sp.fusillade && !s.fusilladeBaked && !M.bomber && M.attackerGid) {
-        const ag = state.groups[M.attackerGid];
-        const eo = ag ? effectiveOrder(getDef(M.attackerGid), ag, M.attackerSi) : null;
-        if (eo === 'WF') att += sp.fusillade;
-      }
-      // Sustained Fire: double Att vs a target Group hit in the PREVIOUS round.
-      if (sp.sustained && !M.bomber) {
-        const tg = state.groups[s.targetGid];
-        if (tg && tg.hitByLastRound && tg.hitByLastRound.includes(M.attackerGid)) att *= 2;
-      }
-      const dice = [];
-      let hits = 0, crits = 0, sixes = 0;
-      // Reinforced Armour: this target can only be critted on Lock+3 (not +2).
-      const critMargin = (td.special && /Reinforced Armour/i.test(td.special)) ? 3 : 2;
-      for (let i = 0; i < att; i++) {
-        const r = rollDie();
-        // Atmosphere forceSix: hits only on 6, and never criticals.
-        const isHit = forceSix ? (r === 6) : (r >= lock);
-        const isCrit = forceSix ? false : (r >= lock + critMargin);
-        if (isHit) hits++;
-        if (isCrit) crits++;
-        if (r === 6) sixes++;
-        dice.push({ r, isHit, isCrit });
-      }
-      M.hitResult = { dice, hits, crits, lock, forceSix };
-      // Sustained Fire bookkeeping: record that this attacker Group hit the target Group.
-      if (hits > 0 && !M.bomber && M.attackerGid) {
-        const tg = state.groups[s.targetGid];
-        if (tg) { tg.hitByThisRound = tg.hitByThisRound || []; if (!tg.hitByThisRound.includes(M.attackerGid)) tg.hitByThisRound.push(M.attackerGid); }
-      }
-      // Overcharge: each roll of 6 costs the attacker this weapon's UNMODIFIED Damage
-      // in Hull (applied to the firing ship immediately).
-      const oc = M.overcharge && M.overcharge[s.wi];
-      if (oc && sixes > 0 && !M.bomber && M.attackerGid) {
-        const ash = state.groups[M.attackerGid].ships[M.attackerSi];
-        if (ash) {
-          const self = sixes * (s.w.dmg || 0);
-          ash.hull = Math.max(0, ash.hull - self);
-          M.log.push(`Overcharge: ${s.w.name} dealt ${self} self-damage (${sixes}×6)`);
-          if (ash.hull <= 0 && !ash.destroyed) { ash.destroyed = true; }
-        }
-      }
-      // Bloom-X: attacker gains X spikes when this weapon fires.
-      if (sp.bloom && !M.bomber && M.attackerGid) {
-        const ag = state.groups[M.attackerGid];
-        if (ag) ag.spikes = (ag.spikes || 0) + sp.bloom;
-      }
-    }
     const hr = M.hitResult;
     const effNote = [
       sp.mauler ? `Mauler (Lock=${hr.lock}+)` : '',
@@ -3759,74 +3681,6 @@ function renderAttackModal() {
     const td = getDef(s.targetGid);
     const ts = state.groups[s.targetGid].ships[s.targetSi];
     const sp = parseWeaponSpecials(s.w);
-    if (!M.saveResult) {
-      const hr = M.hitResult;
-      const k = targetKey(s.targetGid, s.targetSi);
-      const shieldUp = !!M.shieldsUp[k];
-      const sat = M.saturation || 0;       // bomber Saturation Fire: ignore some hits' saves
-      // Build a per-hit list. Each non-crit hit and each crit hit is one entry.
-      // Penetrator: criticals become Core hits (use Shield/none save).
-      // Burnthrough: each crit lowers THIS weapon's ES/KS by X for all its hits.
-      const critCount = hr.crits;
-      const burnReduce = sp.burnthrough * critCount; // total ES/KS reduction from burnthrough
-      const hitsList = [];
-      let critsRemaining = hr.crits;
-      for (let i = 0; i < hr.hits; i++) {
-        const isCrit = critsRemaining > 0; if (isCrit) critsRemaining--;
-        let type = s.w.type;
-        if (isCrit && sp.penetrator) type = 'C'; // critical → Core hit
-        // Base save for this hit's type.
-        let sv = baseSaveForType(td, ts, type, shieldUp);
-        // ES/KS modifiers (Scald, Reave, Burnthrough) apply to E/K hits ONLY, and
-        // are IGNORED when the Shield Save is in use (Shield ignores ES/KS modifiers).
-        if (sv != null && type !== 'C' && !shieldUp) {
-          let red = sp.scald + burnReduce + (isCrit ? sp.reave : 0);
-          if (red) sv = Math.min(6, sv + red); // worse save (capped at 6+)
-        }
-        // Damage for this hit: Critical-X adds X to a crit's damage.
-        const ocOn = M.overcharge && M.overcharge[s.wi];
-        const baseDmg = ocOn ? (s.w.dmg * 2) : s.w.dmg;
-        const dmg = baseDmg + (isCrit ? sp.critical : 0);
-        hitsList.push({ isCrit, type, sv, dmg, saved: false, savedBy: null });
-      }
-      // Roll saves per hit (primary), honouring Saturation (skip saves for `sat` hits).
-      const primDice = [];
-      let skipSaves = sat;
-      hitsList.forEach(h => {
-        if (h.sv == null) return; // no save possible
-        if (skipSaves > 0) { skipSaves--; h.noSaveDie = true; return; } // saturation removes the save die
-        const r = rollDie(); const ok = r >= h.sv;
-        primDice.push({ r, ok, sv: h.sv, crit: h.isCrit });
-        if (ok) { h.saved = true; h.savedBy = 'primary'; }
-      });
-      // Shield-X: the Group gains 1 Spike each time it uses Shield Saves (once per
-      // attack sequence, regardless of how many saves were rolled).
-      if (shieldUp && !M.shieldSpiked) {
-        M.shieldSpiked = M.shieldSpiked || {};
-        if (!M.shieldSpiked[k]) { M.shieldSpiked[k] = true; ts.spikes = (ts.spikes || 0) + 1; }
-      }
-      // Backup saves and Aegis are DEFERRED until after any re-rolls (AP / Fighter
-      // Close Protection) are applied to the primary ES/KS saves. Stored here so the
-      // backup step can use them; the dice are rolled in rollDeferredBackupSaves().
-      let backupVal = saveVal(td.bs);
-      const tgrp = state.groups[s.targetGid];
-      if (tgrp && tgrp.ships.length > 1 && groupInFormation(td)) {
-        backupVal = (backupVal == null) ? 6 : Math.min(backupVal, 6);
-      }
-      const backDice = [];
-      const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
-      const isCloseAction = /Close Action/i.test(s.w.special || '');
-      const aegisDice = [];
-      let aegisY = 0;
-      const dmg = hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
-      const unsaved = hitsList.filter(h => !h.saved).length;
-      // Status applies on a HIT (regardless of damage); Corruptor on damage.
-      M.saveResult = { hitsList, primDice, backDice, backupVal, aegisDice, aegisY, unsaved, dmg,
-        backupRolled: false, targetGid: s.targetGid, isBomberAtk, isCloseAction,
-        flash: sp.flash, crippling: sp.crippling, penetrator: sp.penetrator,
-        status: sp.status && hitsList.length > 0, corruptor: (sp.corruptor && dmg > 0) ? sp.corruptor : 0,
-        critDamaged: hitsList.some(h => h.isCrit && !h.saved) };
-    }
     const sr = M.saveResult;
     const typeLabel = (t) => t === 'E' ? 'ES' : t === 'K' ? 'KS' : 'Shield/Core';
     const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
@@ -3972,29 +3826,13 @@ function renderAttackModal() {
   document.body.appendChild(overlay);
 
   overlay.querySelectorAll('[data-shield-toggle]').forEach(cb => {
-    cb.addEventListener('change', () => { M.shieldsUp[cb.dataset.shieldToggle] = cb.checked; });
+    cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'shield', key: cb.dataset.shieldToggle, value: cb.checked }));
   });
   overlay.querySelectorAll('[data-overcharge]').forEach(cb => {
-    cb.addEventListener('change', () => { M.overcharge = M.overcharge || {}; M.overcharge[cb.dataset.overcharge] = cb.checked; });
+    cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'overcharge', wi: cb.dataset.overcharge, value: cb.checked }));
   });
   overlay.querySelectorAll('[data-escort]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.escort);
-      const s = M.shots[idx];
-      if (!s || s.escortedTo) return;
-      const esc = eligibleEscort(s.targetGid, s.targetSi);
-      if (!esc) { renderAll(); return; }
-      // Only one Group may Escort at a time across this attack.
-      if (M.escortGid && M.escortGid !== esc.gid) { flashLaunchMsg('Only one Escort Group per attack'); return; }
-      M.escortGid = esc.gid;
-      const eg = state.groups[esc.gid];
-      const leadIdx = eg.ships.findIndex(sh => !sh.destroyed && !sh.offTable);
-      // Remember the original target (for the cap) and redirect the shot to the Escort.
-      s.escortedTo = { gid: esc.gid, si: leadIdx, origGid: s.targetGid, origSi: s.targetSi };
-      s.targetGid = esc.gid; s.targetSi = leadIdx;
-      flashLaunchMsg(`Escort: ${esc.name} intercepts hits`, true);
-      renderAll();
-    });
+    btn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'escort', idx: parseInt(btn.dataset.escort) }));
   });
   const cancelBtn = overlay.querySelector('[data-am-cancel]');
   if (cancelBtn) cancelBtn.addEventListener('click', () => { state.attackModal = null; renderAll(); });
@@ -4003,47 +3841,11 @@ function renderAttackModal() {
   const nextBtn = overlay.querySelector('[data-am-next]');
   if (nextBtn) nextBtn.addEventListener('click', () => advanceAttack(nextBtn.dataset.amNext));
   const braceBtn = overlay.querySelector('[data-am-brace]');
-  if (braceBtn) braceBtn.addEventListener('click', () => {
-    const c = M.crippleQueue[0]; const defSide = getDef(c.gid) && getDef(c.gid).side;
-    if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !c.braced) {
-      state.planning.ap[defSide] -= 2; c.braced = true;
-      M.log.push(`${factionName(defSide)} Braced for Impact (crippling → 4)`);
-      renderAll();
-    }
-  });
+  if (braceBtn) braceBtn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'brace' }));
   const containBtn = overlay.querySelector('[data-am-contain]');
-  if (containBtn) containBtn.addEventListener('click', () => {
-    const ex = M.explodeQueue[0]; const defSide = getDef(ex.gid) && getDef(ex.gid).side;
-    if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !ex.contained) {
-      state.planning.ap[defSide] -= 2; ex.contained = true;
-      M.log.push(`${factionName(defSide)} Contained Reactor (explosion → 2)`);
-      renderAll();
-    }
-  });
+  if (containBtn) containBtn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'contain' }));
   overlay.querySelectorAll('[data-impel]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const choice = btn.dataset.impel;
-      const q = M.impelQueue.shift();
-      const grp = state.groups[q.gid];
-      if (grp) {
-        if (choice === 'turn') {
-          const turn = q.big ? 90 : 45;
-          grp.ships.forEach(s => { if (!s.destroyed && !s.offTable) s.heading = ((s.heading || 0) + turn) % 360; });
-          M.log.push(`Impel: ${getDef(q.gid).name} turned ${turn}°`);
-        } else {
-          const distPx = q.x * 2 * INCH;
-          grp.ships.forEach(s => {
-            if (s.destroyed || s.offTable) return;
-            const rad = (s.heading || 0) * Math.PI / 180;
-            s.x = Math.max(0, Math.min(BOARD_PX, s.x + Math.cos(rad) * distPx));
-            s.y = Math.max(0, Math.min(BOARD_PX, s.y + Math.sin(rad) * distPx));
-          });
-          M.log.push(`Impel: ${getDef(q.gid).name} moved forward ${q.x*2}"`);
-        }
-      }
-      proceedQueues();
-      renderAll();
-    });
+    btn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'impel', choice: btn.dataset.impel }));
   });
   overlay.querySelectorAll('[data-rr-adj]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -4088,399 +3890,53 @@ function renderAttackModal() {
   });
   // Close Protection: re-roll failed saves, spending the selected fighters.
   const fpRerollBtn = overlay.querySelector('[data-am-fighter-reroll]');
-  if (fpRerollBtn) fpRerollBtn.addEventListener('click', () => {
-    const sr = M.saveResult; if (!sr) return;
-    const s = M.shots[M.shotIdx]; const td = getDef(s.targetGid);
-    const spend = M.fighterSpend || {};
-    let nSpend = Object.keys(spend).reduce((a, k) => a + (spend[k] || 0), 0);
-    if (nSpend <= 0) return;
-    // Remove the spent fighters from their Wings.
-    Object.keys(spend).forEach(wingId => {
-      const n = spend[wingId] || 0; if (!n) return;
-      const a = (state.launchedAssets || []).find(x => x.id === wingId);
-      if (a) a.count = Math.max(0, a.count - n);
-    });
-    state.launchedAssets = (state.launchedAssets || []).filter(a => a.count > 0);
-    // Re-roll up to nSpend failed primary saves.
-    const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
-    failedIdx.slice(0, nSpend).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(); d.ok = d.r >= d.sv; });
-    // Recompute saved flags from scratch using new primDice + existing backup/aegis saves.
-    let pIdx = 0;
-    sr.hitsList.forEach(h => { h.saved = false; h.savedBy = null; });
-    sr.hitsList.forEach(h => { if (h.sv == null || h.noSaveDie) return; const d = sr.primDice[pIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'primary'; } });
-    let bIdx = 0;
-    if (sr.backupVal != null) sr.hitsList.forEach(h => { if (h.saved) return; const d = sr.backDice[bIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'backup'; } });
-    sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
-    sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
-    sr.fighterRerolled = true; M.fighterSpend = {};
-    M.log.push(`${factionName(td.side)} Close Protection: re-rolled ${nSpend} save${nSpend!==1?'s':''} (−${nSpend} fighters)`);
-    renderAll();
-  });
+  if (fpRerollBtn) fpRerollBtn.addEventListener('click', () => dispatch({ type: 'attackFighterReroll' }));
   const rerollBtn = overlay.querySelector('[data-am-reroll]');
-  if (rerollBtn) rerollBtn.addEventListener('click', () => {
-    const which = rerollBtn.dataset.amReroll;
-    if (which === 'hit') {
-      const hr = M.hitResult;
-      const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null);
-      const missIdx = hr.dice.map((d, i) => (!d.isHit ? i : -1)).filter(i => i >= 0);
-      const maxRR = Math.min(missIdx.length, (state.planning && state.planning.ap[atkSide]) || 0);
-      const n = Math.min(M.rerollN || maxRR, maxRR);
-      if (atkSide && n > 0) {
-        state.planning.ap[atkSide] -= n;
-        missIdx.slice(0, n).forEach(i => { const d = hr.dice[i]; d.r = rollDie(); d.isHit = d.r >= hr.lock; d.isCrit = d.r >= hr.lock + 2; });
-        hr.hits = hr.dice.filter(d => d.isHit).length;
-        hr.crits = hr.dice.filter(d => d.isCrit).length;
-        hr.rerolled = true; M.rerollN = null;
-        M.log.push(`${factionName(atkSide)} AP Re-roll ${n} (${n} AP)`);
-        renderAll();
-      }
-    } else if (which === 'save') {
-      const sr = M.saveResult; const s = M.shots[M.shotIdx];
-      const td = getDef(s.targetGid); const defSide = td.side;
-      const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
-      const maxRR = Math.min(failedIdx.length, (state.planning && state.planning.ap[defSide]) || 0);
-      const n = Math.min(M.rerollN || maxRR, maxRR);
-      if (defSide && n > 0) {
-        state.planning.ap[defSide] -= n;
-        failedIdx.slice(0, n).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(); d.ok = d.r >= d.sv; });
-        // Recompute saved flags from scratch using new primDice + existing backups.
-        let pIdx = 0;
-        sr.hitsList.forEach(h => { h.saved = false; h.savedBy = null; });
-        sr.hitsList.forEach(h => {
-          if (h.sv == null || h.noSaveDie) return;
-          const d = sr.primDice[pIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'primary'; }
-        });
-        let bIdx = 0;
-        if (sr.backupVal != null) sr.hitsList.forEach(h => { if (h.saved) return; const d = sr.backDice[bIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'backup'; } });
-        sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
-        sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
-        sr.rerolled = true; M.rerollN = null;
-        M.log.push(`${factionName(defSide)} AP Re-roll ${n} saves (${n} AP)`);
-        renderAll();
-      }
-    }
-  });
+  if (rerollBtn) rerollBtn.addEventListener('click', () => dispatch({ type: 'attackReroll', which: rerollBtn.dataset.amReroll }));
 }
 
 /* Advance the attack state machine. */
-function advanceAttack(to) {
-  const M = state.attackModal;
-  if (!M) return;
-  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; M.rerollN = null; }
-  else if (to === 'save') {
-    M.rerollN = null; M.fighterSpend = {};
-    if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; }
-    else { nextShotOrResolve(); }
-  }
-  else if (to === 'rollbackup') {
-    // Primary saves (and any re-rolls) are locked in — now roll Backup + Aegis saves.
-    rollDeferredBackupSaves(M);
-    renderAll();
-    return;
-  }
-  else if (to === 'apply') {
-    // If backups weren't rolled yet (e.g. none available), roll them now (safe no-op).
-    if (M.saveResult && !M.saveResult.backupRolled) rollDeferredBackupSaves(M);
-    // Accumulate damage onto the target.
-    const s = M.shots[M.shotIdx];
-    const k = targetKey(s.targetGid, s.targetSi);
-    const sr = M.saveResult;
-    M.pendingDamage[k] = (M.pendingDamage[k] || 0) + sr.dmg;
-    // Track whether any NON-Focused damage hit this target (enables group spillover).
-    if (sr.dmg > 0 && !parseWeaponSpecials(s.w).focused) {
-      M.spillEligible = M.spillEligible || {};
-      M.spillEligible[k] = true;
-    }
-    // Flash-X: target gains X spikes when this weapon inflicts damage.
-    if (sr.flash && sr.dmg > 0) {
-      M.pendingFlash = M.pendingFlash || {};
-      M.pendingFlash[k] = (M.pendingFlash[k] || 0) + sr.flash;
-    }
-    // Crippling-X: if this weapon scored a critical that caused damage, force a
-    // crippling effect on the target regardless of tonnage.
-    if (sr.crippling && sr.critDamaged && sr.dmg > 0) {
-      M.forcedCripple = M.forcedCripple || {};
-      M.forcedCripple[k] = true;
-    }
-    // Status: on a hit, mark target to gain a Scanners Offline token (auto-removed at
-    // start of the End Phase). Corruptor-X: place X Battalions on the target ship.
-    if (sr.status) { M.pendingStatus = M.pendingStatus || {}; M.pendingStatus[k] = true; }
-    if (sr.corruptor) { M.pendingCorruptor = M.pendingCorruptor || {}; M.pendingCorruptor[k] = (M.pendingCorruptor[k] || 0) + sr.corruptor; }
-    // Arrest-X: a ship damaged by this weapon reduces Thrust by X" next activation (once/round).
-    const spA = parseWeaponSpecials(s.w);
-    if (spA.arrest && sr.dmg > 0) {
-      M.pendingArrest = M.pendingArrest || {};
-      M.pendingArrest[k] = Math.max(M.pendingArrest[k] || 0, spA.arrest);
-    }
-    // Impel-X: if this weapon scored ≥X criticals vs the group, queue a forced move/turn.
-    if (spA.impel && M.hitResult && M.hitResult.crits >= spA.impel) {
-      M.pendingImpel = M.pendingImpel || {};
-      const big = M.hitResult.crits >= spA.impel * 2;
-      M.pendingImpel[s.targetGid] = { x: spA.impel, big };
-    }
-    const td = getDef(s.targetGid);
-    M.log.push(`${s.w.name} ▶ ${td.name}: ${sr.dmg} dmg${sr.flash&&sr.dmg>0?` (+${sr.flash} spike)`:''}`);
-    nextShotOrResolve();
-  }
-  else if (to === 'crippling-roll') {
-    const c = state.attackModal.crippleQueue[0];
-    rollCrippleEffect(c, c.braced ? 4 : null);
-    renderAll();
-  }
-  else if (to === 'explosion-roll') {
-    const ex = state.attackModal.explodeQueue[0];
-    rollExplosionEffect(ex, ex.contained ? 2 : null);
-    renderAll();
-  }
-  else if (to === 'crippling-next') { applyCrippling(); }
-  else if (to === 'explosion-next') { applyExplosion(); }
-  renderAll();
-}
-
-/* Move to the next shot, or once all shots done, apply damage & queue crippling/explosion. */
-function nextShotOrResolve() {
-  const M = state.attackModal;
-  if (M.shotIdx < M.shots.length - 1) {
-    M.shotIdx++; M.hitResult = null; M.saveResult = null; M.step = 'hit';
-    return;
-  }
-  // All shots resolved — apply accumulated damage now.
-  resolveAccumulatedDamage();
-}
+/* Attack step machine — dispatched as a server-authoritative intent (so the
+   server rolls the dice with the room's seeded rng); hotseat applies locally. */
+function advanceAttack(to) { if (state.attackModal) dispatch({ type: 'attackStep', to }); }
+function nextShotOrResolve() { _nextShotOrResolve(state, rng, state.attackModal); }
 
 /* Per-ship points value (group points divided by group size). */
 
-/* Apply pending damage to targets (least-hull-first within a group is approximated
-   by applying directly to each targeted ship), then queue crippling & explosions. */
-function resolveAccumulatedDamage() {
-  const M = state.attackModal;
-  M.crippleQueue = [];
-  M.explodeQueue = [];
-  Object.keys(M.pendingDamage).forEach(k => {
-    const [gid, si] = k.split('#');
-    const grp = state.groups[gid];
-    const ship = grp && grp.ships[parseInt(si)];
-    if (!ship || ship.destroyed) return;
-    const def = getDef(gid);
-    const dmg = M.pendingDamage[k];
-    const wasAboveHalf = ship.hull > ship.maxHull / 2;
-    const before = ship.hull;
-    ship.hull = Math.max(0, ship.hull - dmg);
-    // Damage spillover: excess damage beyond destroying the targeted ship spills to
-    // other ships in the same Group (lowest-hull first), unless ALL damage was Focused.
-    let excess = dmg - before;
-    if (ship.hull <= 0 && excess > 0 && M.spillEligible && M.spillEligible[k]) {
-      const mates = grp.ships
-        .map((sh, idx) => ({ sh, idx }))
-        .filter(o => !o.sh.destroyed && !o.sh.offTable && o.idx !== parseInt(si))
-        .sort((a, b) => a.sh.hull - b.sh.hull);
-      for (const o of mates) {
-        if (excess <= 0) break;
-        const take = Math.min(excess, o.sh.hull);
-        const wasHalf = o.sh.hull > o.sh.maxHull / 2;
-        o.sh.hull = Math.max(0, o.sh.hull - take);
-        excess -= take;
-        M.log.push(`Spillover: ${take} → ${def.name} #${o.idx + 1}`);
-        if (o.sh.hull <= 0) {
-          o.sh.destroyed = true;
-          recordKill(def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null), false, targetKey(gid, o.idx));
-          if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, o.idx, def, o.sh));
-        } else if (isCapital(def) && !o.sh.crippledRolled && o.sh.hull <= o.sh.maxHull / 2 && wasHalf) {
-          o.sh.crippledRolled = true;
-          M.crippleQueue.push(makeCrippleRoll(gid, o.idx, def, o.sh));
-        }
-      }
-    }
-    // Flash-X spikes accrued from weapons that damaged this ship.
-    if (M.pendingFlash && M.pendingFlash[k]) ship.spikes = (ship.spikes || 0) + M.pendingFlash[k];
-    // Arrest-X: reduce Thrust next activation (once per round).
-    if (M.pendingArrest && M.pendingArrest[k] && !ship.arrestedThisRound) {
-      ship.arrestNext = M.pendingArrest[k];
-      ship.arrestedThisRound = true;
-    }
-    // Crippling-X: forced crippling roll (regardless of tonnage) when a critical
-    // from a Crippling weapon caused damage — in addition to the half-hull rule.
-    if (M.forcedCripple && M.forcedCripple[k] && ship.hull > 0) {
-      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def, ship));
-    }
-    // Crippling: first time a capital ship drops below half (and not destroyed).
-    if (isCapital(def) && !ship.crippledRolled && ship.hull > 0 && ship.hull <= ship.maxHull / 2 && wasAboveHalf) {
-      ship.crippledRolled = true;
-      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def, ship));
-    }
-    // Destruction → explosion.
-    if (ship.hull <= 0) {
-      ship.destroyed = true;
-      recordKill(def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null), false, targetKey(gid, parseInt(si)));
-      if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, parseInt(si), def, ship));
-    } else {
-      // Status: gain a Scanners Offline token (auto-removed start of End Phase).
-      if (M.pendingStatus && M.pendingStatus[k]) {
-        ship.crippling = ship.crippling || [];
-        if (!ship.crippling.includes('scanners')) ship.crippling.push('scanners');
-        ship.statusToken = true; // flag for End-Phase auto-removal
-      }
-      // Corruptor-X: place X Battalions (attacker's side) aboard the target ship.
-      if (M.pendingCorruptor && M.pendingCorruptor[k]) {
-        const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null);
-        if (atkSide) { ship.battalions = ship.battalions || { ucm: 0, shal: 0 }; ship.battalions[atkSide] += M.pendingCorruptor[k]; }
-      }
-    }
-  });
-  // Impel-X: queue affected groups for a player choice (turn vs move forward).
-  if (M.pendingImpel) {
-    M.impelQueue = M.impelQueue || [];
-    Object.keys(M.pendingImpel).forEach(gid => {
-      const grp = state.groups[gid];
-      if (!grp) return;
-      if (!M.impelQueue.find(q => q.gid === gid)) M.impelQueue.push({ gid, x: M.pendingImpel[gid].x, big: M.pendingImpel[gid].big });
-    });
-  }
-  proceedQueues();
-}
+/* Apply pending damage + queue crippling/explosions — engine resolution. */
+function resolveAccumulatedDamage() { _resolveAttackDamage(state, state.attackModal); }
 
-function proceedQueues() {
-  const M = state.attackModal;
-  if (M.crippleQueue.length) { M.step = 'crippling'; return; }
-  if (M.explodeQueue.length) { M.step = 'explosion'; return; }
-  if (M.impelQueue && M.impelQueue.length) { M.step = 'impel'; return; }
-  M.step = 'done';
-}
+function proceedQueues() { _proceedQueues(state.attackModal); }
 
 const CRIPPLE_LABEL = { energy:'Energy Surge', structural:'Struct.', fire:'Fire', defence:'Def. Offline', scanners:'Scan Offline', weapons:'Wpn Offline', navigation:'Nav Offline', decay:'Orbital Decay' };
 // Crippling/explosion resolvers now live in src/engine/mutators.js (shared with
 // the server). makeCrippleRoll / makeExplosionRoll are imported directly; the
 // rng-driven rolls are shimmed to inject the active rng.
 function rollCrippleEffect(c, forced) { return _rollCrippleEffect(rng, c, forced); }
-function applyCrippling() {
-  const M = state.attackModal;
-  const c = M.crippleQueue.shift();
-  const ship = state.groups[c.gid].ships[c.si];
-  const def = getDef(c.gid);
-  ship.crippling = ship.crippling || [];
-  if (c.effectKey === 'fire') { ship.fireTokens = (ship.fireTokens || 0) + 1; ship.crippling.push('fire'); }
-  else if (c.effectKey === 'energy') { ship.spikes = (ship.spikes || 0) + 1; }
-  else if (c.effectKey === 'structural') {
-    ship.hull = Math.max(0, ship.hull - 1);
-    if (ship.hull <= 0 && !ship.destroyed) { ship.destroyed = true; if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(c.gid, c.si, def, ship)); }
-  }
-  else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
-  M.log.push(`${c.name} crippled: ${c.effectName}`);
-  proceedQueues();
-  renderAll();
-}
+function applyCrippling() { _applyCripplingNext(state, state.attackModal); renderAll(); }
 function rollExplosionEffect(ex, forced) { return _rollExplosionEffect(rng, ex, forced); }
-function applyExplosion() {
-  const M = state.attackModal;
-  const ex = M.explodeQueue.shift();
-  M.log.push(`${ex.name} exploded: ${ex.effectName}`);
-  applyExplosionEffect(ex, M);
-  proceedQueues();
-  renderAll();
-}
+function applyExplosion() { _applyExplosionNext(state, rng, state.attackModal); renderAll(); }
 
 function applyExplosionEffect(ex, M) { return _applyExplosionEffect(state, rng, ex, M); }
 /* Roll Backup saves (and Aegis save dice) on hits still unsaved AFTER primary ES/KS
    saves and any re-rolls have been applied. Mutates sr in place and recomputes damage.
    Called when the player advances past the primary-save sub-step. */
-function rollDeferredBackupSaves(M) {
-  const sr = M.saveResult;
-  if (!sr || sr.backupRolled) return;
-  // Backup saves for hits not yet saved.
-  if (sr.backupVal != null) {
-    sr.hitsList.forEach(h => {
-      if (h.saved || h.sv == null) return;
-      const r = rollDie(); const ok = r >= sr.backupVal;
-      sr.backDice.push({ r, ok });
-      if (ok) { h.saved = true; h.savedBy = 'backup'; }
-    });
-  }
-  // Aegis-X (§15.1): vs Bomber/Close Action, Y extra save dice (on Backup, or 4+).
-  if ((sr.isBomberAtk || sr.isCloseAction) && !M.aegisUsed) {
-    const aegisY = aegisValueForGroup(sr.targetGid);
-    sr.aegisY = aegisY;
-    if (aegisY > 0) {
-      const av = sr.backupVal != null ? sr.backupVal : 4;
-      for (let i = 0; i < aegisY; i++) {
-        const unsavedHit = sr.hitsList.find(h => !h.saved);
-        if (!unsavedHit) break;
-        const r = rollDie(); const ok = r >= av;
-        sr.aegisDice.push({ r, ok });
-        if (ok) { unsavedHit.saved = true; unsavedHit.savedBy = 'aegis'; }
-      }
-      M.aegisUsed = true;
-    }
-  }
-  sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
-  sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
-  sr.critDamaged = sr.hitsList.some(h => h.isCrit && !h.saved);
-  sr.backupRolled = true;
-}
+function rollDeferredBackupSaves(M) { _rollDeferredBackupSaves(state, rng, M); }
 
+/* Commit a resolved attack. Group fire goes through the server-authoritative
+   intent; a bomber attack commits via the engine then runs the asset-phase
+   continuation (re-opening the next pooled attack / advancing the stage) here,
+   since that orchestration re-opens client modals. */
 function finishAttack() {
   const M = state.attackModal;
   if (!M) return;
-  // Log a concise result summary (attacker → targets, total damage, kills).
-  {
-    const atkName = M.bomber ? (M.attackerName || 'Assets') : (getDef(M.attackerGid) ? getDef(M.attackerGid).name : 'Group');
-    const tgtNames = {};
-    (M.shots || []).forEach(s => {
-      const td = getDef(s.targetGid); if (!td) return;
-      const multi = state.groups[s.targetGid] && state.groups[s.targetGid].ships.length > 1;
-      tgtNames[targetKey(s.targetGid, s.targetSi)] = td.name + (multi ? ` #${s.targetSi+1}` : '');
-    });
-    let totDmg = 0, kills = 0;
-    Object.keys(M.pendingDamage || {}).forEach(k => {
-      totDmg += M.pendingDamage[k] || 0;
-      const [g, si] = k.split('#'); const ts = state.groups[g] && state.groups[g].ships[parseInt(si)];
-      if (ts && ts.destroyed) kills++;
-    });
-    const tgtList = Object.values(tgtNames).join(', ') || 'target';
-    if (totDmg > 0 || kills > 0) logEvent(`${atkName} hit ${tgtList} for ${totDmg} dmg${kills?` · ${kills} destroyed`:''}`);
-    else logEvent(`${atkName} fired at ${tgtList} — no damage`);
-    // Flush the detailed per-step lines (hit/save rolls, AP re-rolls, Brace/Contain,
-    // crippling, explosions, Impel, Close Protection, etc.) into the event log.
-    (M.log || []).forEach(line => logEvent(`· ${line}`));
-  }
-  if (M.bomber) {
-    // Scourge Crippling-Fire: place Fire token(s) on the target if it survived.
-    if (M.cripplingFire) {
-      const s = M.shots[0];
-      const ts = state.groups[s.targetGid] && state.groups[s.targetGid].ships[s.targetSi];
-      if (ts && !ts.destroyed) {
-        ts.fireTokens = (ts.fireTokens || 0) + M.cripplingFire;
-        ts.crippling = ts.crippling || [];
-        if (!ts.crippling.includes('fire')) ts.crippling.push('fire');
-      }
-    }
-    // Remove the attacking bombers after the attack.
-    state.launchedAssets = state.launchedAssets.filter(a => !M.bomberAssetIds.includes(a.id));
-    state.attackModal = null;
-    // If more pooled attacks are pending in the current scope, resolve the next.
-    const scope = state._bomberResolveSide;
-    const scopeType = state._bomberResolveType;
+  if (!M.bomber) { dispatch({ type: 'finishAttack' }); return; }
+  const hint = _finishAttack(state, M);
+  if (hint && hint.bomber) {
+    const { scope, scopeType } = hint;
     if (anyPendingBomberAttacks(scope, scopeType)) { resolvePendingBomberAttacks(scope, scopeType); renderAll(); return; }
-    // Scope exhausted: if this was a stage-scoped run, advance the asset stage.
     if (scope) { state._bomberResolveSide = null; state._bomberResolveType = null; advanceAssetStage({ type: scopeType || 'bomber', side: scope }); }
-  } else {
-    // Whole Group fired: mark every ship fired, record Limited-X uses, clear all locks
-    // and remove their targeting lines.
-    const aDef = getDef(M.attackerGid);
-    const grp = state.groups[M.attackerGid];
-    grp.ships.forEach(ship => {
-      if (!ship.weaponTargets) { ship.firedThisActivation = true; return; }
-      ship.limitedUses = ship.limitedUses || {};
-      const seen = new Set();
-      Object.keys(ship.weaponTargets).forEach(wi => {
-        const sp = parseWeaponSpecials(aDef.weapons[wi]);
-        const gk = weaponGroupKey(aDef, parseInt(wi));
-        if (sp.limited && !seen.has(gk)) { seen.add(gk); ship.limitedUses[wi] = (ship.limitedUses[wi] || 0) + 1; }
-      });
-      ship.firedThisActivation = true;
-      ship.weaponTargets = {};
-    });
   }
-  state.attackModal = null;
   renderAll();
 }
 
@@ -4913,9 +4369,7 @@ function shipBaseRadiusPx(def) {
    ========================================================================== */
 
 /* Coherency distance (inches) for a group, by its tonnage. */
-function coherencyInches(def) {
-  return def.tonnage === 'L' ? 3 : 6;
-}
+function coherencyInches(def) { return _coherencyInches(def); }
 
 /* Open Network ships pick orders individually from the round AFTER they deploy.
    We approximate the deploy round as round 1 (Voidgates have Descent), so
@@ -4969,31 +4423,10 @@ function effectiveOrder(def, grp, shipIdx) { return _effectiveOrder(state, def, 
 
 /* Returns a Set of ship indices that are OUT of formation for the given group.
    Empty set = everyone in formation (or rule doesn't apply). */
-function outOfFormationSet(def) {
-  if (def.openNetwork || def.payload) return new Set(); // Open Network & Payloads ignore coherency
-  const grp = getGroup(def.id);
-  const alive = grp.ships.map((s, i) => ({ s, i })).filter(o => !o.s.destroyed && !o.s.offTable);
-  if (alive.length <= 1) return new Set(); // single ship (or down to one) — rule ignored
-  const cohPx = coherencyInches(def) * INCH;
-  const need = alive.length >= 4 ? 2 : 1; // 4+ need two neighbours, else one
-  const out = new Set();
-  alive.forEach(({ s, i }) => {
-    let neighbours = 0;
-    alive.forEach(({ s: o, i: j }) => {
-      if (i === j) return;
-      // Must be in the same orbital layer AND within coherency distance.
-      if ((s.layer || 'orbit') !== (o.layer || 'orbit')) return;
-      if (Math.hypot(s.x - o.x, s.y - o.y) <= cohPx) neighbours++;
-    });
-    if (neighbours < need) out.add(i);
-  });
-  return out;
-}
+function outOfFormationSet(def) { return _outOfFormationSet(state, def); }
 
 /* Whole group in formation? */
-function groupInFormation(def) {
-  return outOfFormationSet(def).size === 0;
-}
+function groupInFormation(def) { return _groupInFormation(state, def); }
 
 /* Launch asset metadata: aura range (inches) and what it can target. */
 const LAUNCH_TYPES = {
@@ -8744,9 +8177,21 @@ function dispatch(intent) {
 // locally (hotseat) the operator acts for whichever side the intent concerns —
 // an intent targeting a Group belongs to that Group's owner, otherwise it is an
 // active-side action (pass / endRound).
+// The side performing an intent. Online, the server uses the connection's side;
+// locally (hotseat) the operator acts for whichever side the intent concerns —
+// an intent targeting a Group belongs to that Group's owner; combat defensive
+// decisions belong to the defender (opponent of the attacker); everything else is
+// an active-side / attacker action.
 function _intentSide(intent) {
   if (intent && intent.gid) { const d = getDef(intent.gid); if (d) return d.side; }
-  return state.activeSide;
+  const atk = state.assetActiveSide || state.activeSide;
+  const defensive = state.attackModal && intent && (
+    intent.type === 'attackFighterReroll' ||
+    (intent.type === 'attackReroll' && intent.which === 'save') ||
+    (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'))
+  );
+  if (defensive) return atk === 'ucm' ? 'shal' : atk === 'shal' ? 'ucm' : atk;
+  return atk;
 }
 
 // ---------------------------------------------------------------------------

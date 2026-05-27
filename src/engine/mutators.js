@@ -1677,6 +1677,590 @@ export function applyExplosionEffect(state, rng, ex, M) {
   }
 }
 
+/* ── COHERENCY ── */
+export function coherencyInches(def) { return def.tonnage === 'L' ? 3 : 6; }
+/* Set of ship indices OUT of formation (need 1 neighbour, or 2 for groups of 4+). */
+export function outOfFormationSet(state, def) {
+  if (def.openNetwork || def.payload) return new Set(); // ignore coherency
+  const grp = getGroup(state, def.id);
+  const alive = grp.ships.map((s, i) => ({ s, i })).filter(o => !o.s.destroyed && !o.s.offTable);
+  if (alive.length <= 1) return new Set();
+  const cohPx = coherencyInches(def) * INCH;
+  const need = alive.length >= 4 ? 2 : 1;
+  const out = new Set();
+  alive.forEach(({ s, i }) => {
+    let neighbours = 0;
+    alive.forEach(({ s: o, i: j }) => {
+      if (i === j) return;
+      if ((s.layer || 'orbit') !== (o.layer || 'orbit')) return;
+      if (Math.hypot(s.x - o.x, s.y - o.y) <= cohPx) neighbours++;
+    });
+    if (neighbours < need) out.add(i);
+  });
+  return out;
+}
+export function groupInFormation(state, def) { return outOfFormationSet(state, def).size === 0; }
+
+/* ── ATTACK RESOLUTION (to-hit / saves) ──
+   Roll the hit dice / primary save dice for the current shot, setting M.hitResult
+   / M.saveResult and applying immediate side-effects (Overcharge self-damage,
+   Bloom/Shield spikes, Sustained-Fire bookkeeping). Lifted out of the render so
+   the rolls are explicit and can run server-side with the room's seeded rng. */
+export function rollHits(state, rng, M) {
+  const s = M.shots[M.shotIdx];
+  const td = getDef(state, s.targetGid);
+  const ts = state.groups[s.targetGid].ships[s.targetSi];
+  const sp = parseWeaponSpecials(s.w);
+  // Lock: Mauler uses the target's relevant save as Lock; Calibre improves Lock vs listed tonnages.
+  let lock = lockVal(s.w);
+  if (sp.mauler) {
+    const sv = s.w.type === 'K' ? saveVal(td.ks) : s.w.type === 'E' ? saveVal(td.es) : (shieldSaveVal(td) || 6);
+    if (sv != null) lock = sv;
+  }
+  if (sp.calibre && sp.calibre.toUpperCase().includes(td.tonnage)) lock = Math.max(2, lock - 1);
+  // Atmosphere attack rules (§4.1.2).
+  let forceSix = false;
+  if (!M.bomber && M.attackerGid) {
+    const ash = state.groups[M.attackerGid].ships[M.attackerSi];
+    const aL = ash && (ash.layer || 'orbit'), tL = ts.layer || 'orbit';
+    const isCity = td.category === 'city';
+    const targetDescent = /Descent/i.test(td.special || '');
+    const isBombardment = /Bombardment/i.test(s.w.special || '');
+    if (isCity && isBombardment) lock = Math.max(2, lock - 2);
+    else if (tL === 'atmosphere' && (isCity || targetDescent)) forceSix = true;
+    else if (aL === 'atmosphere' && tL === 'orbit') forceSix = true;
+    else if (aL === 'orbit' && tL === 'atmosphere') lock = Math.min(6, lock + 1);
+  }
+  // Fusillade-X (per-ship; baked for pooled fire). Sustained Fire: ×2 Att vs a Group hit last round.
+  let att = s.w.att;
+  if (sp.fusillade && !s.fusilladeBaked && !M.bomber && M.attackerGid) {
+    const ag = state.groups[M.attackerGid];
+    const eo = ag ? effectiveOrder(state, getDef(state, M.attackerGid), ag, M.attackerSi) : null;
+    if (eo === 'WF') att += sp.fusillade;
+  }
+  if (sp.sustained && !M.bomber) {
+    const tg = state.groups[s.targetGid];
+    if (tg && tg.hitByLastRound && tg.hitByLastRound.includes(M.attackerGid)) att *= 2;
+  }
+  const dice = [];
+  let hits = 0, crits = 0, sixes = 0;
+  const critMargin = (td.special && /Reinforced Armour/i.test(td.special)) ? 3 : 2;
+  for (let i = 0; i < att; i++) {
+    const r = rollDie(rng);
+    const isHit = forceSix ? (r === 6) : (r >= lock);
+    const isCrit = forceSix ? false : (r >= lock + critMargin);
+    if (isHit) hits++;
+    if (isCrit) crits++;
+    if (r === 6) sixes++;
+    dice.push({ r, isHit, isCrit });
+  }
+  M.hitResult = { dice, hits, crits, lock, forceSix };
+  if (hits > 0 && !M.bomber && M.attackerGid) {
+    const tg = state.groups[s.targetGid];
+    if (tg) { tg.hitByThisRound = tg.hitByThisRound || []; if (!tg.hitByThisRound.includes(M.attackerGid)) tg.hitByThisRound.push(M.attackerGid); }
+  }
+  // Overcharge: each 6 costs the firing ship this weapon's unmodified Damage in Hull.
+  const oc = M.overcharge && M.overcharge[s.wi];
+  if (oc && sixes > 0 && !M.bomber && M.attackerGid) {
+    const ash = state.groups[M.attackerGid].ships[M.attackerSi];
+    if (ash) {
+      const self = sixes * (s.w.dmg || 0);
+      ash.hull = Math.max(0, ash.hull - self);
+      M.log.push(`Overcharge: ${s.w.name} dealt ${self} self-damage (${sixes}×6)`);
+      if (ash.hull <= 0 && !ash.destroyed) { ash.destroyed = true; }
+    }
+  }
+  // Bloom-X: attacker gains X spikes when this weapon fires.
+  if (sp.bloom && !M.bomber && M.attackerGid) {
+    const ag = state.groups[M.attackerGid];
+    if (ag) ag.spikes = (ag.spikes || 0) + sp.bloom;
+  }
+}
+
+export function rollSaves(state, rng, M) {
+  const s = M.shots[M.shotIdx];
+  const td = getDef(state, s.targetGid);
+  const ts = state.groups[s.targetGid].ships[s.targetSi];
+  const sp = parseWeaponSpecials(s.w);
+  const hr = M.hitResult;
+  const k = targetKey(s.targetGid, s.targetSi);
+  const shieldUp = !!M.shieldsUp[k];
+  const sat = M.saturation || 0;
+  // Build a per-hit list. Penetrator: criticals become Core hits. Burnthrough: each
+  // crit worsens this weapon's ES/KS for all its hits.
+  const burnReduce = sp.burnthrough * hr.crits;
+  const hitsList = [];
+  let critsRemaining = hr.crits;
+  for (let i = 0; i < hr.hits; i++) {
+    const isCrit = critsRemaining > 0; if (isCrit) critsRemaining--;
+    let type = s.w.type;
+    if (isCrit && sp.penetrator) type = 'C';
+    let sv = baseSaveForType(td, ts, type, shieldUp);
+    if (sv != null && type !== 'C' && !shieldUp) {
+      const red = sp.scald + burnReduce + (isCrit ? sp.reave : 0);
+      if (red) sv = Math.min(6, sv + red);
+    }
+    const ocOn = M.overcharge && M.overcharge[s.wi];
+    const baseDmg = ocOn ? (s.w.dmg * 2) : s.w.dmg;
+    const dmg = baseDmg + (isCrit ? sp.critical : 0);
+    hitsList.push({ isCrit, type, sv, dmg, saved: false, savedBy: null });
+  }
+  // Primary saves, honouring Saturation (skips `sat` save dice).
+  const primDice = [];
+  let skipSaves = sat;
+  hitsList.forEach(h => {
+    if (h.sv == null) return;
+    if (skipSaves > 0) { skipSaves--; h.noSaveDie = true; return; }
+    const r = rollDie(rng); const ok = r >= h.sv;
+    primDice.push({ r, ok, sv: h.sv, crit: h.isCrit });
+    if (ok) { h.saved = true; h.savedBy = 'primary'; }
+  });
+  // Shield-X: the Group gains 1 Spike when it uses Shield Saves (once per attack).
+  if (shieldUp && !M.shieldSpiked) {
+    M.shieldSpiked = M.shieldSpiked || {};
+    if (!M.shieldSpiked[k]) { M.shieldSpiked[k] = true; ts.spikes = (ts.spikes || 0) + 1; }
+  }
+  // Backup save value (Formation gives a 6+ backup to grouped ships); rolled later.
+  let backupVal = saveVal(td.bs);
+  const tgrp = state.groups[s.targetGid];
+  if (tgrp && tgrp.ships.length > 1 && groupInFormation(state, td)) {
+    backupVal = (backupVal == null) ? 6 : Math.min(backupVal, 6);
+  }
+  const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
+  const isCloseAction = /Close Action/i.test(s.w.special || '');
+  const dmg = hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+  const unsaved = hitsList.filter(h => !h.saved).length;
+  M.saveResult = { hitsList, primDice, backDice: [], backupVal, aegisDice: [], aegisY: 0, unsaved, dmg,
+    backupRolled: false, targetGid: s.targetGid, isBomberAtk, isCloseAction,
+    flash: sp.flash, crippling: sp.crippling, penetrator: sp.penetrator,
+    status: sp.status && hitsList.length > 0, corruptor: (sp.corruptor && dmg > 0) ? sp.corruptor : 0,
+    critDamaged: hitsList.some(h => h.isCrit && !h.saved) };
+}
+
+/* ── ATTACK RESOLUTION (post-save) ──
+   Pure resolution helpers operating on the attack-modal object `M` plus `state`;
+   dice use the injected `rng`. Rendering stays with the caller. As combat migrates
+   to intents these run on the server with the room's seeded rng. */
+
+/* Apply M.pendingDamage to targets (Focused/spillover rules), record kills, build
+   the crippling / explosion / impel queues, then set the next sub-step. */
+export function resolveAttackDamage(state, M) {
+  M.crippleQueue = [];
+  M.explodeQueue = [];
+  Object.keys(M.pendingDamage).forEach(k => {
+    const [gid, si] = k.split('#');
+    const grp = state.groups[gid];
+    const ship = grp && grp.ships[parseInt(si)];
+    if (!ship || ship.destroyed) return;
+    const def = getDef(state, gid);
+    const dmg = M.pendingDamage[k];
+    const wasAboveHalf = ship.hull > ship.maxHull / 2;
+    const before = ship.hull;
+    ship.hull = Math.max(0, ship.hull - dmg);
+    // Damage spillover: excess beyond destroying the targeted ship spills to the
+    // group (lowest-hull first), unless ALL damage was Focused.
+    let excess = dmg - before;
+    if (ship.hull <= 0 && excess > 0 && M.spillEligible && M.spillEligible[k]) {
+      const mates = grp.ships
+        .map((sh, idx) => ({ sh, idx }))
+        .filter(o => !o.sh.destroyed && !o.sh.offTable && o.idx !== parseInt(si))
+        .sort((a, b) => a.sh.hull - b.sh.hull);
+      for (const o of mates) {
+        if (excess <= 0) break;
+        const take = Math.min(excess, o.sh.hull);
+        const wasHalf = o.sh.hull > o.sh.maxHull / 2;
+        o.sh.hull = Math.max(0, o.sh.hull - take);
+        excess -= take;
+        M.log.push(`Spillover: ${take} → ${def.name} #${o.idx + 1}`);
+        if (o.sh.hull <= 0) {
+          o.sh.destroyed = true;
+          recordKill(state, def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null), false, targetKey(gid, o.idx));
+          if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, o.idx, def, o.sh));
+        } else if (isCapital(def) && !o.sh.crippledRolled && o.sh.hull <= o.sh.maxHull / 2 && wasHalf) {
+          o.sh.crippledRolled = true;
+          M.crippleQueue.push(makeCrippleRoll(gid, o.idx, def));
+        }
+      }
+    }
+    if (M.pendingFlash && M.pendingFlash[k]) ship.spikes = (ship.spikes || 0) + M.pendingFlash[k];
+    if (M.pendingArrest && M.pendingArrest[k] && !ship.arrestedThisRound) {
+      ship.arrestNext = M.pendingArrest[k];
+      ship.arrestedThisRound = true;
+    }
+    if (M.forcedCripple && M.forcedCripple[k] && ship.hull > 0) {
+      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def));
+    }
+    if (isCapital(def) && !ship.crippledRolled && ship.hull > 0 && ship.hull <= ship.maxHull / 2 && wasAboveHalf) {
+      ship.crippledRolled = true;
+      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def));
+    }
+    if (ship.hull <= 0) {
+      ship.destroyed = true;
+      recordKill(state, def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null), false, targetKey(gid, parseInt(si)));
+      if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, parseInt(si), def, ship));
+    } else {
+      if (M.pendingStatus && M.pendingStatus[k]) {
+        ship.crippling = ship.crippling || [];
+        if (!ship.crippling.includes('scanners')) ship.crippling.push('scanners');
+        ship.statusToken = true;
+      }
+      if (M.pendingCorruptor && M.pendingCorruptor[k]) {
+        const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null);
+        if (atkSide) { ship.battalions = ship.battalions || { ucm: 0, shal: 0 }; ship.battalions[atkSide] += M.pendingCorruptor[k]; }
+      }
+    }
+  });
+  // Impel-X: queue affected groups for a player choice (turn vs move forward).
+  if (M.pendingImpel) {
+    M.impelQueue = M.impelQueue || [];
+    Object.keys(M.pendingImpel).forEach(gid => {
+      const grp = state.groups[gid];
+      if (!grp) return;
+      if (!M.impelQueue.find(q => q.gid === gid)) M.impelQueue.push({ gid, x: M.pendingImpel[gid].x, big: M.pendingImpel[gid].big });
+    });
+  }
+  proceedQueues(M);
+  return state;
+}
+
+/* Advance the modal to the next pending sub-step (crippling → explosion → impel → done). */
+export function proceedQueues(M) {
+  if (M.crippleQueue.length) { M.step = 'crippling'; return; }
+  if (M.explodeQueue.length) { M.step = 'explosion'; return; }
+  if (M.impelQueue && M.impelQueue.length) { M.step = 'impel'; return; }
+  M.step = 'done';
+}
+
+/* Roll Backup + Aegis save dice on hits still unsaved after primary saves/re-rolls.
+   Mutates M.saveResult in place and recomputes damage. */
+export function rollDeferredBackupSaves(state, rng, M) {
+  const sr = M.saveResult;
+  if (!sr || sr.backupRolled) return;
+  if (sr.backupVal != null) {
+    sr.hitsList.forEach(h => {
+      if (h.saved || h.sv == null) return;
+      const r = rollDie(rng); const ok = r >= sr.backupVal;
+      sr.backDice.push({ r, ok });
+      if (ok) { h.saved = true; h.savedBy = 'backup'; }
+    });
+  }
+  // Aegis-X (§15.1): vs Bomber/Close Action, Y extra save dice (on Backup, or 4+).
+  if ((sr.isBomberAtk || sr.isCloseAction) && !M.aegisUsed) {
+    const aegisY = aegisValueForGroup(state, sr.targetGid);
+    sr.aegisY = aegisY;
+    if (aegisY > 0) {
+      const av = sr.backupVal != null ? sr.backupVal : 4;
+      for (let i = 0; i < aegisY; i++) {
+        const unsavedHit = sr.hitsList.find(h => !h.saved);
+        if (!unsavedHit) break;
+        const r = rollDie(rng); const ok = r >= av;
+        sr.aegisDice.push({ r, ok });
+        if (ok) { unsavedHit.saved = true; unsavedHit.savedBy = 'aegis'; }
+      }
+      M.aegisUsed = true;
+    }
+  }
+  sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+  sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
+  sr.critDamaged = sr.hitsList.some(h => h.isCrit && !h.saved);
+  sr.backupRolled = true;
+}
+
+/* ── ATTACK STEP MACHINE ──
+   Drives the attack modal through its sub-steps. `to` names the transition the
+   player requested (the modal buttons). Mutates M (and state); dice use `rng`.
+   Rendering is the caller's job. Server-driven combat dispatches these as intents. */
+export function advanceAttack(state, rng, M, to) {
+  if (!M) return state;
+  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; M.rerollN = null; rollHits(state, rng, M); }
+  else if (to === 'save') {
+    M.rerollN = null; M.fighterSpend = {};
+    if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; rollSaves(state, rng, M); }
+    else { nextShotOrResolve(state, rng, M); }
+  }
+  else if (to === 'rollbackup') {
+    rollDeferredBackupSaves(state, rng, M);
+  }
+  else if (to === 'apply') {
+    if (M.saveResult && !M.saveResult.backupRolled) rollDeferredBackupSaves(state, rng, M);
+    const s = M.shots[M.shotIdx];
+    const k = targetKey(s.targetGid, s.targetSi);
+    const sr = M.saveResult;
+    M.pendingDamage[k] = (M.pendingDamage[k] || 0) + sr.dmg;
+    if (sr.dmg > 0 && !parseWeaponSpecials(s.w).focused) {
+      M.spillEligible = M.spillEligible || {};
+      M.spillEligible[k] = true;
+    }
+    if (sr.flash && sr.dmg > 0) {
+      M.pendingFlash = M.pendingFlash || {};
+      M.pendingFlash[k] = (M.pendingFlash[k] || 0) + sr.flash;
+    }
+    if (sr.crippling && sr.critDamaged && sr.dmg > 0) {
+      M.forcedCripple = M.forcedCripple || {};
+      M.forcedCripple[k] = true;
+    }
+    if (sr.status) { M.pendingStatus = M.pendingStatus || {}; M.pendingStatus[k] = true; }
+    if (sr.corruptor) { M.pendingCorruptor = M.pendingCorruptor || {}; M.pendingCorruptor[k] = (M.pendingCorruptor[k] || 0) + sr.corruptor; }
+    const spA = parseWeaponSpecials(s.w);
+    if (spA.arrest && sr.dmg > 0) {
+      M.pendingArrest = M.pendingArrest || {};
+      M.pendingArrest[k] = Math.max(M.pendingArrest[k] || 0, spA.arrest);
+    }
+    if (spA.impel && M.hitResult && M.hitResult.crits >= spA.impel) {
+      M.pendingImpel = M.pendingImpel || {};
+      const big = M.hitResult.crits >= spA.impel * 2;
+      M.pendingImpel[s.targetGid] = { x: spA.impel, big };
+    }
+    const td = getDef(state, s.targetGid);
+    M.log.push(`${s.w.name} ▶ ${td.name}: ${sr.dmg} dmg${sr.flash && sr.dmg > 0 ? ` (+${sr.flash} spike)` : ''}`);
+    nextShotOrResolve(state, rng, M);
+  }
+  else if (to === 'crippling-roll') {
+    const c = M.crippleQueue[0];
+    rollCrippleEffect(rng, c, c.braced ? 4 : null);
+  }
+  else if (to === 'explosion-roll') {
+    const ex = M.explodeQueue[0];
+    rollExplosionEffect(rng, ex, ex.contained ? 2 : null);
+  }
+  else if (to === 'crippling-next') { applyCripplingNext(state, M); }
+  else if (to === 'explosion-next') { applyExplosionNext(state, rng, M); }
+  return state;
+}
+
+/* Move to the next shot (rolling its hits), or once all shots are done apply
+   damage & queue effects. */
+export function nextShotOrResolve(state, rng, M) {
+  if (M.shotIdx < M.shots.length - 1) {
+    M.shotIdx++; M.hitResult = null; M.saveResult = null; M.step = 'hit';
+    rollHits(state, rng, M);
+    return;
+  }
+  resolveAttackDamage(state, M);
+}
+
+/* Apply the next queued crippling effect to its ship, then advance the queues. */
+export function applyCripplingNext(state, M) {
+  const c = M.crippleQueue.shift();
+  const ship = state.groups[c.gid].ships[c.si];
+  const def = getDef(state, c.gid);
+  ship.crippling = ship.crippling || [];
+  if (c.effectKey === 'fire') { ship.fireTokens = (ship.fireTokens || 0) + 1; ship.crippling.push('fire'); }
+  else if (c.effectKey === 'energy') { ship.spikes = (ship.spikes || 0) + 1; }
+  else if (c.effectKey === 'structural') {
+    ship.hull = Math.max(0, ship.hull - 1);
+    if (ship.hull <= 0 && !ship.destroyed) { ship.destroyed = true; if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(c.gid, c.si, def, ship)); }
+  }
+  else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
+  M.log.push(`${c.name} crippled: ${c.effectName}`);
+  proceedQueues(M);
+}
+
+/* Apply the next queued explosion's area effect, then advance the queues. */
+export function applyExplosionNext(state, rng, M) {
+  const ex = M.explodeQueue.shift();
+  M.log.push(`${ex.name} exploded: ${ex.effectName}`);
+  applyExplosionEffect(state, rng, ex, M);
+  proceedQueues(M);
+}
+
+/* AP Re-roll: the attacker re-rolls missed to-hit dice ('hit') or the defender
+   re-rolls failed save dice ('save'), spending that side's AP. Count = M.rerollN. */
+export function attackReroll(state, rng, M, which) {
+  if (which === 'hit') {
+    const hr = M.hitResult;
+    const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? (getDef(state, M.attackerGid) || {}).side : null);
+    const missIdx = hr.dice.map((d, i) => (!d.isHit ? i : -1)).filter(i => i >= 0);
+    const maxRR = Math.min(missIdx.length, (state.planning && state.planning.ap[atkSide]) || 0);
+    const n = Math.min(M.rerollN || maxRR, maxRR);
+    if (atkSide && n > 0) {
+      state.planning.ap[atkSide] -= n;
+      missIdx.slice(0, n).forEach(i => { const d = hr.dice[i]; d.r = rollDie(rng); d.isHit = d.r >= hr.lock; d.isCrit = d.r >= hr.lock + 2; });
+      hr.hits = hr.dice.filter(d => d.isHit).length;
+      hr.crits = hr.dice.filter(d => d.isCrit).length;
+      hr.rerolled = true; M.rerollN = null;
+      M.log.push(`${factionName(state, atkSide)} AP Re-roll ${n} (${n} AP)`);
+    }
+  } else if (which === 'save') {
+    const sr = M.saveResult; const s = M.shots[M.shotIdx];
+    const td = getDef(state, s.targetGid); const defSide = td.side;
+    const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
+    const maxRR = Math.min(failedIdx.length, (state.planning && state.planning.ap[defSide]) || 0);
+    const n = Math.min(M.rerollN || maxRR, maxRR);
+    if (defSide && n > 0) {
+      state.planning.ap[defSide] -= n;
+      failedIdx.slice(0, n).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(rng); d.ok = d.r >= d.sv; });
+      recomputeSaves(sr);
+      sr.rerolled = true; M.rerollN = null;
+      M.log.push(`${factionName(state, defSide)} AP Re-roll ${n} saves (${n} AP)`);
+    }
+  }
+  return state;
+}
+
+/* Close Protection: spend selected friendly Fighters (M.fighterSpend) to re-roll
+   that many failed primary saves. */
+export function attackFighterReroll(state, rng, M) {
+  const sr = M.saveResult; if (!sr) return state;
+  const s = M.shots[M.shotIdx]; const td = getDef(state, s.targetGid);
+  const spend = M.fighterSpend || {};
+  const nSpend = Object.keys(spend).reduce((a, k) => a + (spend[k] || 0), 0);
+  if (nSpend <= 0) return state;
+  Object.keys(spend).forEach(wingId => {
+    const n = spend[wingId] || 0; if (!n) return;
+    const a = (state.launchedAssets || []).find(x => x.id === wingId);
+    if (a) a.count = Math.max(0, a.count - n);
+  });
+  state.launchedAssets = (state.launchedAssets || []).filter(a => a.count > 0);
+  const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
+  failedIdx.slice(0, nSpend).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(rng); d.ok = d.r >= d.sv; });
+  recomputeSaves(sr);
+  sr.fighterRerolled = true; M.fighterSpend = {};
+  M.log.push(`${factionName(state, td.side)} Close Protection: re-rolled ${nSpend} save${nSpend !== 1 ? 's' : ''} (−${nSpend} fighters)`);
+  return state;
+}
+
+/* Re-derive each hit's saved flag from the (possibly re-rolled) primary + backup
+   dice, then recompute total damage / unsaved count. */
+function recomputeSaves(sr) {
+  sr.hitsList.forEach(h => { h.saved = false; h.savedBy = null; });
+  let pIdx = 0;
+  sr.hitsList.forEach(h => { if (h.sv == null || h.noSaveDie) return; const d = sr.primDice[pIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'primary'; } });
+  let bIdx = 0;
+  if (sr.backupVal != null) sr.hitsList.forEach(h => { if (h.saved) return; const d = sr.backDice[bIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'backup'; } });
+  sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+  sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
+}
+
+/* Commit a resolved attack: log the summary + per-step lines, then for a bomber
+   attack apply Crippling-Fire and remove the spent bombers, or for group fire mark
+   every ship fired (recording Limited-X uses) and clear its targets. Clears the
+   modal. Returns a bomber-scope continuation hint for the caller (asset-phase
+   orchestration stays client-side); null for group fire. */
+export function finishAttack(state, M) {
+  if (!M) return null;
+  {
+    const atkName = M.bomber ? (M.attackerName || 'Assets') : (getDef(state, M.attackerGid) ? getDef(state, M.attackerGid).name : 'Group');
+    const tgtNames = {};
+    (M.shots || []).forEach(s => {
+      const td = getDef(state, s.targetGid); if (!td) return;
+      const multi = state.groups[s.targetGid] && state.groups[s.targetGid].ships.length > 1;
+      tgtNames[targetKey(s.targetGid, s.targetSi)] = td.name + (multi ? ` #${s.targetSi + 1}` : '');
+    });
+    let totDmg = 0, kills = 0;
+    Object.keys(M.pendingDamage || {}).forEach(k => {
+      totDmg += M.pendingDamage[k] || 0;
+      const [g, si] = k.split('#'); const ts = state.groups[g] && state.groups[g].ships[parseInt(si)];
+      if (ts && ts.destroyed) kills++;
+    });
+    const tgtList = Object.values(tgtNames).join(', ') || 'target';
+    if (totDmg > 0 || kills > 0) logEvent(state, `${atkName} hit ${tgtList} for ${totDmg} dmg${kills ? ` · ${kills} destroyed` : ''}`);
+    else logEvent(state, `${atkName} fired at ${tgtList} — no damage`);
+    (M.log || []).forEach(line => logEvent(state, `· ${line}`));
+  }
+  let hint = null;
+  if (M.bomber) {
+    if (M.cripplingFire) {
+      const s = M.shots[0];
+      const ts = state.groups[s.targetGid] && state.groups[s.targetGid].ships[s.targetSi];
+      if (ts && !ts.destroyed) {
+        ts.fireTokens = (ts.fireTokens || 0) + M.cripplingFire;
+        ts.crippling = ts.crippling || [];
+        if (!ts.crippling.includes('fire')) ts.crippling.push('fire');
+      }
+    }
+    state.launchedAssets = state.launchedAssets.filter(a => !M.bomberAssetIds.includes(a.id));
+    hint = { bomber: true, scope: state._bomberResolveSide, scopeType: state._bomberResolveType };
+  } else {
+    const aDef = getDef(state, M.attackerGid);
+    const grp = state.groups[M.attackerGid];
+    grp.ships.forEach(ship => {
+      if (!ship.weaponTargets) { ship.firedThisActivation = true; return; }
+      ship.limitedUses = ship.limitedUses || {};
+      const seen = new Set();
+      Object.keys(ship.weaponTargets).forEach(wi => {
+        const sp = parseWeaponSpecials(aDef.weapons[wi]);
+        const gk = weaponGroupKey(aDef, parseInt(wi));
+        if (sp.limited && !seen.has(gk)) { seen.add(gk); ship.limitedUses[wi] = (ship.limitedUses[wi] || 0) + 1; }
+      });
+      ship.firedThisActivation = true;
+      ship.weaponTargets = {};
+    });
+  }
+  state.attackModal = null;
+  return hint;
+}
+
+/* Deterministic attack-modal declarations (no dice): raise/lower Shields,
+   Overcharge a weapon, declare an Escort redirect, Brace for Impact / Contain
+   Reactor (spend 2 AP), or resolve an Impel forced turn/move. */
+export function attackDeclare(state, M, decl) {
+  if (!M) return state;
+  switch (decl.what) {
+    case 'shield':
+      M.shieldsUp = M.shieldsUp || {};
+      M.shieldsUp[decl.key] = !!decl.value;
+      break;
+    case 'overcharge':
+      M.overcharge = M.overcharge || {};
+      M.overcharge[decl.wi] = !!decl.value;
+      break;
+    case 'escort': {
+      const s = M.shots[decl.idx];
+      if (!s || s.escortedTo) break;
+      const esc = eligibleEscort(state, s.targetGid, s.targetSi);
+      if (!esc) break;
+      if (M.escortGid && M.escortGid !== esc.gid) break; // one Escort Group per attack
+      M.escortGid = esc.gid;
+      const eg = state.groups[esc.gid];
+      const leadIdx = eg.ships.findIndex(sh => !sh.destroyed && !sh.offTable);
+      s.escortedTo = { gid: esc.gid, si: leadIdx, origGid: s.targetGid, origSi: s.targetSi };
+      s.targetGid = esc.gid; s.targetSi = leadIdx;
+      M.log.push(`Escort: ${esc.name} intercepts hits`);
+      break;
+    }
+    case 'brace': {
+      const c = M.crippleQueue[0]; const defSide = c && getDef(state, c.gid) && getDef(state, c.gid).side;
+      if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !c.braced) {
+        state.planning.ap[defSide] -= 2; c.braced = true;
+        M.log.push(`${factionName(state, defSide)} Braced for Impact (crippling → 4)`);
+      }
+      break;
+    }
+    case 'contain': {
+      const ex = M.explodeQueue[0]; const defSide = ex && getDef(state, ex.gid) && getDef(state, ex.gid).side;
+      if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !ex.contained) {
+        state.planning.ap[defSide] -= 2; ex.contained = true;
+        M.log.push(`${factionName(state, defSide)} Contained Reactor (explosion → 2)`);
+      }
+      break;
+    }
+    case 'impel': {
+      const q = M.impelQueue.shift();
+      const grp = state.groups[q.gid];
+      if (grp) {
+        if (decl.choice === 'turn') {
+          const turn = q.big ? 90 : 45;
+          grp.ships.forEach(s => { if (!s.destroyed && !s.offTable) s.heading = ((s.heading || 0) + turn) % 360; });
+          M.log.push(`Impel: ${getDef(state, q.gid).name} turned ${turn}°`);
+        } else {
+          const distPx = q.x * 2 * INCH;
+          grp.ships.forEach(s => {
+            if (s.destroyed || s.offTable) return;
+            const rad = (s.heading || 0) * Math.PI / 180;
+            s.x = Math.max(0, Math.min(BOARD_PX, s.x + Math.cos(rad) * distPx));
+            s.y = Math.max(0, Math.min(BOARD_PX, s.y + Math.sin(rad) * distPx));
+          });
+          M.log.push(`Impel: ${getDef(state, q.gid).name} moved forward ${q.x * 2}"`);
+        }
+      }
+      proceedQueues(M);
+      break;
+    }
+  }
+  return state;
+}
+
 /* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
    An "intent" is a small serialisable action object { type, ...payload }.
    `apply(state, intent, rng)` is the single entry point the server runs after
@@ -1957,6 +2541,11 @@ export function apply(state, intent, rng) {
     case 'moveShip':     return commitMove(state, rng, intent.gid, intent.si, intent.x, intent.y, intent.layerToggle);
     case 'aimShip':      return aimShip(state, intent.x, intent.y);
     case 'vectoredMove': return commitVectoredSecondMove(state, intent.x, intent.y);
+    case 'attackStep':         return advanceAttack(state, rng, state.attackModal, intent.to);
+    case 'attackReroll':       return attackReroll(state, rng, state.attackModal, intent.which);
+    case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
+    case 'finishAttack':       finishAttack(state, state.attackModal); return state;
+    case 'attackDeclare':      return attackDeclare(state, state.attackModal, intent);
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }
