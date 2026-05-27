@@ -1966,6 +1966,102 @@ export function rollDeferredBackupSaves(state, rng, M) {
   sr.backupRolled = true;
 }
 
+/* ── ATTACK STEP MACHINE ──
+   Drives the attack modal through its sub-steps. `to` names the transition the
+   player requested (the modal buttons). Mutates M (and state); dice use `rng`.
+   Rendering is the caller's job. Server-driven combat dispatches these as intents. */
+export function advanceAttack(state, rng, M, to) {
+  if (!M) return state;
+  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; M.rerollN = null; }
+  else if (to === 'save') {
+    M.rerollN = null; M.fighterSpend = {};
+    if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; }
+    else { nextShotOrResolve(state, M); }
+  }
+  else if (to === 'rollbackup') {
+    rollDeferredBackupSaves(state, rng, M);
+  }
+  else if (to === 'apply') {
+    if (M.saveResult && !M.saveResult.backupRolled) rollDeferredBackupSaves(state, rng, M);
+    const s = M.shots[M.shotIdx];
+    const k = targetKey(s.targetGid, s.targetSi);
+    const sr = M.saveResult;
+    M.pendingDamage[k] = (M.pendingDamage[k] || 0) + sr.dmg;
+    if (sr.dmg > 0 && !parseWeaponSpecials(s.w).focused) {
+      M.spillEligible = M.spillEligible || {};
+      M.spillEligible[k] = true;
+    }
+    if (sr.flash && sr.dmg > 0) {
+      M.pendingFlash = M.pendingFlash || {};
+      M.pendingFlash[k] = (M.pendingFlash[k] || 0) + sr.flash;
+    }
+    if (sr.crippling && sr.critDamaged && sr.dmg > 0) {
+      M.forcedCripple = M.forcedCripple || {};
+      M.forcedCripple[k] = true;
+    }
+    if (sr.status) { M.pendingStatus = M.pendingStatus || {}; M.pendingStatus[k] = true; }
+    if (sr.corruptor) { M.pendingCorruptor = M.pendingCorruptor || {}; M.pendingCorruptor[k] = (M.pendingCorruptor[k] || 0) + sr.corruptor; }
+    const spA = parseWeaponSpecials(s.w);
+    if (spA.arrest && sr.dmg > 0) {
+      M.pendingArrest = M.pendingArrest || {};
+      M.pendingArrest[k] = Math.max(M.pendingArrest[k] || 0, spA.arrest);
+    }
+    if (spA.impel && M.hitResult && M.hitResult.crits >= spA.impel) {
+      M.pendingImpel = M.pendingImpel || {};
+      const big = M.hitResult.crits >= spA.impel * 2;
+      M.pendingImpel[s.targetGid] = { x: spA.impel, big };
+    }
+    const td = getDef(state, s.targetGid);
+    M.log.push(`${s.w.name} ▶ ${td.name}: ${sr.dmg} dmg${sr.flash && sr.dmg > 0 ? ` (+${sr.flash} spike)` : ''}`);
+    nextShotOrResolve(state, M);
+  }
+  else if (to === 'crippling-roll') {
+    const c = M.crippleQueue[0];
+    rollCrippleEffect(rng, c, c.braced ? 4 : null);
+  }
+  else if (to === 'explosion-roll') {
+    const ex = M.explodeQueue[0];
+    rollExplosionEffect(rng, ex, ex.contained ? 2 : null);
+  }
+  else if (to === 'crippling-next') { applyCripplingNext(state, M); }
+  else if (to === 'explosion-next') { applyExplosionNext(state, rng, M); }
+  return state;
+}
+
+/* Move to the next shot, or once all shots are done apply damage & queue effects. */
+export function nextShotOrResolve(state, M) {
+  if (M.shotIdx < M.shots.length - 1) {
+    M.shotIdx++; M.hitResult = null; M.saveResult = null; M.step = 'hit';
+    return;
+  }
+  resolveAttackDamage(state, M);
+}
+
+/* Apply the next queued crippling effect to its ship, then advance the queues. */
+export function applyCripplingNext(state, M) {
+  const c = M.crippleQueue.shift();
+  const ship = state.groups[c.gid].ships[c.si];
+  const def = getDef(state, c.gid);
+  ship.crippling = ship.crippling || [];
+  if (c.effectKey === 'fire') { ship.fireTokens = (ship.fireTokens || 0) + 1; ship.crippling.push('fire'); }
+  else if (c.effectKey === 'energy') { ship.spikes = (ship.spikes || 0) + 1; }
+  else if (c.effectKey === 'structural') {
+    ship.hull = Math.max(0, ship.hull - 1);
+    if (ship.hull <= 0 && !ship.destroyed) { ship.destroyed = true; if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(c.gid, c.si, def, ship)); }
+  }
+  else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
+  M.log.push(`${c.name} crippled: ${c.effectName}`);
+  proceedQueues(M);
+}
+
+/* Apply the next queued explosion's area effect, then advance the queues. */
+export function applyExplosionNext(state, rng, M) {
+  const ex = M.explodeQueue.shift();
+  M.log.push(`${ex.name} exploded: ${ex.effectName}`);
+  applyExplosionEffect(state, rng, ex, M);
+  proceedQueues(M);
+}
+
 /* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
    An "intent" is a small serialisable action object { type, ...payload }.
    `apply(state, intent, rng)` is the single entry point the server runs after

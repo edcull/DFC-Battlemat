@@ -1048,7 +1048,9 @@ import {
   rollDeferredBackupSaves as _rollDeferredBackupSaves,
   rollHits as _rollHits, rollSaves as _rollSaves,
   coherencyInches as _coherencyInches, outOfFormationSet as _outOfFormationSet,
-  groupInFormation as _groupInFormation
+  groupInFormation as _groupInFormation,
+  advanceAttack as _advanceAttack, nextShotOrResolve as _nextShotOrResolve,
+  applyCripplingNext as _applyCripplingNext, applyExplosionNext as _applyExplosionNext
 } from '../src/engine/mutators.js';
 
 import { isLegal as _isLegal, legalActions as _legalActions } from '../src/engine/gating.js';
@@ -4023,90 +4025,9 @@ function renderAttackModal() {
 }
 
 /* Advance the attack state machine. */
-function advanceAttack(to) {
-  const M = state.attackModal;
-  if (!M) return;
-  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; M.rerollN = null; }
-  else if (to === 'save') {
-    M.rerollN = null; M.fighterSpend = {};
-    if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; }
-    else { nextShotOrResolve(); }
-  }
-  else if (to === 'rollbackup') {
-    // Primary saves (and any re-rolls) are locked in — now roll Backup + Aegis saves.
-    rollDeferredBackupSaves(M);
-    renderAll();
-    return;
-  }
-  else if (to === 'apply') {
-    // If backups weren't rolled yet (e.g. none available), roll them now (safe no-op).
-    if (M.saveResult && !M.saveResult.backupRolled) rollDeferredBackupSaves(M);
-    // Accumulate damage onto the target.
-    const s = M.shots[M.shotIdx];
-    const k = targetKey(s.targetGid, s.targetSi);
-    const sr = M.saveResult;
-    M.pendingDamage[k] = (M.pendingDamage[k] || 0) + sr.dmg;
-    // Track whether any NON-Focused damage hit this target (enables group spillover).
-    if (sr.dmg > 0 && !parseWeaponSpecials(s.w).focused) {
-      M.spillEligible = M.spillEligible || {};
-      M.spillEligible[k] = true;
-    }
-    // Flash-X: target gains X spikes when this weapon inflicts damage.
-    if (sr.flash && sr.dmg > 0) {
-      M.pendingFlash = M.pendingFlash || {};
-      M.pendingFlash[k] = (M.pendingFlash[k] || 0) + sr.flash;
-    }
-    // Crippling-X: if this weapon scored a critical that caused damage, force a
-    // crippling effect on the target regardless of tonnage.
-    if (sr.crippling && sr.critDamaged && sr.dmg > 0) {
-      M.forcedCripple = M.forcedCripple || {};
-      M.forcedCripple[k] = true;
-    }
-    // Status: on a hit, mark target to gain a Scanners Offline token (auto-removed at
-    // start of the End Phase). Corruptor-X: place X Battalions on the target ship.
-    if (sr.status) { M.pendingStatus = M.pendingStatus || {}; M.pendingStatus[k] = true; }
-    if (sr.corruptor) { M.pendingCorruptor = M.pendingCorruptor || {}; M.pendingCorruptor[k] = (M.pendingCorruptor[k] || 0) + sr.corruptor; }
-    // Arrest-X: a ship damaged by this weapon reduces Thrust by X" next activation (once/round).
-    const spA = parseWeaponSpecials(s.w);
-    if (spA.arrest && sr.dmg > 0) {
-      M.pendingArrest = M.pendingArrest || {};
-      M.pendingArrest[k] = Math.max(M.pendingArrest[k] || 0, spA.arrest);
-    }
-    // Impel-X: if this weapon scored ≥X criticals vs the group, queue a forced move/turn.
-    if (spA.impel && M.hitResult && M.hitResult.crits >= spA.impel) {
-      M.pendingImpel = M.pendingImpel || {};
-      const big = M.hitResult.crits >= spA.impel * 2;
-      M.pendingImpel[s.targetGid] = { x: spA.impel, big };
-    }
-    const td = getDef(s.targetGid);
-    M.log.push(`${s.w.name} ▶ ${td.name}: ${sr.dmg} dmg${sr.flash&&sr.dmg>0?` (+${sr.flash} spike)`:''}`);
-    nextShotOrResolve();
-  }
-  else if (to === 'crippling-roll') {
-    const c = state.attackModal.crippleQueue[0];
-    rollCrippleEffect(c, c.braced ? 4 : null);
-    renderAll();
-  }
-  else if (to === 'explosion-roll') {
-    const ex = state.attackModal.explodeQueue[0];
-    rollExplosionEffect(ex, ex.contained ? 2 : null);
-    renderAll();
-  }
-  else if (to === 'crippling-next') { applyCrippling(); }
-  else if (to === 'explosion-next') { applyExplosion(); }
-  renderAll();
-}
-
-/* Move to the next shot, or once all shots done, apply damage & queue crippling/explosion. */
-function nextShotOrResolve() {
-  const M = state.attackModal;
-  if (M.shotIdx < M.shots.length - 1) {
-    M.shotIdx++; M.hitResult = null; M.saveResult = null; M.step = 'hit';
-    return;
-  }
-  // All shots resolved — apply accumulated damage now.
-  resolveAccumulatedDamage();
-}
+/* Attack step machine — engine resolution; the client re-renders after each step. */
+function advanceAttack(to) { if (state.attackModal) { _advanceAttack(state, rng, state.attackModal, to); renderAll(); } }
+function nextShotOrResolve() { _nextShotOrResolve(state, state.attackModal); }
 
 /* Per-ship points value (group points divided by group size). */
 
@@ -4124,32 +4045,9 @@ const CRIPPLE_LABEL = { energy:'Energy Surge', structural:'Struct.', fire:'Fire'
 // the server). makeCrippleRoll / makeExplosionRoll are imported directly; the
 // rng-driven rolls are shimmed to inject the active rng.
 function rollCrippleEffect(c, forced) { return _rollCrippleEffect(rng, c, forced); }
-function applyCrippling() {
-  const M = state.attackModal;
-  const c = M.crippleQueue.shift();
-  const ship = state.groups[c.gid].ships[c.si];
-  const def = getDef(c.gid);
-  ship.crippling = ship.crippling || [];
-  if (c.effectKey === 'fire') { ship.fireTokens = (ship.fireTokens || 0) + 1; ship.crippling.push('fire'); }
-  else if (c.effectKey === 'energy') { ship.spikes = (ship.spikes || 0) + 1; }
-  else if (c.effectKey === 'structural') {
-    ship.hull = Math.max(0, ship.hull - 1);
-    if (ship.hull <= 0 && !ship.destroyed) { ship.destroyed = true; if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(c.gid, c.si, def, ship)); }
-  }
-  else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
-  M.log.push(`${c.name} crippled: ${c.effectName}`);
-  proceedQueues();
-  renderAll();
-}
+function applyCrippling() { _applyCripplingNext(state, state.attackModal); renderAll(); }
 function rollExplosionEffect(ex, forced) { return _rollExplosionEffect(rng, ex, forced); }
-function applyExplosion() {
-  const M = state.attackModal;
-  const ex = M.explodeQueue.shift();
-  M.log.push(`${ex.name} exploded: ${ex.effectName}`);
-  applyExplosionEffect(ex, M);
-  proceedQueues();
-  renderAll();
-}
+function applyExplosion() { _applyExplosionNext(state, rng, state.attackModal); renderAll(); }
 
 function applyExplosionEffect(ex, M) { return _applyExplosionEffect(state, rng, ex, M); }
 /* Roll Backup saves (and Aegis save dice) on hits still unsaved AFTER primary ES/KS
