@@ -30,7 +30,7 @@ The pure game logic has been extracted from the monolith into ES modules. The en
 | `src/engine/constants.js` | All fleet defs (6 factions), `FACTIONS`, `ORDERS`, `LAYOUTS`, `DEPLOYMENTS`, `ASSET_PROFILES`, etc. |
 | `src/engine/rng.js` | Seeded PRNG (`makeRng(seed)`) + `localRng` (Math.random wrapper for browser play) |
 | `src/engine/state.js` | `createState()` factory, `buildSideFleet()`, `rebuildFleets()` |
-| `src/engine/mutators.js` | All state-mutating functions (movement, combat, scoring, asset resolution…) plus `apply(state, intent, rng)`, the intent dispatcher. |
+| `src/engine/mutators.js` | All state-mutating functions (combat, scoring, asset resolution…), the shared crippling/explosion resolvers (`makeCrippleRoll`, `rollCrippleEffect`, `makeExplosionRoll`, `rollExplosionEffect`, `applyExplosionEffect`), plus `apply(state, intent, rng)`, the intent dispatcher. |
 | `src/engine/gating.js` | Intent legality: `isLegal(state, intent, side)` + `legalActions(state, side)`. Phase 1d / the intent layer — **in progress**: `pass`, `endRound`, and group Orders (`applyOrder`) are modelled; other action families still live inline in client handlers and migrate over incrementally. |
 
 All engine functions take `state` (and `rng` where randomness is needed) as explicit parameters — no globals, safe for concurrent server use.
@@ -111,7 +111,8 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 **In progress — Phase 1d / server authority (intent migration):**
 - `src/engine/gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` exist; the server's intent path validates and applies authoritatively.
 - **Migrated so far:** turn-flow `pass` / `endRound`, and group Orders (`applyOrder`).
-- **Remaining:** migrate the other action families (movement, combat/attack modal, launches, deploy, scoring, dropsite/asset/battalion steps) out of the inline `client/index.html` handlers, each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. The interactive combat/asset modals will likely commit their *resolved result* as a single intent rather than atomising every click. Movement also needs a decision on how deeply the server re-validates geometry (and how the rng-driven scenery move-hits are resolved). Once all families are migrated the legacy relay path can be removed.
+- **Engine groundwork:** the rng-driven crippling/explosion resolvers are now extracted into `mutators.js` (shared by the client; the interactive `applyCrippling`/`applyExplosion` queue wrappers stay client-side). This unblocks a server-side `commitMove` (a move can trigger scenery/mine explosions and crippling) and is reused by the combat-modal migration.
+- **Remaining:** migrate the other action families (movement next — full geometric validation, since the cone helpers are shared; then combat/attack modal, launches, deploy, scoring, dropsite/asset/battalion steps) out of the inline `client/index.html` handlers, each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. The interactive combat/asset modals will likely commit their *resolved result* as a single intent rather than atomising every click. Once all families are migrated the legacy relay path can be removed.
 
 **Pending (later phases):**
 - **Custom Fleet Import** (`DFC_Fleet_Import_Plan.md`) — `src/fleet/` parser + ship/weapon DBs for the New Recruit export format.

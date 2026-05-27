@@ -1567,6 +1567,116 @@ export function resolveBoardingActions(state, rng) {
   return log;
 }
 
+/* ── CRIPPLING & EXPLOSION RESOLVERS ──────────────────────────────────────
+   Shared rng-driven combat sub-resolvers used by the attack modal, the Repair
+   phase, and movement scenery/mine effects. The interactive queue wrappers
+   (applyCrippling / applyExplosion / proceedQueues) stay in the client; these
+   pure(-ish) resolvers run identically on the server. Rolls are DEFERRED so the
+   caller can declare Admiral abilities (Brace / Contain) before rolling. */
+
+const CRIPPLE_TABLE = {
+  energy:    { name:'Energy Surge', key:'energy', desc:'Gain a Spike.' },
+  structural:{ name:'Structural Damage', key:'structural', desc:'Suffer another point of damage.' },
+  fire:      { name:'Fire', key:'fire', desc:'Gain a Fire Token. 1 damage per token each End Phase. Repairable.' },
+  defence:   { name:'Defence Systems Offline', key:'defence', desc:'ES/KS/BS/Shield −1; may be targeted as if Focused. Repairable.' },
+  scanners:  { name:'Scanners Offline', key:'scanners', desc:'Scan reduced to 1". Repairable.' },
+  weapons:   { name:'Weapons Offline', key:'weapons', desc:'Cannot use Weapons or launch Assets. Repairable.' },
+  navigation:{ name:'Navigation Offline', key:'navigation', desc:'Movement → 2"; cannot turn or change layer. Repairable.' },
+  decay:     { name:'Orbital Decay', key:'decay', desc:'Falls into Atmosphere; cannot move to Orbit. Repairable on 6+.' }
+};
+export function crippleFor(total) {
+  if (total <= 3) return CRIPPLE_TABLE.energy;
+  if (total <= 5) return CRIPPLE_TABLE.structural;
+  if (total === 6) return CRIPPLE_TABLE.fire;
+  if (total === 7) return CRIPPLE_TABLE.defence;
+  if (total === 8) return CRIPPLE_TABLE.scanners;
+  if (total === 9) return CRIPPLE_TABLE.weapons;
+  if (total === 10) return CRIPPLE_TABLE.navigation;
+  return CRIPPLE_TABLE.decay;
+}
+export function makeCrippleRoll(gid, si, def) {
+  return { gid, si, name: def.name, rolled: false, braced: false };
+}
+/* Perform the crippling 2D6 roll (or apply Brace's fixed 4) for queue entry c. */
+export function rollCrippleEffect(rng, c, forced) {
+  if (forced != null) { c.total = forced; c.d1 = null; c.d2 = null; }
+  else { c.d1 = rollDie(rng); c.d2 = rollDie(rng); c.total = c.d1 + c.d2; }
+  const eff = crippleFor(c.total);
+  c.effectName = eff.name; c.effectKey = eff.key; c.effectDesc = eff.desc;
+  c.rolled = true;
+}
+export function makeExplosionRoll(gid, si, def, ship) {
+  const mod = def.tonnage === 'C' ? 2 : def.tonnage === 'H' ? 1 : 0;
+  return { gid, si, name: def.name, mod, rolled: false, contained: false,
+    rangeIn: explosionRangeIn(def), x: ship.x, y: ship.y, layer: ship.layer || 'orbit', side: def.side };
+}
+/* Perform the explosion 1D6(+tonnage) roll (or apply Contain's fixed 2) for entry ex. */
+export function rollExplosionEffect(rng, ex, forced) {
+  const EX = {
+    1:{n:'Burn Up', d:'Removed, no further effects.', kind:'none'},
+    2:{n:'Reactor Rupture', d:'Groups/Stations within DOUBLE range gain a Spike.', kind:'spike2x'},
+    3:{n:'Shredded', d:'All in range suffer 2 Kinetic hits. Assets removed 5+.', kind:'hits', type:'K', assets:5},
+    4:{n:'Fuel Detonation', d:'All in range suffer 2 Energy hits. Assets removed 4+.', kind:'hits', type:'E', assets:4},
+    5:{n:'Reactor Overload', d:'All in range suffer 2 Core hits. Assets removed 3+.', kind:'hits', type:'C', assets:3}
+  };
+  if (forced != null) { ex.d1 = forced; ex.mod = 0; ex.total = forced; }
+  else { ex.d1 = rollDie(rng); ex.total = ex.d1 + ex.mod; }
+  const eff = ex.total >= 6 ? {n:'Foldspace Catastrophe', d:'All in range suffer 2 damage + a Spike. Assets removed 2+.', kind:'dmg2spike', assets:2} : EX[Math.max(1, ex.total)];
+  ex.effectName = eff.n; ex.effectDesc = eff.d; ex.effKind = eff.kind; ex.effType = eff.type; ex.effAssets = eff.assets;
+  ex.rolled = true;
+}
+/* Apply an explosion's area effect to all ships/assets on the SAME orbital layer
+   within range (double range for the spike effect). Hit-effects roll saves;
+   chains may queue further explosions into M.explodeQueue. */
+export function applyExplosionEffect(state, rng, ex, M) {
+  if (!ex.rolled) rollExplosionEffect(rng, ex); // non-modal callers: roll immediately
+  if (ex.effKind === 'none') return;
+  const rangePx = ex.rangeIn * INCH * (ex.effKind === 'spike2x' ? 2 : 1);
+  // Spikes are awarded once per GROUP (not per ship). Track which groups are already spiked.
+  const spikedGroups = new Set();
+  // Affected ships (any side), same layer, within range, on-table, alive.
+  Object.keys(state.groups).forEach(gid => {
+    const def = getDef(state, gid);
+    const grp = state.groups[gid];
+    grp.ships.forEach((s, si) => {
+      if (s.destroyed || s.offTable || s.attachedTo) return;
+      if ((s.layer || 'orbit') !== ex.layer) return;
+      if (Math.hypot(s.x - ex.x, s.y - ex.y) > rangePx) return;
+      if (ex.effKind === 'spike2x') {
+        if (!spikedGroups.has(gid)) { spikedGroups.add(gid); grp.spikes = (grp.spikes || 0) + 1; }
+      } else if (ex.effKind === 'dmg2spike') {
+        s.hull = Math.max(0, s.hull - 2);
+        if (s.hull <= 0 && !s.destroyed) { s.destroyed = true; if (M && isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, si, def, s)); }
+        if (!spikedGroups.has(gid)) { spikedGroups.add(gid); grp.spikes = (grp.spikes || 0) + 1; }
+      } else if (ex.effKind === 'hits') {
+        const sv = baseSaveForType(def, s, ex.effType, false);
+        let unsaved = 0;
+        for (let i = 0; i < 2; i++) {
+          if (sv == null) { unsaved++; continue; }
+          if (rollDie(rng) < sv) {
+            const bv = saveVal(def.bs);
+            if (bv == null || rollDie(rng) < bv) unsaved++;
+          }
+        }
+        if (unsaved > 0) {
+          s.hull = Math.max(0, s.hull - unsaved);
+          if (s.hull <= 0 && !s.destroyed) { s.destroyed = true; if (M && isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, si, def, s)); }
+        }
+      }
+    });
+  });
+  // Launch assets on the same conceptual layer (assets count as Orbit) within range.
+  if (ex.effAssets && state.launchedAssets) {
+    state.launchedAssets = state.launchedAssets.filter(a => {
+      if (Math.hypot(a.x - ex.x, a.y - ex.y) > rangePx) return true;
+      let remaining = a.count;
+      for (let i = 0; i < a.count; i++) { if (rollDie(rng) >= ex.effAssets) remaining--; }
+      a.count = remaining;
+      return remaining > 0;
+    });
+  }
+}
+
 /* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
    An "intent" is a small serialisable action object { type, ...payload }.
    `apply(state, intent, rng)` is the single entry point the server runs after
