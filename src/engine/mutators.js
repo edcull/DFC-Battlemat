@@ -2191,6 +2191,76 @@ export function finishAttack(state, M) {
   return hint;
 }
 
+/* Deterministic attack-modal declarations (no dice): raise/lower Shields,
+   Overcharge a weapon, declare an Escort redirect, Brace for Impact / Contain
+   Reactor (spend 2 AP), or resolve an Impel forced turn/move. */
+export function attackDeclare(state, M, decl) {
+  if (!M) return state;
+  switch (decl.what) {
+    case 'shield':
+      M.shieldsUp = M.shieldsUp || {};
+      M.shieldsUp[decl.key] = !!decl.value;
+      break;
+    case 'overcharge':
+      M.overcharge = M.overcharge || {};
+      M.overcharge[decl.wi] = !!decl.value;
+      break;
+    case 'escort': {
+      const s = M.shots[decl.idx];
+      if (!s || s.escortedTo) break;
+      const esc = eligibleEscort(state, s.targetGid, s.targetSi);
+      if (!esc) break;
+      if (M.escortGid && M.escortGid !== esc.gid) break; // one Escort Group per attack
+      M.escortGid = esc.gid;
+      const eg = state.groups[esc.gid];
+      const leadIdx = eg.ships.findIndex(sh => !sh.destroyed && !sh.offTable);
+      s.escortedTo = { gid: esc.gid, si: leadIdx, origGid: s.targetGid, origSi: s.targetSi };
+      s.targetGid = esc.gid; s.targetSi = leadIdx;
+      M.log.push(`Escort: ${esc.name} intercepts hits`);
+      break;
+    }
+    case 'brace': {
+      const c = M.crippleQueue[0]; const defSide = c && getDef(state, c.gid) && getDef(state, c.gid).side;
+      if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !c.braced) {
+        state.planning.ap[defSide] -= 2; c.braced = true;
+        M.log.push(`${factionName(state, defSide)} Braced for Impact (crippling → 4)`);
+      }
+      break;
+    }
+    case 'contain': {
+      const ex = M.explodeQueue[0]; const defSide = ex && getDef(state, ex.gid) && getDef(state, ex.gid).side;
+      if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !ex.contained) {
+        state.planning.ap[defSide] -= 2; ex.contained = true;
+        M.log.push(`${factionName(state, defSide)} Contained Reactor (explosion → 2)`);
+      }
+      break;
+    }
+    case 'impel': {
+      const q = M.impelQueue.shift();
+      const grp = state.groups[q.gid];
+      if (grp) {
+        if (decl.choice === 'turn') {
+          const turn = q.big ? 90 : 45;
+          grp.ships.forEach(s => { if (!s.destroyed && !s.offTable) s.heading = ((s.heading || 0) + turn) % 360; });
+          M.log.push(`Impel: ${getDef(state, q.gid).name} turned ${turn}°`);
+        } else {
+          const distPx = q.x * 2 * INCH;
+          grp.ships.forEach(s => {
+            if (s.destroyed || s.offTable) return;
+            const rad = (s.heading || 0) * Math.PI / 180;
+            s.x = Math.max(0, Math.min(BOARD_PX, s.x + Math.cos(rad) * distPx));
+            s.y = Math.max(0, Math.min(BOARD_PX, s.y + Math.sin(rad) * distPx));
+          });
+          M.log.push(`Impel: ${getDef(state, q.gid).name} moved forward ${q.x * 2}"`);
+        }
+      }
+      proceedQueues(M);
+      break;
+    }
+  }
+  return state;
+}
+
 /* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
    An "intent" is a small serialisable action object { type, ...payload }.
    `apply(state, intent, rng)` is the single entry point the server runs after
@@ -2475,6 +2545,7 @@ export function apply(state, intent, rng) {
     case 'attackReroll':       return attackReroll(state, rng, state.attackModal, intent.which);
     case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
     case 'finishAttack':       finishAttack(state, state.attackModal); return state;
+    case 'attackDeclare':      return attackDeclare(state, state.attackModal, intent);
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }

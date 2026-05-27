@@ -3832,29 +3832,13 @@ function renderAttackModal() {
   document.body.appendChild(overlay);
 
   overlay.querySelectorAll('[data-shield-toggle]').forEach(cb => {
-    cb.addEventListener('change', () => { M.shieldsUp[cb.dataset.shieldToggle] = cb.checked; });
+    cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'shield', key: cb.dataset.shieldToggle, value: cb.checked }));
   });
   overlay.querySelectorAll('[data-overcharge]').forEach(cb => {
-    cb.addEventListener('change', () => { M.overcharge = M.overcharge || {}; M.overcharge[cb.dataset.overcharge] = cb.checked; });
+    cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'overcharge', wi: cb.dataset.overcharge, value: cb.checked }));
   });
   overlay.querySelectorAll('[data-escort]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.escort);
-      const s = M.shots[idx];
-      if (!s || s.escortedTo) return;
-      const esc = eligibleEscort(s.targetGid, s.targetSi);
-      if (!esc) { renderAll(); return; }
-      // Only one Group may Escort at a time across this attack.
-      if (M.escortGid && M.escortGid !== esc.gid) { flashLaunchMsg('Only one Escort Group per attack'); return; }
-      M.escortGid = esc.gid;
-      const eg = state.groups[esc.gid];
-      const leadIdx = eg.ships.findIndex(sh => !sh.destroyed && !sh.offTable);
-      // Remember the original target (for the cap) and redirect the shot to the Escort.
-      s.escortedTo = { gid: esc.gid, si: leadIdx, origGid: s.targetGid, origSi: s.targetSi };
-      s.targetGid = esc.gid; s.targetSi = leadIdx;
-      flashLaunchMsg(`Escort: ${esc.name} intercepts hits`, true);
-      renderAll();
-    });
+    btn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'escort', idx: parseInt(btn.dataset.escort) }));
   });
   const cancelBtn = overlay.querySelector('[data-am-cancel]');
   if (cancelBtn) cancelBtn.addEventListener('click', () => { state.attackModal = null; renderAll(); });
@@ -3863,47 +3847,11 @@ function renderAttackModal() {
   const nextBtn = overlay.querySelector('[data-am-next]');
   if (nextBtn) nextBtn.addEventListener('click', () => advanceAttack(nextBtn.dataset.amNext));
   const braceBtn = overlay.querySelector('[data-am-brace]');
-  if (braceBtn) braceBtn.addEventListener('click', () => {
-    const c = M.crippleQueue[0]; const defSide = getDef(c.gid) && getDef(c.gid).side;
-    if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !c.braced) {
-      state.planning.ap[defSide] -= 2; c.braced = true;
-      M.log.push(`${factionName(defSide)} Braced for Impact (crippling → 4)`);
-      renderAll();
-    }
-  });
+  if (braceBtn) braceBtn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'brace' }));
   const containBtn = overlay.querySelector('[data-am-contain]');
-  if (containBtn) containBtn.addEventListener('click', () => {
-    const ex = M.explodeQueue[0]; const defSide = getDef(ex.gid) && getDef(ex.gid).side;
-    if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !ex.contained) {
-      state.planning.ap[defSide] -= 2; ex.contained = true;
-      M.log.push(`${factionName(defSide)} Contained Reactor (explosion → 2)`);
-      renderAll();
-    }
-  });
+  if (containBtn) containBtn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'contain' }));
   overlay.querySelectorAll('[data-impel]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const choice = btn.dataset.impel;
-      const q = M.impelQueue.shift();
-      const grp = state.groups[q.gid];
-      if (grp) {
-        if (choice === 'turn') {
-          const turn = q.big ? 90 : 45;
-          grp.ships.forEach(s => { if (!s.destroyed && !s.offTable) s.heading = ((s.heading || 0) + turn) % 360; });
-          M.log.push(`Impel: ${getDef(q.gid).name} turned ${turn}°`);
-        } else {
-          const distPx = q.x * 2 * INCH;
-          grp.ships.forEach(s => {
-            if (s.destroyed || s.offTable) return;
-            const rad = (s.heading || 0) * Math.PI / 180;
-            s.x = Math.max(0, Math.min(BOARD_PX, s.x + Math.cos(rad) * distPx));
-            s.y = Math.max(0, Math.min(BOARD_PX, s.y + Math.sin(rad) * distPx));
-          });
-          M.log.push(`Impel: ${getDef(q.gid).name} moved forward ${q.x*2}"`);
-        }
-      }
-      proceedQueues();
-      renderAll();
-    });
+    btn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'impel', choice: btn.dataset.impel }));
   });
   overlay.querySelectorAll('[data-rr-adj]').forEach(btn => {
     btn.addEventListener('click', () => {
