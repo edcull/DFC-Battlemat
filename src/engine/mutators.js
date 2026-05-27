@@ -1566,3 +1566,397 @@ export function resolveBoardingActions(state, rng) {
   });
   return log;
 }
+
+/* ── CRIPPLING & EXPLOSION RESOLVERS ──────────────────────────────────────
+   Shared rng-driven combat sub-resolvers used by the attack modal, the Repair
+   phase, and movement scenery/mine effects. The interactive queue wrappers
+   (applyCrippling / applyExplosion / proceedQueues) stay in the client; these
+   pure(-ish) resolvers run identically on the server. Rolls are DEFERRED so the
+   caller can declare Admiral abilities (Brace / Contain) before rolling. */
+
+const CRIPPLE_TABLE = {
+  energy:    { name:'Energy Surge', key:'energy', desc:'Gain a Spike.' },
+  structural:{ name:'Structural Damage', key:'structural', desc:'Suffer another point of damage.' },
+  fire:      { name:'Fire', key:'fire', desc:'Gain a Fire Token. 1 damage per token each End Phase. Repairable.' },
+  defence:   { name:'Defence Systems Offline', key:'defence', desc:'ES/KS/BS/Shield −1; may be targeted as if Focused. Repairable.' },
+  scanners:  { name:'Scanners Offline', key:'scanners', desc:'Scan reduced to 1". Repairable.' },
+  weapons:   { name:'Weapons Offline', key:'weapons', desc:'Cannot use Weapons or launch Assets. Repairable.' },
+  navigation:{ name:'Navigation Offline', key:'navigation', desc:'Movement → 2"; cannot turn or change layer. Repairable.' },
+  decay:     { name:'Orbital Decay', key:'decay', desc:'Falls into Atmosphere; cannot move to Orbit. Repairable on 6+.' }
+};
+export function crippleFor(total) {
+  if (total <= 3) return CRIPPLE_TABLE.energy;
+  if (total <= 5) return CRIPPLE_TABLE.structural;
+  if (total === 6) return CRIPPLE_TABLE.fire;
+  if (total === 7) return CRIPPLE_TABLE.defence;
+  if (total === 8) return CRIPPLE_TABLE.scanners;
+  if (total === 9) return CRIPPLE_TABLE.weapons;
+  if (total === 10) return CRIPPLE_TABLE.navigation;
+  return CRIPPLE_TABLE.decay;
+}
+export function makeCrippleRoll(gid, si, def) {
+  return { gid, si, name: def.name, rolled: false, braced: false };
+}
+/* Perform the crippling 2D6 roll (or apply Brace's fixed 4) for queue entry c. */
+export function rollCrippleEffect(rng, c, forced) {
+  if (forced != null) { c.total = forced; c.d1 = null; c.d2 = null; }
+  else { c.d1 = rollDie(rng); c.d2 = rollDie(rng); c.total = c.d1 + c.d2; }
+  const eff = crippleFor(c.total);
+  c.effectName = eff.name; c.effectKey = eff.key; c.effectDesc = eff.desc;
+  c.rolled = true;
+}
+export function makeExplosionRoll(gid, si, def, ship) {
+  const mod = def.tonnage === 'C' ? 2 : def.tonnage === 'H' ? 1 : 0;
+  return { gid, si, name: def.name, mod, rolled: false, contained: false,
+    rangeIn: explosionRangeIn(def), x: ship.x, y: ship.y, layer: ship.layer || 'orbit', side: def.side };
+}
+/* Perform the explosion 1D6(+tonnage) roll (or apply Contain's fixed 2) for entry ex. */
+export function rollExplosionEffect(rng, ex, forced) {
+  const EX = {
+    1:{n:'Burn Up', d:'Removed, no further effects.', kind:'none'},
+    2:{n:'Reactor Rupture', d:'Groups/Stations within DOUBLE range gain a Spike.', kind:'spike2x'},
+    3:{n:'Shredded', d:'All in range suffer 2 Kinetic hits. Assets removed 5+.', kind:'hits', type:'K', assets:5},
+    4:{n:'Fuel Detonation', d:'All in range suffer 2 Energy hits. Assets removed 4+.', kind:'hits', type:'E', assets:4},
+    5:{n:'Reactor Overload', d:'All in range suffer 2 Core hits. Assets removed 3+.', kind:'hits', type:'C', assets:3}
+  };
+  if (forced != null) { ex.d1 = forced; ex.mod = 0; ex.total = forced; }
+  else { ex.d1 = rollDie(rng); ex.total = ex.d1 + ex.mod; }
+  const eff = ex.total >= 6 ? {n:'Foldspace Catastrophe', d:'All in range suffer 2 damage + a Spike. Assets removed 2+.', kind:'dmg2spike', assets:2} : EX[Math.max(1, ex.total)];
+  ex.effectName = eff.n; ex.effectDesc = eff.d; ex.effKind = eff.kind; ex.effType = eff.type; ex.effAssets = eff.assets;
+  ex.rolled = true;
+}
+/* Apply an explosion's area effect to all ships/assets on the SAME orbital layer
+   within range (double range for the spike effect). Hit-effects roll saves;
+   chains may queue further explosions into M.explodeQueue. */
+export function applyExplosionEffect(state, rng, ex, M) {
+  if (!ex.rolled) rollExplosionEffect(rng, ex); // non-modal callers: roll immediately
+  if (ex.effKind === 'none') return;
+  const rangePx = ex.rangeIn * INCH * (ex.effKind === 'spike2x' ? 2 : 1);
+  // Spikes are awarded once per GROUP (not per ship). Track which groups are already spiked.
+  const spikedGroups = new Set();
+  // Affected ships (any side), same layer, within range, on-table, alive.
+  Object.keys(state.groups).forEach(gid => {
+    const def = getDef(state, gid);
+    const grp = state.groups[gid];
+    grp.ships.forEach((s, si) => {
+      if (s.destroyed || s.offTable || s.attachedTo) return;
+      if ((s.layer || 'orbit') !== ex.layer) return;
+      if (Math.hypot(s.x - ex.x, s.y - ex.y) > rangePx) return;
+      if (ex.effKind === 'spike2x') {
+        if (!spikedGroups.has(gid)) { spikedGroups.add(gid); grp.spikes = (grp.spikes || 0) + 1; }
+      } else if (ex.effKind === 'dmg2spike') {
+        s.hull = Math.max(0, s.hull - 2);
+        if (s.hull <= 0 && !s.destroyed) { s.destroyed = true; if (M && isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, si, def, s)); }
+        if (!spikedGroups.has(gid)) { spikedGroups.add(gid); grp.spikes = (grp.spikes || 0) + 1; }
+      } else if (ex.effKind === 'hits') {
+        const sv = baseSaveForType(def, s, ex.effType, false);
+        let unsaved = 0;
+        for (let i = 0; i < 2; i++) {
+          if (sv == null) { unsaved++; continue; }
+          if (rollDie(rng) < sv) {
+            const bv = saveVal(def.bs);
+            if (bv == null || rollDie(rng) < bv) unsaved++;
+          }
+        }
+        if (unsaved > 0) {
+          s.hull = Math.max(0, s.hull - unsaved);
+          if (s.hull <= 0 && !s.destroyed) { s.destroyed = true; if (M && isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, si, def, s)); }
+        }
+      }
+    });
+  });
+  // Launch assets on the same conceptual layer (assets count as Orbit) within range.
+  if (ex.effAssets && state.launchedAssets) {
+    state.launchedAssets = state.launchedAssets.filter(a => {
+      if (Math.hypot(a.x - ex.x, a.y - ex.y) > rangePx) return true;
+      let remaining = a.count;
+      for (let i = 0; i < a.count; i++) { if (rollDie(rng) >= ex.effAssets) remaining--; }
+      a.count = remaining;
+      return remaining > 0;
+    });
+  }
+}
+
+/* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
+   An "intent" is a small serialisable action object { type, ...payload }.
+   `apply(state, intent, rng)` is the single entry point the server runs after
+   `isLegal` (see gating.js) and that the local client runs in hotseat mode.
+   Only turn-flow intents are modelled so far; more families migrate over from
+   the inline client handlers incrementally. Each intent maps to one mutator. */
+
+/* Active side spends a Pass Token and hands activation to the opponent
+   (mirrors the alternation done after a finished activation). */
+export function passActivation(state) {
+  const P = state.planning;
+  if (!P || !state.activeSide || !(P.passTokens[state.activeSide] > 0)) return state;
+  const passer = state.activeSide;
+  P.passTokens[passer]--;
+  const other = passer === 'ucm' ? 'shal' : 'ucm';
+  if (sideHasPendingActivation(state, other)) state.activeSide = other;
+  else if (!sideHasPendingActivation(state, passer)) state.activeSide = null;
+  return state;
+}
+
+/* End the Activation Phase: open the end-of-round Dropsite Activation step. */
+export function beginEndRound(state) {
+  state.dropsiteActivation = { side: state.initiativeHolder || 'ucm', done: [], dsId: null };
+  return state;
+}
+
+/* Assign an Order to a Group, applying its immediate effects (Spike changes and
+   Damage Control hull recovery). Legality is checked by gating.js#isLegal — this
+   only mutates. The DC hull roll uses `rng`, so it resolves on whichever runtime
+   applies the intent (seeded server rng online, localRng in hotseat). */
+export function applyOrder(state, rng, gid, order) {
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const def = getDef(state, gid);
+  grp.order = order;
+  logEvent(state, `${def.name} → ${ORDERS[order].label}`);
+  // Re-activating ends any prior deploy-adjust window and Silent Running reduction.
+  grp.ships.forEach(s => { s.justArrived = false; s.sigSilent = false; });
+  // Immediate Spike effects.
+  if (order === 'GQ') grp.spikes = Math.max(0, grp.spikes - 2);
+  if (order === 'SR') grp.spikes = 0;
+  // Damage Control: each ship recovers Hull once (1, or D3 for H/C tonnage) and
+  // is flagged to roll crippling-repair in the Repair step.
+  if (order === 'DC') {
+    grp.ships.forEach(s => {
+      if (s.destroyed || s.offTable) return;
+      s.dcThisRound = true;
+      if (!s.dcRepaired) {
+        s.dcRepaired = true;
+        const rec = (def.tonnage === 'H' || def.tonnage === 'C') ? Math.ceil(rollDie(rng) / 2) : 1;
+        s.hull = Math.min(s.maxHull, s.hull + rec);
+        logEvent(state, `${def.name} Damage Control: +${rec} Hull`);
+      }
+    });
+  }
+  // Auto-select a ship so its move cone shows immediately (view convenience).
+  if (state.selectedShipIdx === null && ORDERS[order] && ORDERS[order].moveMax > 0) {
+    const leadIdx = grp.leadShipIdx || 0;
+    const pick = (i) => { const s = grp.ships[i]; return s && !s.destroyed && !s.offTable && !s.movedThisRound; };
+    const idx = pick(leadIdx) ? leadIdx : grp.ships.findIndex((s, i) => pick(i));
+    if (idx >= 0) state.selectedShipIdx = idx;
+  }
+  return state;
+}
+
+/* ── INDIVIDUAL-ORDER HELPERS (Open Network / Payload) ── */
+export function shipInNetwork(state, def, ship) {
+  if (!def.openNetwork || !ship) return false;
+  if (ship.offTable || ship.destroyed) return false;
+  return (ship.deployedRound != null) && (ship.deployedRound < state.round);
+}
+export function onIndividualOrders(state, def, grp) {
+  if (def.openNetwork) return grp && grp.ships.some(s => shipInNetwork(state, def, s));
+  if (def.payload) return state.round >= 2;
+  return false;
+}
+/* Effective Order for a ship: its own Order if on individual orders (networked
+   Voidgate / detached Payload), otherwise the Group Order. */
+export function effectiveOrder(state, def, grp, shipIdx) {
+  const s = grp.ships[shipIdx];
+  if (def.openNetwork) return shipInNetwork(state, def, s) ? (s ? s.order : null) : grp.order;
+  if (onIndividualOrders(state, def, grp)) return s ? s.order : null;
+  return grp.order;
+}
+
+/* The legal move cone for a ship under its effective Order. Shared by isLegal
+   and commitMove so server validation and application never disagree. */
+export function moveCone(state, gid, si, layerToggle) {
+  const grp = state.groups[gid];
+  const def = getDef(state, gid);
+  const ship = grp.ships[si];
+  const selOrderKey = effectiveOrder(state, def, grp, si);
+  const o = ORDERS[selOrderKey];
+  const navOff = ship.crippling && ship.crippling.includes('navigation');
+  const normalMaxR = effectiveMaxMovePx(def, ship, selOrderKey);
+  const lm = layerMove(normalMaxR, ship, layerToggle);
+  const maxR = lm.maxPx;
+  let minR = navOff ? 0 : (o ? o.moveMin * def.thrust * INCH : 0);
+  if (minR > maxR) minR = 0;
+  const turnDeg = navOff ? 0 : (o ? (o.turnLimit || 0) : 0);
+  return { selOrderKey, o, navOff, lm, maxR, minR, turnDeg };
+}
+
+/* Commit a ship's primary move to (tx,ty): validate the cone, resolve base
+   overlap, set position/heading/layer, then resolve scenery + mine effects, and
+   set up the vectored / Course-Change follow-up aim where applicable. */
+export function commitMove(state, rng, gid, si, tx, ty, layerToggle) {
+  const grp = state.groups[gid];
+  const def = getDef(state, gid);
+  const ship = grp && grp.ships[si];
+  if (!ship || ship.destroyed || ship.offTable || grp.activated || ship.movedThisRound) return state;
+  const { selOrderKey, o, lm, maxR, minR, turnDeg } = moveCone(state, gid, si, layerToggle);
+  if (!o || o.moveMax <= 0) return state;
+
+  const dx = tx - ship.x, dy = ty - ship.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < minR - 0.5 || dist > maxR + 0.5) return state;
+  const fwd = headingVec(ship.heading);
+  const cosAngle = (fwd.x * dx + fwd.y * dy) / Math.max(0.0001, dist);
+  const angleDeg = Math.acos(Math.max(-1, Math.min(1, cosAngle))) * 180 / Math.PI;
+  if (angleDeg > turnDeg + 0.5) return state;
+
+  grp.moveTrail = grp.moveTrail || [];
+  grp.moveTrail.push({ si, x: ship.x, y: ship.y, heading: ship.heading, layer: ship.layer });
+
+  const originX = ship.x, originY = ship.y;
+  const bases = otherShipBases(state, gid, si);
+  const resolved = resolveBaseOverlap(originX, originY, tx, ty, shipBaseRadiusPx(def), bases);
+  ship.x = resolved.x;
+  ship.y = resolved.y;
+  ship.heading = Math.atan2(dy, dx) * 180 / Math.PI;
+  ship.movedThisRound = true;
+  ship.arrestNext = 0;
+  ship.layer = lm.endLayer;
+  state.layerToggle = false;
+  state.hoverPoint = null;
+  {
+    const inches = (dist / INCH).toFixed(1);
+    const cross = fwd.x * dy - fwd.y * dx;
+    const turnTxt = angleDeg < 1 ? 'straight' : `${Math.round(angleDeg)}° ${cross >= 0 ? 'right' : 'left'}`;
+    const layerTxt = lm.endLayer !== (grp.moveTrail[grp.moveTrail.length - 1] || {}).layer ? ` · ${lm.endLayer === 'orbit' ? 'ascend' : 'descend'}` : '';
+    const nm = def.name + (grp.ships.length > 1 ? ` #${si + 1}` : '');
+    logEvent(state, `${nm} moved ${inches}" (${turnTxt})${layerTxt}`);
+  }
+
+  // ── SCENERY MOVEMENT EFFECTS (orbit only) ──
+  if (ship.layer !== 'atmosphere') {
+    let destroyedByObj = false;
+    ((state.scenarioData && state.scenarioData.largeObjects) || []).forEach(obj => {
+      const ocx = inchToPx(obj.x), ocy = inchToPx(obj.y), orr = inchToPx(obj.diameter / 2);
+      if (largeObjectAt(state, ship.x, ship.y) || segCrossesCircle(originX, originY, ship.x, ship.y, ocx, ocy, orr)) destroyedByObj = true;
+    });
+    if (destroyedByObj) {
+      ship.destroyed = true;
+      logEvent(state, `${def.name} destroyed — flew into a Large Object`);
+      if (isCapital(def)) { const ex = makeExplosionRoll(gid, si, def, ship); applyExplosionEffect(state, rng, ex, { explodeQueue: [] }); }
+      return state;
+    }
+    const hits = sceneryMoveHits(state, rng, originX, originY, ship.x, ship.y, ship);
+    if (hits.length) {
+      let total = 0; const labels = [];
+      hits.forEach(h => {
+        const sv = baseSaveForType(def, ship, h.type, false);
+        let unsaved = 0;
+        for (let i = 0; i < h.n; i++) {
+          if (sv == null) { unsaved++; continue; }
+          if (rollDie(rng) < sv) { const bv = saveVal(def.bs); if (bv == null || rollDie(rng) < bv) unsaved++; }
+        }
+        if (unsaved) { total += unsaved; labels.push(`${h.label} (${unsaved} ${h.type})`); }
+      });
+      if (total > 0) {
+        const wasAboveHalf = ship.hull > ship.maxHull / 2;
+        ship.hull = Math.max(0, ship.hull - total);
+        logEvent(state, `${def.name}: ${labels.join(', ')} → ${total} dmg`);
+        if (isCapital(def) && !ship.crippledRolled && ship.hull > 0 && ship.hull <= ship.maxHull / 2 && wasAboveHalf) {
+          ship.crippledRolled = true;
+          const c = makeCrippleRoll(gid, si, def);
+          rollCrippleEffect(rng, c);
+          ship.crippling = ship.crippling || [];
+          if (c.effectKey === 'fire') { ship.fireTokens = (ship.fireTokens || 0) + 1; if (!ship.crippling.includes('fire')) ship.crippling.push('fire'); }
+          else if (c.effectKey === 'energy') ship.spikes = (ship.spikes || 0) + 1;
+          else if (c.effectKey === 'structural') ship.hull = Math.max(0, ship.hull - 1);
+          else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
+          logEvent(state, `${def.name} crippled: ${c.effectName}`);
+        }
+        if (ship.hull <= 0 && !ship.destroyed) {
+          ship.destroyed = true;
+          if (isCapital(def)) { const ex = makeExplosionRoll(gid, si, def, ship); applyExplosionEffect(state, rng, ex, { explodeQueue: [] }); }
+        }
+      }
+    }
+  }
+
+  // ── MINES ── enemy ship in Orbit moving through a Mine's Thrust range triggers it.
+  if (!ship.destroyed && ship.layer !== 'atmosphere') {
+    const enemySide = def.side === 'ucm' ? 'shal' : 'ucm';
+    const mine = (state.launchedAssets || []).find(a => {
+      if (a.kind !== 'mine' || a.side !== enemySide) return false;
+      const rPx = assetProfile(state, a.side, 'mine').thrust * INCH;
+      return segCrossesCircle(originX, originY, ship.x, ship.y, a.x, a.y, rPx) ||
+             Math.hypot(ship.x - a.x, ship.y - a.y) <= rPx;
+    });
+    if (mine) {
+      const prof = assetProfile(state, mine.side, 'mine');
+      const dice = mine.count * (prof.att || 1);
+      const w = { name: `Mine ×${mine.count}`, arc: '—', att: dice, lock: prof.lock, dmg: prof.dmg, type: prof.type, special: prof.special || '' };
+      state.attackModal = {
+        bomber: true, bomberKind: 'mine', bomberAssetIds: [mine.id], bomberSide: mine.side, saturation: 0, cripplingFire: 0,
+        attackerGid: null, attackerSi: null,
+        shots: [{ wi: 0, w, targetGid: gid, targetSi: si }],
+        step: 'intro', shotIdx: 0, shieldsUp: {}, log: [], pendingDamage: {},
+        hitResult: null, saveResult: null, crippleQueue: [], explodeQueue: []
+      };
+      logEvent(state, `Mine detonates on ${def.name}`);
+      return state;
+    }
+  }
+
+  if (def.vectored) {
+    state.aiming = { gid, si, mode: 'vectored', originHeading: ship.heading, remainingMove: maxR - dist };
+  } else if (selOrderKey === 'CC') {
+    state.aiming = { gid, si, mode: 'course_change', originHeading: ship.heading, remainingMove: 0 };
+  }
+  return state;
+}
+
+/* Set a ship's facing during a vectored pivot or Course-Change bonus turn
+   (±45° clamp). A vectored pivot with move left opens the second-move step. */
+export function aimShip(state, tx, ty) {
+  const a = state.aiming;
+  if (!a) return state;
+  const grp = state.groups[a.gid];
+  const aship = grp && grp.ships[a.si];
+  if (aship) {
+    const desired = headingToward(aship.x, aship.y, tx, ty);
+    aship.heading = clampHeading(a.originHeading, desired, 45);
+    if (a.mode === 'vectored' && a.remainingMove > 1) {
+      state.vectoredSecondMove = { gid: a.gid, si: a.si, remaining: a.remainingMove };
+    }
+  }
+  state.aiming = null;
+  state.hoverPoint = null;
+  return state;
+}
+
+/* Commit the second leg of a Vectored move (≤ remaining distance, ≤20° off-axis). */
+export function commitVectoredSecondMove(state, tx, ty) {
+  const v = state.vectoredSecondMove;
+  if (!v) return state;
+  const grp = state.groups[v.gid];
+  const vship = grp && grp.ships[v.si];
+  if (vship) {
+    const dx = tx - vship.x, dy = ty - vship.y;
+    const dist = Math.hypot(dx, dy);
+    const fwd = headingVec(vship.heading);
+    const cos = (fwd.x * dx + fwd.y * dy) / Math.max(0.0001, dist);
+    const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+    if (dist <= v.remaining + 0.5 && angOff <= 20) {
+      grp.moveTrail = grp.moveTrail || [];
+      grp.moveTrail.push({ si: v.si, x: vship.x, y: vship.y, heading: vship.heading });
+      const vBases = otherShipBases(state, v.gid, v.si);
+      const vres = resolveBaseOverlap(vship.x, vship.y, tx, ty, shipBaseRadiusPx(getDef(state, v.gid)), vBases);
+      vship.x = vres.x; vship.y = vres.y;
+      vship.usedVectoredSecondMove = true;
+    }
+  }
+  state.vectoredSecondMove = null;
+  state.hoverPoint = null;
+  return state;
+}
+
+/* Dispatch an intent to its mutator. Mutates `state` in place; returns it. */
+export function apply(state, intent, rng) {
+  switch (intent && intent.type) {
+    case 'pass':         return passActivation(state);
+    case 'endRound':     return beginEndRound(state);
+    case 'applyOrder':   return applyOrder(state, rng, intent.gid, intent.order);
+    case 'moveShip':     return commitMove(state, rng, intent.gid, intent.si, intent.x, intent.y, intent.layerToggle);
+    case 'aimShip':      return aimShip(state, intent.x, intent.y);
+    case 'vectoredMove': return commitVectoredSecondMove(state, intent.x, intent.y);
+    default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
+  }
+}
