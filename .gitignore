@@ -1,0 +1,6 @@
+# Node server dependencies (installed via `npm install`; not committed)
+node_modules/
+
+# Logs / OS cruft
+*.log
+.DS_Store
