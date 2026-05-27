@@ -1045,7 +1045,10 @@ import {
   effectiveOrder as _effectiveOrder, onIndividualOrders as _onIndividualOrders,
   shipInNetwork as _shipInNetwork,
   resolveAttackDamage as _resolveAttackDamage, proceedQueues as _proceedQueues,
-  rollDeferredBackupSaves as _rollDeferredBackupSaves
+  rollDeferredBackupSaves as _rollDeferredBackupSaves,
+  rollHits as _rollHits, rollSaves as _rollSaves,
+  coherencyInches as _coherencyInches, outOfFormationSet as _outOfFormationSet,
+  groupInFormation as _groupInFormation
 } from '../src/engine/mutators.js';
 
 import { isLegal as _isLegal, legalActions as _legalActions } from '../src/engine/gating.js';
@@ -3644,85 +3647,7 @@ function renderAttackModal() {
     const td = getDef(s.targetGid);
     const ts = state.groups[s.targetGid].ships[s.targetSi];
     const sp = parseWeaponSpecials(s.w);
-    if (!M.hitResult) {
-      // Lock: Mauler uses the target's relevant save as Lock; Calibre improves Lock
-      // by 1 vs listed tonnages.
-      let lock = lockVal(s.w);
-      if (sp.mauler) {
-        const sv = s.w.type === 'K' ? saveVal(td.ks) : s.w.type === 'E' ? saveVal(td.es) : (shieldSaveVal(td) || 6);
-        if (sv != null) lock = sv;
-      }
-      if (sp.calibre && sp.calibre.toUpperCase().includes(td.tonnage)) lock = Math.max(2, lock - 1);
-      // ── ATMOSPHERE ATTACK RULES (§4.1.2) ──
-      // forceSix: hit only on 6+ and cannot critical. Otherwise apply Lock modifiers.
-      let forceSix = false;
-      if (!M.bomber && M.attackerGid) {
-        const ash = state.groups[M.attackerGid].ships[M.attackerSi];
-        const aL = ash && (ash.layer || 'orbit'), tL = ts.layer || 'orbit';
-        const isCity = td.category === 'city';
-        const targetDescent = /Descent/i.test(td.special || '');
-        const isBombardment = /Bombardment/i.test(s.w.special || '');
-        if (isCity && isBombardment) {
-          lock = Math.max(2, lock - 2);            // Bombardment improves Lock by 2 vs Cities
-        } else if (tL === 'atmosphere' && (isCity || targetDescent)) {
-          forceSix = true;                          // City / Descent ship in Atmosphere → 6+, no crit
-        } else if (aL === 'atmosphere' && tL === 'orbit') {
-          forceSix = true;                          // firing Atmosphere → Orbit → 6+, no crit
-        } else if (aL === 'orbit' && tL === 'atmosphere') {
-          lock = Math.min(6, lock + 1);             // Orbit → non-Descent ship in Atmosphere: −1 Lock
-        }
-      }
-      // Fusillade-X: for pooled group fire it's already baked per-ship at combine time
-      // (s.fusilladeBaked). For single-ship / non-grouped attacks, apply it here.
-      let att = s.w.att;
-      if (sp.fusillade && !s.fusilladeBaked && !M.bomber && M.attackerGid) {
-        const ag = state.groups[M.attackerGid];
-        const eo = ag ? effectiveOrder(getDef(M.attackerGid), ag, M.attackerSi) : null;
-        if (eo === 'WF') att += sp.fusillade;
-      }
-      // Sustained Fire: double Att vs a target Group hit in the PREVIOUS round.
-      if (sp.sustained && !M.bomber) {
-        const tg = state.groups[s.targetGid];
-        if (tg && tg.hitByLastRound && tg.hitByLastRound.includes(M.attackerGid)) att *= 2;
-      }
-      const dice = [];
-      let hits = 0, crits = 0, sixes = 0;
-      // Reinforced Armour: this target can only be critted on Lock+3 (not +2).
-      const critMargin = (td.special && /Reinforced Armour/i.test(td.special)) ? 3 : 2;
-      for (let i = 0; i < att; i++) {
-        const r = rollDie();
-        // Atmosphere forceSix: hits only on 6, and never criticals.
-        const isHit = forceSix ? (r === 6) : (r >= lock);
-        const isCrit = forceSix ? false : (r >= lock + critMargin);
-        if (isHit) hits++;
-        if (isCrit) crits++;
-        if (r === 6) sixes++;
-        dice.push({ r, isHit, isCrit });
-      }
-      M.hitResult = { dice, hits, crits, lock, forceSix };
-      // Sustained Fire bookkeeping: record that this attacker Group hit the target Group.
-      if (hits > 0 && !M.bomber && M.attackerGid) {
-        const tg = state.groups[s.targetGid];
-        if (tg) { tg.hitByThisRound = tg.hitByThisRound || []; if (!tg.hitByThisRound.includes(M.attackerGid)) tg.hitByThisRound.push(M.attackerGid); }
-      }
-      // Overcharge: each roll of 6 costs the attacker this weapon's UNMODIFIED Damage
-      // in Hull (applied to the firing ship immediately).
-      const oc = M.overcharge && M.overcharge[s.wi];
-      if (oc && sixes > 0 && !M.bomber && M.attackerGid) {
-        const ash = state.groups[M.attackerGid].ships[M.attackerSi];
-        if (ash) {
-          const self = sixes * (s.w.dmg || 0);
-          ash.hull = Math.max(0, ash.hull - self);
-          M.log.push(`Overcharge: ${s.w.name} dealt ${self} self-damage (${sixes}×6)`);
-          if (ash.hull <= 0 && !ash.destroyed) { ash.destroyed = true; }
-        }
-      }
-      // Bloom-X: attacker gains X spikes when this weapon fires.
-      if (sp.bloom && !M.bomber && M.attackerGid) {
-        const ag = state.groups[M.attackerGid];
-        if (ag) ag.spikes = (ag.spikes || 0) + sp.bloom;
-      }
-    }
+    if (!M.hitResult) rollHits(M);
     const hr = M.hitResult;
     const effNote = [
       sp.mauler ? `Mauler (Lock=${hr.lock}+)` : '',
@@ -3761,74 +3686,7 @@ function renderAttackModal() {
     const td = getDef(s.targetGid);
     const ts = state.groups[s.targetGid].ships[s.targetSi];
     const sp = parseWeaponSpecials(s.w);
-    if (!M.saveResult) {
-      const hr = M.hitResult;
-      const k = targetKey(s.targetGid, s.targetSi);
-      const shieldUp = !!M.shieldsUp[k];
-      const sat = M.saturation || 0;       // bomber Saturation Fire: ignore some hits' saves
-      // Build a per-hit list. Each non-crit hit and each crit hit is one entry.
-      // Penetrator: criticals become Core hits (use Shield/none save).
-      // Burnthrough: each crit lowers THIS weapon's ES/KS by X for all its hits.
-      const critCount = hr.crits;
-      const burnReduce = sp.burnthrough * critCount; // total ES/KS reduction from burnthrough
-      const hitsList = [];
-      let critsRemaining = hr.crits;
-      for (let i = 0; i < hr.hits; i++) {
-        const isCrit = critsRemaining > 0; if (isCrit) critsRemaining--;
-        let type = s.w.type;
-        if (isCrit && sp.penetrator) type = 'C'; // critical → Core hit
-        // Base save for this hit's type.
-        let sv = baseSaveForType(td, ts, type, shieldUp);
-        // ES/KS modifiers (Scald, Reave, Burnthrough) apply to E/K hits ONLY, and
-        // are IGNORED when the Shield Save is in use (Shield ignores ES/KS modifiers).
-        if (sv != null && type !== 'C' && !shieldUp) {
-          let red = sp.scald + burnReduce + (isCrit ? sp.reave : 0);
-          if (red) sv = Math.min(6, sv + red); // worse save (capped at 6+)
-        }
-        // Damage for this hit: Critical-X adds X to a crit's damage.
-        const ocOn = M.overcharge && M.overcharge[s.wi];
-        const baseDmg = ocOn ? (s.w.dmg * 2) : s.w.dmg;
-        const dmg = baseDmg + (isCrit ? sp.critical : 0);
-        hitsList.push({ isCrit, type, sv, dmg, saved: false, savedBy: null });
-      }
-      // Roll saves per hit (primary), honouring Saturation (skip saves for `sat` hits).
-      const primDice = [];
-      let skipSaves = sat;
-      hitsList.forEach(h => {
-        if (h.sv == null) return; // no save possible
-        if (skipSaves > 0) { skipSaves--; h.noSaveDie = true; return; } // saturation removes the save die
-        const r = rollDie(); const ok = r >= h.sv;
-        primDice.push({ r, ok, sv: h.sv, crit: h.isCrit });
-        if (ok) { h.saved = true; h.savedBy = 'primary'; }
-      });
-      // Shield-X: the Group gains 1 Spike each time it uses Shield Saves (once per
-      // attack sequence, regardless of how many saves were rolled).
-      if (shieldUp && !M.shieldSpiked) {
-        M.shieldSpiked = M.shieldSpiked || {};
-        if (!M.shieldSpiked[k]) { M.shieldSpiked[k] = true; ts.spikes = (ts.spikes || 0) + 1; }
-      }
-      // Backup saves and Aegis are DEFERRED until after any re-rolls (AP / Fighter
-      // Close Protection) are applied to the primary ES/KS saves. Stored here so the
-      // backup step can use them; the dice are rolled in rollDeferredBackupSaves().
-      let backupVal = saveVal(td.bs);
-      const tgrp = state.groups[s.targetGid];
-      if (tgrp && tgrp.ships.length > 1 && groupInFormation(td)) {
-        backupVal = (backupVal == null) ? 6 : Math.min(backupVal, 6);
-      }
-      const backDice = [];
-      const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
-      const isCloseAction = /Close Action/i.test(s.w.special || '');
-      const aegisDice = [];
-      let aegisY = 0;
-      const dmg = hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
-      const unsaved = hitsList.filter(h => !h.saved).length;
-      // Status applies on a HIT (regardless of damage); Corruptor on damage.
-      M.saveResult = { hitsList, primDice, backDice, backupVal, aegisDice, aegisY, unsaved, dmg,
-        backupRolled: false, targetGid: s.targetGid, isBomberAtk, isCloseAction,
-        flash: sp.flash, crippling: sp.crippling, penetrator: sp.penetrator,
-        status: sp.status && hitsList.length > 0, corruptor: (sp.corruptor && dmg > 0) ? sp.corruptor : 0,
-        critDamaged: hitsList.some(h => h.isCrit && !h.saved) };
-    }
+    if (!M.saveResult) rollSaves(M);
     const sr = M.saveResult;
     const typeLabel = (t) => t === 'E' ? 'ES' : t === 'K' ? 'KS' : 'Shield/Core';
     const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
@@ -4251,6 +4109,10 @@ function nextShotOrResolve() {
 }
 
 /* Per-ship points value (group points divided by group size). */
+
+/* Roll to-hit / saves for the current shot — engine resolution (lazy from render). */
+function rollHits(M)  { _rollHits(state, rng, M); }
+function rollSaves(M) { _rollSaves(state, rng, M); }
 
 /* Apply pending damage + queue crippling/explosions — engine resolution. */
 function resolveAccumulatedDamage() { _resolveAttackDamage(state, state.attackModal); }
@@ -4791,9 +4653,7 @@ function shipBaseRadiusPx(def) {
    ========================================================================== */
 
 /* Coherency distance (inches) for a group, by its tonnage. */
-function coherencyInches(def) {
-  return def.tonnage === 'L' ? 3 : 6;
-}
+function coherencyInches(def) { return _coherencyInches(def); }
 
 /* Open Network ships pick orders individually from the round AFTER they deploy.
    We approximate the deploy round as round 1 (Voidgates have Descent), so
@@ -4847,31 +4707,10 @@ function effectiveOrder(def, grp, shipIdx) { return _effectiveOrder(state, def, 
 
 /* Returns a Set of ship indices that are OUT of formation for the given group.
    Empty set = everyone in formation (or rule doesn't apply). */
-function outOfFormationSet(def) {
-  if (def.openNetwork || def.payload) return new Set(); // Open Network & Payloads ignore coherency
-  const grp = getGroup(def.id);
-  const alive = grp.ships.map((s, i) => ({ s, i })).filter(o => !o.s.destroyed && !o.s.offTable);
-  if (alive.length <= 1) return new Set(); // single ship (or down to one) — rule ignored
-  const cohPx = coherencyInches(def) * INCH;
-  const need = alive.length >= 4 ? 2 : 1; // 4+ need two neighbours, else one
-  const out = new Set();
-  alive.forEach(({ s, i }) => {
-    let neighbours = 0;
-    alive.forEach(({ s: o, i: j }) => {
-      if (i === j) return;
-      // Must be in the same orbital layer AND within coherency distance.
-      if ((s.layer || 'orbit') !== (o.layer || 'orbit')) return;
-      if (Math.hypot(s.x - o.x, s.y - o.y) <= cohPx) neighbours++;
-    });
-    if (neighbours < need) out.add(i);
-  });
-  return out;
-}
+function outOfFormationSet(def) { return _outOfFormationSet(state, def); }
 
 /* Whole group in formation? */
-function groupInFormation(def) {
-  return outOfFormationSet(def).size === 0;
-}
+function groupInFormation(def) { return _groupInFormation(state, def); }
 
 /* Launch asset metadata: aura range (inches) and what it can target. */
 const LAUNCH_TYPES = {

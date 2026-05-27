@@ -1677,6 +1677,166 @@ export function applyExplosionEffect(state, rng, ex, M) {
   }
 }
 
+/* ── COHERENCY ── */
+export function coherencyInches(def) { return def.tonnage === 'L' ? 3 : 6; }
+/* Set of ship indices OUT of formation (need 1 neighbour, or 2 for groups of 4+). */
+export function outOfFormationSet(state, def) {
+  if (def.openNetwork || def.payload) return new Set(); // ignore coherency
+  const grp = getGroup(state, def.id);
+  const alive = grp.ships.map((s, i) => ({ s, i })).filter(o => !o.s.destroyed && !o.s.offTable);
+  if (alive.length <= 1) return new Set();
+  const cohPx = coherencyInches(def) * INCH;
+  const need = alive.length >= 4 ? 2 : 1;
+  const out = new Set();
+  alive.forEach(({ s, i }) => {
+    let neighbours = 0;
+    alive.forEach(({ s: o, i: j }) => {
+      if (i === j) return;
+      if ((s.layer || 'orbit') !== (o.layer || 'orbit')) return;
+      if (Math.hypot(s.x - o.x, s.y - o.y) <= cohPx) neighbours++;
+    });
+    if (neighbours < need) out.add(i);
+  });
+  return out;
+}
+export function groupInFormation(state, def) { return outOfFormationSet(state, def).size === 0; }
+
+/* ── ATTACK RESOLUTION (to-hit / saves) ──
+   Roll the hit dice / primary save dice for the current shot, setting M.hitResult
+   / M.saveResult and applying immediate side-effects (Overcharge self-damage,
+   Bloom/Shield spikes, Sustained-Fire bookkeeping). Lifted out of the render so
+   the rolls are explicit and can run server-side with the room's seeded rng. */
+export function rollHits(state, rng, M) {
+  const s = M.shots[M.shotIdx];
+  const td = getDef(state, s.targetGid);
+  const ts = state.groups[s.targetGid].ships[s.targetSi];
+  const sp = parseWeaponSpecials(s.w);
+  // Lock: Mauler uses the target's relevant save as Lock; Calibre improves Lock vs listed tonnages.
+  let lock = lockVal(s.w);
+  if (sp.mauler) {
+    const sv = s.w.type === 'K' ? saveVal(td.ks) : s.w.type === 'E' ? saveVal(td.es) : (shieldSaveVal(td) || 6);
+    if (sv != null) lock = sv;
+  }
+  if (sp.calibre && sp.calibre.toUpperCase().includes(td.tonnage)) lock = Math.max(2, lock - 1);
+  // Atmosphere attack rules (§4.1.2).
+  let forceSix = false;
+  if (!M.bomber && M.attackerGid) {
+    const ash = state.groups[M.attackerGid].ships[M.attackerSi];
+    const aL = ash && (ash.layer || 'orbit'), tL = ts.layer || 'orbit';
+    const isCity = td.category === 'city';
+    const targetDescent = /Descent/i.test(td.special || '');
+    const isBombardment = /Bombardment/i.test(s.w.special || '');
+    if (isCity && isBombardment) lock = Math.max(2, lock - 2);
+    else if (tL === 'atmosphere' && (isCity || targetDescent)) forceSix = true;
+    else if (aL === 'atmosphere' && tL === 'orbit') forceSix = true;
+    else if (aL === 'orbit' && tL === 'atmosphere') lock = Math.min(6, lock + 1);
+  }
+  // Fusillade-X (per-ship; baked for pooled fire). Sustained Fire: ×2 Att vs a Group hit last round.
+  let att = s.w.att;
+  if (sp.fusillade && !s.fusilladeBaked && !M.bomber && M.attackerGid) {
+    const ag = state.groups[M.attackerGid];
+    const eo = ag ? effectiveOrder(state, getDef(state, M.attackerGid), ag, M.attackerSi) : null;
+    if (eo === 'WF') att += sp.fusillade;
+  }
+  if (sp.sustained && !M.bomber) {
+    const tg = state.groups[s.targetGid];
+    if (tg && tg.hitByLastRound && tg.hitByLastRound.includes(M.attackerGid)) att *= 2;
+  }
+  const dice = [];
+  let hits = 0, crits = 0, sixes = 0;
+  const critMargin = (td.special && /Reinforced Armour/i.test(td.special)) ? 3 : 2;
+  for (let i = 0; i < att; i++) {
+    const r = rollDie(rng);
+    const isHit = forceSix ? (r === 6) : (r >= lock);
+    const isCrit = forceSix ? false : (r >= lock + critMargin);
+    if (isHit) hits++;
+    if (isCrit) crits++;
+    if (r === 6) sixes++;
+    dice.push({ r, isHit, isCrit });
+  }
+  M.hitResult = { dice, hits, crits, lock, forceSix };
+  if (hits > 0 && !M.bomber && M.attackerGid) {
+    const tg = state.groups[s.targetGid];
+    if (tg) { tg.hitByThisRound = tg.hitByThisRound || []; if (!tg.hitByThisRound.includes(M.attackerGid)) tg.hitByThisRound.push(M.attackerGid); }
+  }
+  // Overcharge: each 6 costs the firing ship this weapon's unmodified Damage in Hull.
+  const oc = M.overcharge && M.overcharge[s.wi];
+  if (oc && sixes > 0 && !M.bomber && M.attackerGid) {
+    const ash = state.groups[M.attackerGid].ships[M.attackerSi];
+    if (ash) {
+      const self = sixes * (s.w.dmg || 0);
+      ash.hull = Math.max(0, ash.hull - self);
+      M.log.push(`Overcharge: ${s.w.name} dealt ${self} self-damage (${sixes}×6)`);
+      if (ash.hull <= 0 && !ash.destroyed) { ash.destroyed = true; }
+    }
+  }
+  // Bloom-X: attacker gains X spikes when this weapon fires.
+  if (sp.bloom && !M.bomber && M.attackerGid) {
+    const ag = state.groups[M.attackerGid];
+    if (ag) ag.spikes = (ag.spikes || 0) + sp.bloom;
+  }
+}
+
+export function rollSaves(state, rng, M) {
+  const s = M.shots[M.shotIdx];
+  const td = getDef(state, s.targetGid);
+  const ts = state.groups[s.targetGid].ships[s.targetSi];
+  const sp = parseWeaponSpecials(s.w);
+  const hr = M.hitResult;
+  const k = targetKey(s.targetGid, s.targetSi);
+  const shieldUp = !!M.shieldsUp[k];
+  const sat = M.saturation || 0;
+  // Build a per-hit list. Penetrator: criticals become Core hits. Burnthrough: each
+  // crit worsens this weapon's ES/KS for all its hits.
+  const burnReduce = sp.burnthrough * hr.crits;
+  const hitsList = [];
+  let critsRemaining = hr.crits;
+  for (let i = 0; i < hr.hits; i++) {
+    const isCrit = critsRemaining > 0; if (isCrit) critsRemaining--;
+    let type = s.w.type;
+    if (isCrit && sp.penetrator) type = 'C';
+    let sv = baseSaveForType(td, ts, type, shieldUp);
+    if (sv != null && type !== 'C' && !shieldUp) {
+      const red = sp.scald + burnReduce + (isCrit ? sp.reave : 0);
+      if (red) sv = Math.min(6, sv + red);
+    }
+    const ocOn = M.overcharge && M.overcharge[s.wi];
+    const baseDmg = ocOn ? (s.w.dmg * 2) : s.w.dmg;
+    const dmg = baseDmg + (isCrit ? sp.critical : 0);
+    hitsList.push({ isCrit, type, sv, dmg, saved: false, savedBy: null });
+  }
+  // Primary saves, honouring Saturation (skips `sat` save dice).
+  const primDice = [];
+  let skipSaves = sat;
+  hitsList.forEach(h => {
+    if (h.sv == null) return;
+    if (skipSaves > 0) { skipSaves--; h.noSaveDie = true; return; }
+    const r = rollDie(rng); const ok = r >= h.sv;
+    primDice.push({ r, ok, sv: h.sv, crit: h.isCrit });
+    if (ok) { h.saved = true; h.savedBy = 'primary'; }
+  });
+  // Shield-X: the Group gains 1 Spike when it uses Shield Saves (once per attack).
+  if (shieldUp && !M.shieldSpiked) {
+    M.shieldSpiked = M.shieldSpiked || {};
+    if (!M.shieldSpiked[k]) { M.shieldSpiked[k] = true; ts.spikes = (ts.spikes || 0) + 1; }
+  }
+  // Backup save value (Formation gives a 6+ backup to grouped ships); rolled later.
+  let backupVal = saveVal(td.bs);
+  const tgrp = state.groups[s.targetGid];
+  if (tgrp && tgrp.ships.length > 1 && groupInFormation(state, td)) {
+    backupVal = (backupVal == null) ? 6 : Math.min(backupVal, 6);
+  }
+  const isBomberAtk = M.bomber && (M.bomberKind === 'bomber' || M.bomberKind === 'fireship');
+  const isCloseAction = /Close Action/i.test(s.w.special || '');
+  const dmg = hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+  const unsaved = hitsList.filter(h => !h.saved).length;
+  M.saveResult = { hitsList, primDice, backDice: [], backupVal, aegisDice: [], aegisY: 0, unsaved, dmg,
+    backupRolled: false, targetGid: s.targetGid, isBomberAtk, isCloseAction,
+    flash: sp.flash, crippling: sp.crippling, penetrator: sp.penetrator,
+    status: sp.status && hitsList.length > 0, corruptor: (sp.corruptor && dmg > 0) ? sp.corruptor : 0,
+    critDamaged: hitsList.some(h => h.isCrit && !h.saved) };
+}
+
 /* ── ATTACK RESOLUTION (post-save) ──
    Pure resolution helpers operating on the attack-modal object `M` plus `state`;
    dice use the injected `rng`. Rendering stays with the caller. As combat migrates
