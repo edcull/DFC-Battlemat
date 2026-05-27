@@ -1677,6 +1677,135 @@ export function applyExplosionEffect(state, rng, ex, M) {
   }
 }
 
+/* ── ATTACK RESOLUTION (post-save) ──
+   Pure resolution helpers operating on the attack-modal object `M` plus `state`;
+   dice use the injected `rng`. Rendering stays with the caller. As combat migrates
+   to intents these run on the server with the room's seeded rng. */
+
+/* Apply M.pendingDamage to targets (Focused/spillover rules), record kills, build
+   the crippling / explosion / impel queues, then set the next sub-step. */
+export function resolveAttackDamage(state, M) {
+  M.crippleQueue = [];
+  M.explodeQueue = [];
+  Object.keys(M.pendingDamage).forEach(k => {
+    const [gid, si] = k.split('#');
+    const grp = state.groups[gid];
+    const ship = grp && grp.ships[parseInt(si)];
+    if (!ship || ship.destroyed) return;
+    const def = getDef(state, gid);
+    const dmg = M.pendingDamage[k];
+    const wasAboveHalf = ship.hull > ship.maxHull / 2;
+    const before = ship.hull;
+    ship.hull = Math.max(0, ship.hull - dmg);
+    // Damage spillover: excess beyond destroying the targeted ship spills to the
+    // group (lowest-hull first), unless ALL damage was Focused.
+    let excess = dmg - before;
+    if (ship.hull <= 0 && excess > 0 && M.spillEligible && M.spillEligible[k]) {
+      const mates = grp.ships
+        .map((sh, idx) => ({ sh, idx }))
+        .filter(o => !o.sh.destroyed && !o.sh.offTable && o.idx !== parseInt(si))
+        .sort((a, b) => a.sh.hull - b.sh.hull);
+      for (const o of mates) {
+        if (excess <= 0) break;
+        const take = Math.min(excess, o.sh.hull);
+        const wasHalf = o.sh.hull > o.sh.maxHull / 2;
+        o.sh.hull = Math.max(0, o.sh.hull - take);
+        excess -= take;
+        M.log.push(`Spillover: ${take} → ${def.name} #${o.idx + 1}`);
+        if (o.sh.hull <= 0) {
+          o.sh.destroyed = true;
+          recordKill(state, def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null), false, targetKey(gid, o.idx));
+          if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, o.idx, def, o.sh));
+        } else if (isCapital(def) && !o.sh.crippledRolled && o.sh.hull <= o.sh.maxHull / 2 && wasHalf) {
+          o.sh.crippledRolled = true;
+          M.crippleQueue.push(makeCrippleRoll(gid, o.idx, def));
+        }
+      }
+    }
+    if (M.pendingFlash && M.pendingFlash[k]) ship.spikes = (ship.spikes || 0) + M.pendingFlash[k];
+    if (M.pendingArrest && M.pendingArrest[k] && !ship.arrestedThisRound) {
+      ship.arrestNext = M.pendingArrest[k];
+      ship.arrestedThisRound = true;
+    }
+    if (M.forcedCripple && M.forcedCripple[k] && ship.hull > 0) {
+      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def));
+    }
+    if (isCapital(def) && !ship.crippledRolled && ship.hull > 0 && ship.hull <= ship.maxHull / 2 && wasAboveHalf) {
+      ship.crippledRolled = true;
+      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def));
+    }
+    if (ship.hull <= 0) {
+      ship.destroyed = true;
+      recordKill(state, def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null), false, targetKey(gid, parseInt(si)));
+      if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, parseInt(si), def, ship));
+    } else {
+      if (M.pendingStatus && M.pendingStatus[k]) {
+        ship.crippling = ship.crippling || [];
+        if (!ship.crippling.includes('scanners')) ship.crippling.push('scanners');
+        ship.statusToken = true;
+      }
+      if (M.pendingCorruptor && M.pendingCorruptor[k]) {
+        const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null);
+        if (atkSide) { ship.battalions = ship.battalions || { ucm: 0, shal: 0 }; ship.battalions[atkSide] += M.pendingCorruptor[k]; }
+      }
+    }
+  });
+  // Impel-X: queue affected groups for a player choice (turn vs move forward).
+  if (M.pendingImpel) {
+    M.impelQueue = M.impelQueue || [];
+    Object.keys(M.pendingImpel).forEach(gid => {
+      const grp = state.groups[gid];
+      if (!grp) return;
+      if (!M.impelQueue.find(q => q.gid === gid)) M.impelQueue.push({ gid, x: M.pendingImpel[gid].x, big: M.pendingImpel[gid].big });
+    });
+  }
+  proceedQueues(M);
+  return state;
+}
+
+/* Advance the modal to the next pending sub-step (crippling → explosion → impel → done). */
+export function proceedQueues(M) {
+  if (M.crippleQueue.length) { M.step = 'crippling'; return; }
+  if (M.explodeQueue.length) { M.step = 'explosion'; return; }
+  if (M.impelQueue && M.impelQueue.length) { M.step = 'impel'; return; }
+  M.step = 'done';
+}
+
+/* Roll Backup + Aegis save dice on hits still unsaved after primary saves/re-rolls.
+   Mutates M.saveResult in place and recomputes damage. */
+export function rollDeferredBackupSaves(state, rng, M) {
+  const sr = M.saveResult;
+  if (!sr || sr.backupRolled) return;
+  if (sr.backupVal != null) {
+    sr.hitsList.forEach(h => {
+      if (h.saved || h.sv == null) return;
+      const r = rollDie(rng); const ok = r >= sr.backupVal;
+      sr.backDice.push({ r, ok });
+      if (ok) { h.saved = true; h.savedBy = 'backup'; }
+    });
+  }
+  // Aegis-X (§15.1): vs Bomber/Close Action, Y extra save dice (on Backup, or 4+).
+  if ((sr.isBomberAtk || sr.isCloseAction) && !M.aegisUsed) {
+    const aegisY = aegisValueForGroup(state, sr.targetGid);
+    sr.aegisY = aegisY;
+    if (aegisY > 0) {
+      const av = sr.backupVal != null ? sr.backupVal : 4;
+      for (let i = 0; i < aegisY; i++) {
+        const unsavedHit = sr.hitsList.find(h => !h.saved);
+        if (!unsavedHit) break;
+        const r = rollDie(rng); const ok = r >= av;
+        sr.aegisDice.push({ r, ok });
+        if (ok) { unsavedHit.saved = true; unsavedHit.savedBy = 'aegis'; }
+      }
+      M.aegisUsed = true;
+    }
+  }
+  sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+  sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
+  sr.critDamaged = sr.hitsList.some(h => h.isCrit && !h.saved);
+  sr.backupRolled = true;
+}
+
 /* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
    An "intent" is a small serialisable action object { type, ...payload }.
    `apply(state, intent, rng)` is the single entry point the server runs after

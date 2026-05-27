@@ -1043,7 +1043,9 @@ import {
   rollCrippleEffect as _rollCrippleEffect, rollExplosionEffect as _rollExplosionEffect,
   applyExplosionEffect as _applyExplosionEffect,
   effectiveOrder as _effectiveOrder, onIndividualOrders as _onIndividualOrders,
-  shipInNetwork as _shipInNetwork
+  shipInNetwork as _shipInNetwork,
+  resolveAttackDamage as _resolveAttackDamage, proceedQueues as _proceedQueues,
+  rollDeferredBackupSaves as _rollDeferredBackupSaves
 } from '../src/engine/mutators.js';
 
 import { isLegal as _isLegal, legalActions as _legalActions } from '../src/engine/gating.js';
@@ -4250,102 +4252,10 @@ function nextShotOrResolve() {
 
 /* Per-ship points value (group points divided by group size). */
 
-/* Apply pending damage to targets (least-hull-first within a group is approximated
-   by applying directly to each targeted ship), then queue crippling & explosions. */
-function resolveAccumulatedDamage() {
-  const M = state.attackModal;
-  M.crippleQueue = [];
-  M.explodeQueue = [];
-  Object.keys(M.pendingDamage).forEach(k => {
-    const [gid, si] = k.split('#');
-    const grp = state.groups[gid];
-    const ship = grp && grp.ships[parseInt(si)];
-    if (!ship || ship.destroyed) return;
-    const def = getDef(gid);
-    const dmg = M.pendingDamage[k];
-    const wasAboveHalf = ship.hull > ship.maxHull / 2;
-    const before = ship.hull;
-    ship.hull = Math.max(0, ship.hull - dmg);
-    // Damage spillover: excess damage beyond destroying the targeted ship spills to
-    // other ships in the same Group (lowest-hull first), unless ALL damage was Focused.
-    let excess = dmg - before;
-    if (ship.hull <= 0 && excess > 0 && M.spillEligible && M.spillEligible[k]) {
-      const mates = grp.ships
-        .map((sh, idx) => ({ sh, idx }))
-        .filter(o => !o.sh.destroyed && !o.sh.offTable && o.idx !== parseInt(si))
-        .sort((a, b) => a.sh.hull - b.sh.hull);
-      for (const o of mates) {
-        if (excess <= 0) break;
-        const take = Math.min(excess, o.sh.hull);
-        const wasHalf = o.sh.hull > o.sh.maxHull / 2;
-        o.sh.hull = Math.max(0, o.sh.hull - take);
-        excess -= take;
-        M.log.push(`Spillover: ${take} → ${def.name} #${o.idx + 1}`);
-        if (o.sh.hull <= 0) {
-          o.sh.destroyed = true;
-          recordKill(def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null), false, targetKey(gid, o.idx));
-          if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, o.idx, def, o.sh));
-        } else if (isCapital(def) && !o.sh.crippledRolled && o.sh.hull <= o.sh.maxHull / 2 && wasHalf) {
-          o.sh.crippledRolled = true;
-          M.crippleQueue.push(makeCrippleRoll(gid, o.idx, def, o.sh));
-        }
-      }
-    }
-    // Flash-X spikes accrued from weapons that damaged this ship.
-    if (M.pendingFlash && M.pendingFlash[k]) ship.spikes = (ship.spikes || 0) + M.pendingFlash[k];
-    // Arrest-X: reduce Thrust next activation (once per round).
-    if (M.pendingArrest && M.pendingArrest[k] && !ship.arrestedThisRound) {
-      ship.arrestNext = M.pendingArrest[k];
-      ship.arrestedThisRound = true;
-    }
-    // Crippling-X: forced crippling roll (regardless of tonnage) when a critical
-    // from a Crippling weapon caused damage — in addition to the half-hull rule.
-    if (M.forcedCripple && M.forcedCripple[k] && ship.hull > 0) {
-      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def, ship));
-    }
-    // Crippling: first time a capital ship drops below half (and not destroyed).
-    if (isCapital(def) && !ship.crippledRolled && ship.hull > 0 && ship.hull <= ship.maxHull / 2 && wasAboveHalf) {
-      ship.crippledRolled = true;
-      M.crippleQueue.push(makeCrippleRoll(gid, parseInt(si), def, ship));
-    }
-    // Destruction → explosion.
-    if (ship.hull <= 0) {
-      ship.destroyed = true;
-      recordKill(def, M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null), false, targetKey(gid, parseInt(si)));
-      if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(gid, parseInt(si), def, ship));
-    } else {
-      // Status: gain a Scanners Offline token (auto-removed start of End Phase).
-      if (M.pendingStatus && M.pendingStatus[k]) {
-        ship.crippling = ship.crippling || [];
-        if (!ship.crippling.includes('scanners')) ship.crippling.push('scanners');
-        ship.statusToken = true; // flag for End-Phase auto-removal
-      }
-      // Corruptor-X: place X Battalions (attacker's side) aboard the target ship.
-      if (M.pendingCorruptor && M.pendingCorruptor[k]) {
-        const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null);
-        if (atkSide) { ship.battalions = ship.battalions || { ucm: 0, shal: 0 }; ship.battalions[atkSide] += M.pendingCorruptor[k]; }
-      }
-    }
-  });
-  // Impel-X: queue affected groups for a player choice (turn vs move forward).
-  if (M.pendingImpel) {
-    M.impelQueue = M.impelQueue || [];
-    Object.keys(M.pendingImpel).forEach(gid => {
-      const grp = state.groups[gid];
-      if (!grp) return;
-      if (!M.impelQueue.find(q => q.gid === gid)) M.impelQueue.push({ gid, x: M.pendingImpel[gid].x, big: M.pendingImpel[gid].big });
-    });
-  }
-  proceedQueues();
-}
+/* Apply pending damage + queue crippling/explosions — engine resolution. */
+function resolveAccumulatedDamage() { _resolveAttackDamage(state, state.attackModal); }
 
-function proceedQueues() {
-  const M = state.attackModal;
-  if (M.crippleQueue.length) { M.step = 'crippling'; return; }
-  if (M.explodeQueue.length) { M.step = 'explosion'; return; }
-  if (M.impelQueue && M.impelQueue.length) { M.step = 'impel'; return; }
-  M.step = 'done';
-}
+function proceedQueues() { _proceedQueues(state.attackModal); }
 
 const CRIPPLE_LABEL = { energy:'Energy Surge', structural:'Struct.', fire:'Fire', defence:'Def. Offline', scanners:'Scan Offline', weapons:'Wpn Offline', navigation:'Nav Offline', decay:'Orbital Decay' };
 // Crippling/explosion resolvers now live in src/engine/mutators.js (shared with
@@ -4383,39 +4293,7 @@ function applyExplosionEffect(ex, M) { return _applyExplosionEffect(state, rng, 
 /* Roll Backup saves (and Aegis save dice) on hits still unsaved AFTER primary ES/KS
    saves and any re-rolls have been applied. Mutates sr in place and recomputes damage.
    Called when the player advances past the primary-save sub-step. */
-function rollDeferredBackupSaves(M) {
-  const sr = M.saveResult;
-  if (!sr || sr.backupRolled) return;
-  // Backup saves for hits not yet saved.
-  if (sr.backupVal != null) {
-    sr.hitsList.forEach(h => {
-      if (h.saved || h.sv == null) return;
-      const r = rollDie(); const ok = r >= sr.backupVal;
-      sr.backDice.push({ r, ok });
-      if (ok) { h.saved = true; h.savedBy = 'backup'; }
-    });
-  }
-  // Aegis-X (§15.1): vs Bomber/Close Action, Y extra save dice (on Backup, or 4+).
-  if ((sr.isBomberAtk || sr.isCloseAction) && !M.aegisUsed) {
-    const aegisY = aegisValueForGroup(sr.targetGid);
-    sr.aegisY = aegisY;
-    if (aegisY > 0) {
-      const av = sr.backupVal != null ? sr.backupVal : 4;
-      for (let i = 0; i < aegisY; i++) {
-        const unsavedHit = sr.hitsList.find(h => !h.saved);
-        if (!unsavedHit) break;
-        const r = rollDie(); const ok = r >= av;
-        sr.aegisDice.push({ r, ok });
-        if (ok) { unsavedHit.saved = true; unsavedHit.savedBy = 'aegis'; }
-      }
-      M.aegisUsed = true;
-    }
-  }
-  sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
-  sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
-  sr.critDamaged = sr.hitsList.some(h => h.isCrit && !h.saved);
-  sr.backupRolled = true;
-}
+function rollDeferredBackupSaves(M) { _rollDeferredBackupSaves(state, rng, M); }
 
 function finishAttack() {
   const M = state.attackModal;
