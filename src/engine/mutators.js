@@ -1972,11 +1972,11 @@ export function rollDeferredBackupSaves(state, rng, M) {
    Rendering is the caller's job. Server-driven combat dispatches these as intents. */
 export function advanceAttack(state, rng, M, to) {
   if (!M) return state;
-  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; M.rerollN = null; }
+  if (to === 'hit') { M.step = 'hit'; M.shotIdx = 0; M.hitResult = null; M.rerollN = null; rollHits(state, rng, M); }
   else if (to === 'save') {
     M.rerollN = null; M.fighterSpend = {};
-    if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; }
-    else { nextShotOrResolve(state, M); }
+    if (M.hitResult.hits > 0) { M.step = 'save'; M.saveResult = null; rollSaves(state, rng, M); }
+    else { nextShotOrResolve(state, rng, M); }
   }
   else if (to === 'rollbackup') {
     rollDeferredBackupSaves(state, rng, M);
@@ -2013,7 +2013,7 @@ export function advanceAttack(state, rng, M, to) {
     }
     const td = getDef(state, s.targetGid);
     M.log.push(`${s.w.name} ▶ ${td.name}: ${sr.dmg} dmg${sr.flash && sr.dmg > 0 ? ` (+${sr.flash} spike)` : ''}`);
-    nextShotOrResolve(state, M);
+    nextShotOrResolve(state, rng, M);
   }
   else if (to === 'crippling-roll') {
     const c = M.crippleQueue[0];
@@ -2028,10 +2028,12 @@ export function advanceAttack(state, rng, M, to) {
   return state;
 }
 
-/* Move to the next shot, or once all shots are done apply damage & queue effects. */
-export function nextShotOrResolve(state, M) {
+/* Move to the next shot (rolling its hits), or once all shots are done apply
+   damage & queue effects. */
+export function nextShotOrResolve(state, rng, M) {
   if (M.shotIdx < M.shots.length - 1) {
     M.shotIdx++; M.hitResult = null; M.saveResult = null; M.step = 'hit';
+    rollHits(state, rng, M);
     return;
   }
   resolveAttackDamage(state, M);

@@ -1046,7 +1046,6 @@ import {
   shipInNetwork as _shipInNetwork,
   resolveAttackDamage as _resolveAttackDamage, proceedQueues as _proceedQueues,
   rollDeferredBackupSaves as _rollDeferredBackupSaves,
-  rollHits as _rollHits, rollSaves as _rollSaves,
   coherencyInches as _coherencyInches, outOfFormationSet as _outOfFormationSet,
   groupInFormation as _groupInFormation,
   advanceAttack as _advanceAttack, nextShotOrResolve as _nextShotOrResolve,
@@ -3649,7 +3648,6 @@ function renderAttackModal() {
     const td = getDef(s.targetGid);
     const ts = state.groups[s.targetGid].ships[s.targetSi];
     const sp = parseWeaponSpecials(s.w);
-    if (!M.hitResult) rollHits(M);
     const hr = M.hitResult;
     const effNote = [
       sp.mauler ? `Mauler (Lock=${hr.lock}+)` : '',
@@ -3688,7 +3686,6 @@ function renderAttackModal() {
     const td = getDef(s.targetGid);
     const ts = state.groups[s.targetGid].ships[s.targetSi];
     const sp = parseWeaponSpecials(s.w);
-    if (!M.saveResult) rollSaves(M);
     const sr = M.saveResult;
     const typeLabel = (t) => t === 'E' ? 'ES' : t === 'K' ? 'KS' : 'Shield/Core';
     const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
@@ -4027,13 +4024,9 @@ function renderAttackModal() {
 /* Advance the attack state machine. */
 /* Attack step machine — engine resolution; the client re-renders after each step. */
 function advanceAttack(to) { if (state.attackModal) { _advanceAttack(state, rng, state.attackModal, to); renderAll(); } }
-function nextShotOrResolve() { _nextShotOrResolve(state, state.attackModal); }
+function nextShotOrResolve() { _nextShotOrResolve(state, rng, state.attackModal); }
 
 /* Per-ship points value (group points divided by group size). */
-
-/* Roll to-hit / saves for the current shot — engine resolution (lazy from render). */
-function rollHits(M)  { _rollHits(state, rng, M); }
-function rollSaves(M) { _rollSaves(state, rng, M); }
 
 /* Apply pending damage + queue crippling/explosions — engine resolution. */
 function resolveAccumulatedDamage() { _resolveAttackDamage(state, state.attackModal); }
