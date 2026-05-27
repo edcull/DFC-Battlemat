@@ -1041,7 +1041,9 @@ import {
   apply as _apply,
   makeCrippleRoll, makeExplosionRoll,
   rollCrippleEffect as _rollCrippleEffect, rollExplosionEffect as _rollExplosionEffect,
-  applyExplosionEffect as _applyExplosionEffect
+  applyExplosionEffect as _applyExplosionEffect,
+  effectiveOrder as _effectiveOrder, onIndividualOrders as _onIndividualOrders,
+  shipInNetwork as _shipInNetwork
 } from '../src/engine/mutators.js';
 
 import { isLegal as _isLegal, legalActions as _legalActions } from '../src/engine/gating.js';
@@ -4921,11 +4923,7 @@ function coherencyInches(def) {
 /* A Voidgate (Open Network) ship joins the Network the round AFTER it deploys.
    The round it deploys, it activates with its deploying Group under a single
    Group Order; from the next round it's part of the Network with its own Order. */
-function shipInNetwork(def, ship) {
-  if (!def.openNetwork || !ship) return false;
-  if (ship.offTable || ship.destroyed) return false;
-  return (ship.deployedRound != null) && (ship.deployedRound < state.round);
-}
+function shipInNetwork(def, ship) { return _shipInNetwork(state, def, ship); }
 /* Does a Group currently use individual (per-ship) Orders?
    - Open Network: true if ANY of its ships are already in the Network. (Newly
      deployed gates still use the Group Order; networked gates use their own.)
@@ -4934,11 +4932,7 @@ function shipInNetwork(def, ship) {
    Open Network gateships and Payload ships. */
 function noFormation(def) { return !!(def.openNetwork || def.payload); }
 
-function onIndividualOrders(def, grp) {
-  if (def.openNetwork) return grp && grp.ships.some(s => shipInNetwork(def, s));
-  if (def.payload) return state.round >= 2;
-  return false;
-}
+function onIndividualOrders(def, grp) { return _onIndividualOrders(state, def, grp); }
 
 /* Effective Order for a given ship — its own Order if it's on individual orders
    (networked Voidgate / detached Payload), otherwise the Group Order. */
@@ -4971,17 +4965,7 @@ function firingOriginShip(def, grp, shipIdx) {
   return grp.ships[shipIdx];
 }
 
-function effectiveOrder(def, grp, shipIdx) {
-  const s = grp.ships[shipIdx];
-  if (def.openNetwork) {
-    // Networked gates use their own order; freshly-deployed gates use the group order.
-    return shipInNetwork(def, s) ? (s ? s.order : null) : grp.order;
-  }
-  if (onIndividualOrders(def, grp)) {
-    return s ? s.order : null;
-  }
-  return grp.order;
-}
+function effectiveOrder(def, grp, shipIdx) { return _effectiveOrder(state, def, grp, shipIdx); }
 
 /* Returns a Set of ship indices that are OUT of formation for the given group.
    Empty set = everyone in formation (or rule doesn't apply). */
@@ -8243,45 +8227,22 @@ board.addEventListener('click', (e) => {
     const pt0 = svgPointFromEvent(e);
     if (state.aiming) {
       const a = state.aiming;
-      const ag = state.groups[a.gid];
-      const aship = ag && ag.ships[a.si];
-      if (aship) {
-        const desired = headingToward(aship.x, aship.y, pt0.x, pt0.y);
-        aship.heading = (a.mode === 'deploy') ? desired : clampHeading(a.originHeading, desired, 45);
-        if (a.mode === 'vectored' && a.remainingMove > 1) {
-          state.vectoredSecondMove = { gid: a.gid, si: a.si, remaining: a.remainingMove };
-        }
+      if (a.mode === 'deploy') {
+        // Deploy / reserve-arrival facing — relay path (deploy family not yet migrated).
+        const ag = state.groups[a.gid];
+        const aship = ag && ag.ships[a.si];
+        if (aship) aship.heading = headingToward(aship.x, aship.y, pt0.x, pt0.y);
+        state.aiming = null;
+        state.hoverPoint = null;
+        renderAll();
+        return;
       }
-      state.aiming = null;
-      state.hoverPoint = null;
-      renderAll();
+      // Vectored pivot / Course-Change bonus turn — server-authoritative intent.
+      dispatch({ type: 'aimShip', gid: a.gid, x: pt0.x, y: pt0.y });
       return;
     }
     if (state.vectoredSecondMove) {
-      const v = state.vectoredSecondMove;
-      const vg = state.groups[v.gid];
-      const vship = vg && vg.ships[v.si];
-      if (vship) {
-        const dx = pt0.x - vship.x, dy = pt0.y - vship.y;
-        const dist = Math.hypot(dx, dy);
-        const fwd = headingVec(vship.heading);
-        const cos = (fwd.x*dx + fwd.y*dy) / Math.max(0.0001, dist);
-        const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
-        if (dist <= v.remaining + 0.5 && angOff <= 20) {
-          vg.moveTrail = vg.moveTrail || [];
-          vg.moveTrail.push({ si: v.si, x: vship.x, y: vship.y, heading: vship.heading });
-          const vdef = getDef(v.gid);
-          const vR = shipBaseRadiusPx(vdef);
-          const vBases = otherShipBases(v.gid, v.si);
-          const vres = resolveBaseOverlap(vship.x, vship.y, pt0.x, pt0.y, vR, vBases);
-          vship.x = vres.x;
-          vship.y = vres.y;
-          vship.usedVectoredSecondMove = true;
-        }
-      }
-      state.vectoredSecondMove = null;
-      state.hoverPoint = null;
-      renderAll();
+      dispatch({ type: 'vectoredMove', gid: state.vectoredSecondMove.gid, x: pt0.x, y: pt0.y });
       return;
     }
   }
@@ -8556,163 +8517,11 @@ board.addEventListener('click', (e) => {
   const ship = grp.ships[state.selectedShipIdx];
   if (!ship || ship.destroyed || ship.offTable) return;
 
-  // PLAY phase — full move-cone logic
+  // PLAY phase — the full move (cone validation, base-overlap resolution,
+  // scenery/mine effects, and the vectored / Course-Change follow-up) lives in
+  // the engine commitMove(); the click is dispatched as a moveShip intent.
   if (grp.activated) return;
-  const selOrderKey = effectiveOrder(def, grp, state.selectedShipIdx);
-  if (!selOrderKey) return;
-  const o = ORDERS[selOrderKey];
-  if (o.moveMax <= 0) return;
-  // ENFORCE: each ship may move at most once per round.
-  if (ship.movedThisRound) return;
-
-  const dx = pt.x - ship.x;
-  const dy = pt.y - ship.y;
-  const dist = Math.sqrt(dx*dx + dy*dy);
-  const navOff = ship.crippling && ship.crippling.includes('navigation');
-  const normalMaxR = effectiveMaxMovePx(def, ship, selOrderKey);
-  const lm = layerMove(normalMaxR, ship, state.layerToggle);
-  const maxR = lm.maxPx;
-  let minR = navOff ? 0 : o.moveMin * def.thrust * INCH;
-  if (minR > maxR) minR = 0;
-  const turnDeg = navOff ? 0 : (o.turnLimit || 0); // Navigation Offline: cannot turn
-
-  // Range check
-  if (dist < minR - 0.5 || dist > maxR + 0.5) return;
-  // Turn-cone check
-  const fwd = headingVec(ship.heading);
-  const cosAngle = (fwd.x * dx + fwd.y * dy) / Math.max(0.0001, dist);
-  const clampedCos = Math.max(-1, Math.min(1, cosAngle));
-  const angleDeg = Math.acos(clampedCos) * 180 / Math.PI;
-  if (angleDeg > turnDeg + 0.5) return;
-
-  // Save previous pos for undo
-  grp.moveTrail = grp.moveTrail || [];
-  grp.moveTrail.push({
-    si: state.selectedShipIdx,
-    x: ship.x, y: ship.y, heading: ship.heading, layer: ship.layer
-  });
-
-  // Resolve base overlap: if the destination overlaps another base, slide back
-  // along the travel path until clear.
-  const originX = ship.x, originY = ship.y;
-  const myR = shipBaseRadiusPx(def);
-  const bases = otherShipBases(state.selectedGroupId, state.selectedShipIdx);
-  const resolved = resolveBaseOverlap(originX, originY, pt.x, pt.y, myR, bases);
-
-  // Teleport to resolved point, face the direction of travel
-  ship.x = resolved.x;
-  ship.y = resolved.y;
-  ship.heading = Math.atan2(dy, dx) * 180 / Math.PI;
-  ship.movedThisRound = true;
-  ship.arrestNext = 0; // Arrest only affects the activation immediately after being hit
-  ship.layer = lm.endLayer; // apply layer transition (descend at end / ascend at start)
-  state.layerToggle = false;
-  state.hoverPoint = null;
-  {
-    const inches = (dist / INCH).toFixed(1);
-    // Turn direction relative to previous facing (sign of cross product).
-    const cross = fwd.x * dy - fwd.y * dx;
-    const turnTxt = angleDeg < 1 ? 'straight' : `${Math.round(angleDeg)}° ${cross >= 0 ? 'right' : 'left'}`;
-    const layerTxt = lm.endLayer !== (grp.moveTrail[grp.moveTrail.length-1] || {}).layer ? ` · ${lm.endLayer === 'orbit' ? 'ascend' : 'descend'}` : '';
-    const nm = def.name + (grp.ships.length > 1 ? ` #${state.selectedShipIdx+1}` : '');
-    logEvent(`${nm} moved ${inches}" (${turnTxt})${layerTxt}`);
-  }
-
-  // ── SCENERY MOVEMENT EFFECTS (orbit only) ──
-  // Large Object: a ship moved onto / through one is destroyed.
-  if (ship.layer !== 'atmosphere') {
-    let destroyedByObj = false;
-    (state.scenarioData && state.scenarioData.largeObjects || []).forEach(o => {
-      const ocx = inchToPx(o.x), ocy = inchToPx(o.y), orr = inchToPx(o.diameter/2);
-      if (largeObjectAt(ship.x, ship.y) || segCrossesCircle(originX, originY, ship.x, ship.y, ocx, ocy, orr)) destroyedByObj = true;
-    });
-    if (destroyedByObj) {
-      ship.destroyed = true;
-      flashLaunchMsg(`${def.name} destroyed — flew into a Large Object!`);
-      if (isCapital(def)) {
-        const ex = makeExplosionRoll(state.selectedGroupId, state.selectedShipIdx, def, ship);
-        applyExplosionEffect(ex, { explodeQueue: [] });
-      }
-      renderAll(); return;
-    }
-    // Micrometeor (2 Kinetic) / Dense Field (2 Core): hits with saves per cloud crossed.
-    const hits = sceneryMoveHits(originX, originY, ship.x, ship.y, ship);
-    if (hits.length) {
-      let total = 0; const labels = [];
-      hits.forEach(h => {
-        const sv = baseSaveForType(def, ship, h.type, false);
-        let unsaved = 0;
-        for (let i = 0; i < h.n; i++) {
-          if (sv == null) { unsaved++; continue; }
-          if (rollDie() < sv) { const bv = saveVal(def.bs); if (bv == null || rollDie() < bv) unsaved++; }
-        }
-        if (unsaved) { total += unsaved; labels.push(`${h.label} (${unsaved} ${h.type})`); }
-      });
-      if (total > 0) {
-        const wasAboveHalf = ship.hull > ship.maxHull / 2;
-        ship.hull = Math.max(0, ship.hull - total);
-        flashLaunchMsg(`${def.name}: ${labels.join(', ')} → ${total} dmg`);
-        if (isCapital(def) && !ship.crippledRolled && ship.hull > 0 && ship.hull <= ship.maxHull/2 && wasAboveHalf) {
-          ship.crippledRolled = true;
-          // Resolve a one-off crippling roll immediately (no modal for scenery).
-          const c = makeCrippleRoll(state.selectedGroupId, state.selectedShipIdx, def, ship);
-          rollCrippleEffect(c);
-          ship.crippling = ship.crippling || [];
-          if (c.effectKey === 'fire') { ship.fireTokens = (ship.fireTokens||0)+1; if(!ship.crippling.includes('fire')) ship.crippling.push('fire'); }
-          else if (c.effectKey === 'energy') ship.spikes = (ship.spikes||0)+1;
-          else if (c.effectKey === 'structural') ship.hull = Math.max(0, ship.hull-1);
-          else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
-          flashLaunchMsg(`${def.name} crippled: ${c.effectName}`);
-        }
-        if (ship.hull <= 0 && !ship.destroyed) {
-          ship.destroyed = true;
-          if (isCapital(def)) { const ex = makeExplosionRoll(state.selectedGroupId, state.selectedShipIdx, def, ship); applyExplosionEffect(ex, { explodeQueue: [] }); }
-        }
-      }
-    }
-  }
-
-  // ── MINES ── When an enemy ship in Orbit moves through a Mine's Thrust range,
-  // the owner may detonate it. Resolved when the ship completes its movement.
-  if (!ship.destroyed && ship.layer !== 'atmosphere') {
-    const enemySide = def.side === 'ucm' ? 'shal' : 'ucm';
-    const mine = (state.launchedAssets || []).find(a => {
-      if (a.kind !== 'mine' || a.side !== enemySide) return false;
-      const mProf = assetProfile(a.side, 'mine');
-      const rPx = mProf.thrust * INCH;
-      // Did the move path pass within the mine's thrust range?
-      return segCrossesCircle(originX, originY, ship.x, ship.y, a.x, a.y, rPx) ||
-             Math.hypot(ship.x - a.x, ship.y - a.y) <= rPx;
-    });
-    if (mine) {
-      // Detonate: attack this ship with the mine's profile (single weapon), then remove it.
-      const prof = assetProfile(mine.side, 'mine');
-      const dice = mine.count * (prof.att || 1);
-      const w = { name: `Mine ×${mine.count}`, arc: '—', att: dice, lock: prof.lock, dmg: prof.dmg, type: prof.type, special: prof.special || '' };
-      state.attackModal = {
-        bomber: true, bomberKind: 'mine', bomberAssetIds: [mine.id], bomberSide: mine.side, saturation: 0, cripplingFire: 0,
-        attackerGid: null, attackerSi: null,
-        shots: [{ wi: 0, w, targetGid: state.selectedGroupId, targetSi: state.selectedShipIdx }],
-        step: 'intro', shotIdx: 0, shieldsUp: {}, log: [], pendingDamage: {},
-        hitResult: null, saveResult: null, crippleQueue: [], explodeQueue: []
-      };
-      flashLaunchMsg(`Mine detonates on ${def.name}!`);
-      renderAll(); return;
-    }
-  }
-  if (def.vectored) {
-    const remaining = maxR - dist;
-    state.aiming = {
-      gid: state.selectedGroupId, si: state.selectedShipIdx,
-      mode: 'vectored', originHeading: ship.heading, remainingMove: remaining
-    };
-  } else if (selOrderKey === 'CC') {
-    state.aiming = {
-      gid: state.selectedGroupId, si: state.selectedShipIdx,
-      mode: 'course_change', originHeading: ship.heading, remainingMove: 0
-    };
-  }
-  renderAll();
+  dispatch({ type: 'moveShip', gid: state.selectedGroupId, si: state.selectedShipIdx, x: pt.x, y: pt.y, layerToggle: state.layerToggle });
 });
 
 board.addEventListener('mousemove', (e) => {

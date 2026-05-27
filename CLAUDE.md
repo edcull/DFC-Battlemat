@@ -110,9 +110,8 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 
 **In progress — Phase 1d / server authority (intent migration):**
 - `src/engine/gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` exist; the server's intent path validates and applies authoritatively.
-- **Migrated so far:** turn-flow `pass` / `endRound`, and group Orders (`applyOrder`).
-- **Engine groundwork:** the rng-driven crippling/explosion resolvers are now extracted into `mutators.js` (shared by the client; the interactive `applyCrippling`/`applyExplosion` queue wrappers stay client-side). This unblocks a server-side `commitMove` (a move can trigger scenery/mine explosions and crippling) and is reused by the combat-modal migration.
-- **Remaining:** migrate the other action families (movement next — full geometric validation, since the cone helpers are shared; then combat/attack modal, launches, deploy, scoring, dropsite/asset/battalion steps) out of the inline `client/index.html` handlers, each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. The interactive combat/asset modals will likely commit their *resolved result* as a single intent rather than atomising every click. Once all families are migrated the legacy relay path can be removed.
+- **Migrated so far:** turn-flow `pass` / `endRound`, group Orders (`applyOrder`), and play-phase movement — `moveShip` (full geometric cone validation via the shared `moveCone`), plus the vectored / Course-Change follow-ups `aimShip` and `vectoredMove`. A move resolves its scenery/mine effects server-side (the rng-driven crippling/explosion resolvers live in `mutators.js`; the interactive `applyCrippling`/`applyExplosion` queue wrappers stay client-side). Deploy/reserve-arrival facing (aiming `mode:'deploy'`) is still on the relay — it's part of the deploy family.
+- **Remaining:** migrate the other action families (combat/attack modal, launches, deploy [incl. reserve-arrival facing], scoring, dropsite/asset/battalion steps) out of the inline `client/index.html` handlers, each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. The interactive combat/asset modals will likely commit their *resolved result* as a single intent rather than atomising every click. Once all families are migrated the legacy relay path can be removed.
 
 **Pending (later phases):**
 - **Custom Fleet Import** (`DFC_Fleet_Import_Plan.md`) — `src/fleet/` parser + ship/weapon DBs for the New Recruit export format.
@@ -124,5 +123,5 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 - Named admirals not implemented (uses generic admiral stats)
 - No custom fleet import yet (only built-in faction rosters)
 - No AI opponent yet
-- Online multiplayer is **partly server-authoritative**: migrated intents (`pass`, `endRound`, `applyOrder`) are validated/applied by the server; all other actions still use the trusted-relay path (client mutates and pushes full state, no server-side legality check). Online play also requires running the Node server (the GitHub Pages deploy is hotseat-only)
+- Online multiplayer is **partly server-authoritative**: migrated intents (`pass`, `endRound`, `applyOrder`, `moveShip`, `aimShip`, `vectoredMove`) are validated/applied by the server; all other actions still use the trusted-relay path (client mutates and pushes full state, no server-side legality check). Online play also requires running the Node server (the GitHub Pages deploy is hotseat-only)
 - `src/engine/gating.js` covers only the turn-flow intents so far — the full legality surface (range, arc, fire limits, AP, coherency) is not yet extracted from `client/index.html`

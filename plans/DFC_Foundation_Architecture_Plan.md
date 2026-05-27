@@ -4,9 +4,10 @@
 > Engine extracted; browser hotseat working via modules; Node server with WebSocket rooms running;
 > online client (mode selector + side-gating) working.
 > `gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` now exist; the server has an
-> authoritative intent path alongside the legacy trusted relay. **`pass`, `endRound`, and group
-> Orders (`applyOrder`) are migrated**; the remaining action families (movement first) move over
-> incrementally, after which the relay path is removed.
+> authoritative intent path alongside the legacy trusted relay. **`pass`, `endRound`, group Orders
+> (`applyOrder`), and play-phase movement (`moveShip` / `aimShip` / `vectoredMove`) are migrated**;
+> the remaining families (combat modal next) move over incrementally, after which the relay path
+> is removed.
 > Phase 4 (fleet import, AI) and Phase 5 (production deploy) are not yet started.
 > See section 3 for Phase 1 delivery notes and section 8 for the full phase-by-phase status table.
 
@@ -329,7 +330,7 @@ one-line guard in each handler).
 | **1a** | Extract `constants.js` | Pure data module, zero risk | ✅ Done |
 | **1b** | Parameterize RNG; extract `rng.js` | Deterministic randomness | ✅ Done |
 | **1c** | Extract `mutators.js` (grouped by area) | Headless engine | ✅ Done |
-| **1d** | Extract `gating.js`; expose `legalActions` / `isLegal` + `apply` dispatcher | Engine API | 🔄 In progress (`pass` / `endRound` / `applyOrder` done; movement + other families pending) |
+| **1d** | Extract `gating.js`; expose `legalActions` / `isLegal` + `apply` dispatcher | Engine API | 🔄 In progress (`pass` / `endRound` / `applyOrder` / movement done; combat modal + other families pending) |
 | **1e** | Wire `client/local.js`; browser hotseat via modules | Browser hotseat via modules | ✅ Done |
 | **2a** | `package.json`, Express skeleton, WebSocket rooms | Server running locally | ✅ Done |
 | **2b** | Intent protocol end-to-end; two tabs in sync | Local two-player networking | ✅ Done |

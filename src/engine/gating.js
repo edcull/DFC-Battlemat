@@ -13,9 +13,15 @@
 
 import { ORDERS } from './constants.js';
 import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide } from './mutators.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec } from './mutators.js';
 
 const INTENT_TYPES = ['pass', 'endRound'];
+
+// True when it is `side`'s turn to act in the play phase (or there is no active
+// side yet). Pre-play phases impose no active-side restriction.
+function playTurnOk(state, side) {
+  return !(state.phase === 'play' && state.activeSide && state.activeSide !== side);
+}
 
 export function isLegal(state, intent, side) {
   if (!intent || typeof intent !== 'object') return false;
@@ -48,6 +54,47 @@ export function isLegal(state, intent, side) {
       // Order is locked once a ship has moved under the current Order.
       if (grp.order && order !== grp.order && grp.ships.some(s => !s.destroyed && s.movedThisRound)) return false;
       return true;
+    }
+    case 'moveShip': {
+      const { gid, si } = intent;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      if (!playTurnOk(state, side)) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable || ship.movedThisRound) return false;
+      const { o, maxR, minR, turnDeg } = moveCone(state, gid, si, intent.layerToggle);
+      if (!o || o.moveMax <= 0) return false;
+      const dx = intent.x - ship.x, dy = intent.y - ship.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < minR - 0.5 || dist > maxR + 0.5) return false;
+      const fwd = headingVec(ship.heading);
+      const cosA = (fwd.x * dx + fwd.y * dy) / Math.max(0.0001, dist);
+      const ang = Math.acos(Math.max(-1, Math.min(1, cosA))) * 180 / Math.PI;
+      return ang <= turnDeg + 0.5;
+    }
+    case 'aimShip': {
+      const a = state.aiming;
+      if (!a || (a.mode !== 'vectored' && a.mode !== 'course_change')) return false;
+      const def = getDef(state, a.gid);
+      if (!def || def.side !== side) return false;
+      return playTurnOk(state, side);
+    }
+    case 'vectoredMove': {
+      const v = state.vectoredSecondMove;
+      if (!v) return false;
+      const def = getDef(state, v.gid);
+      if (!def || def.side !== side) return false;
+      if (!playTurnOk(state, side)) return false;
+      const vship = state.groups[v.gid] && state.groups[v.gid].ships[v.si];
+      if (!vship) return false;
+      const dx = intent.x - vship.x, dy = intent.y - vship.y;
+      const dist = Math.hypot(dx, dy);
+      const fwd = headingVec(vship.heading);
+      const cos = (fwd.x * dx + fwd.y * dy) / Math.max(0.0001, dist);
+      const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+      return dist <= v.remaining + 0.5 && angOff <= 20;
     }
     default:
       return false;
