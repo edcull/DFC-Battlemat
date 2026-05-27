@@ -96,6 +96,13 @@ export function isLegal(state, intent, side) {
       const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
       return dist <= v.remaining + 0.5 && angOff <= 20;
     }
+    case 'attackStep': {
+      if (state.phase !== 'play' || !state.attackModal) return false;
+      // Attacker-drives-all: whoever's activation is in progress drives the modal
+      // (the asset-phase driver during Asset Combat, otherwise the active side).
+      const driver = state.assetActiveSide || state.activeSide;
+      return side === driver;
+    }
     default:
       return false;
   }

@@ -4022,8 +4022,9 @@ function renderAttackModal() {
 }
 
 /* Advance the attack state machine. */
-/* Attack step machine — engine resolution; the client re-renders after each step. */
-function advanceAttack(to) { if (state.attackModal) { _advanceAttack(state, rng, state.attackModal, to); renderAll(); } }
+/* Attack step machine — dispatched as a server-authoritative intent (so the
+   server rolls the dice with the room's seeded rng); hotseat applies locally. */
+function advanceAttack(to) { if (state.attackModal) dispatch({ type: 'attackStep', to }); }
 function nextShotOrResolve() { _nextShotOrResolve(state, rng, state.attackModal); }
 
 /* Per-ship points value (group points divided by group size). */
@@ -8354,7 +8355,7 @@ function dispatch(intent) {
 // active-side action (pass / endRound).
 function _intentSide(intent) {
   if (intent && intent.gid) { const d = getDef(intent.gid); if (d) return d.side; }
-  return state.activeSide;
+  return state.assetActiveSide || state.activeSide;
 }
 
 // ---------------------------------------------------------------------------

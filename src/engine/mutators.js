@@ -2344,6 +2344,7 @@ export function apply(state, intent, rng) {
     case 'moveShip':     return commitMove(state, rng, intent.gid, intent.si, intent.x, intent.y, intent.layerToggle);
     case 'aimShip':      return aimShip(state, intent.x, intent.y);
     case 'vectoredMove': return commitVectoredSecondMove(state, intent.x, intent.y);
+    case 'attackStep':   return advanceAttack(state, rng, state.attackModal, intent.to);
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }
