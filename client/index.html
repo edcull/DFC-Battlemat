@@ -2140,13 +2140,7 @@ function renderDetail() {
 
     // Wire up buttons
     const containBtn = div.querySelector('#expl-contain-btn');
-    if (containBtn) containBtn.addEventListener('click', () => {
-      if (defSide && state.planning && state.planning.ap[defSide] >= 2 && !ex.contained) {
-        state.planning.ap[defSide] -= 2; ex.contained = true;
-        M.log.push(`${factionName(defSide)} Contained Reactor (explosion → 2)`);
-        renderAll();
-      }
-    });
+    if (containBtn) containBtn.addEventListener('click', () => dispatch({ type: 'attackDeclare', what: 'contain' }));
     const rollBtn = div.querySelector('#expl-roll-btn');
     if (rollBtn) rollBtn.addEventListener('click', () => advanceAttack('explosion-roll'));
     const resolveBtn = div.querySelector('#expl-resolve-btn');
@@ -8183,9 +8177,21 @@ function dispatch(intent) {
 // locally (hotseat) the operator acts for whichever side the intent concerns —
 // an intent targeting a Group belongs to that Group's owner, otherwise it is an
 // active-side action (pass / endRound).
+// The side performing an intent. Online, the server uses the connection's side;
+// locally (hotseat) the operator acts for whichever side the intent concerns —
+// an intent targeting a Group belongs to that Group's owner; combat defensive
+// decisions belong to the defender (opponent of the attacker); everything else is
+// an active-side / attacker action.
 function _intentSide(intent) {
   if (intent && intent.gid) { const d = getDef(intent.gid); if (d) return d.side; }
-  return state.assetActiveSide || state.activeSide;
+  const atk = state.assetActiveSide || state.activeSide;
+  const defensive = state.attackModal && intent && (
+    intent.type === 'attackFighterReroll' ||
+    (intent.type === 'attackReroll' && intent.which === 'save') ||
+    (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'))
+  );
+  if (defensive) return atk === 'ucm' ? 'shal' : atk === 'shal' ? 'ucm' : atk;
+  return atk;
 }
 
 // ---------------------------------------------------------------------------

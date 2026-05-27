@@ -102,10 +102,16 @@ export function isLegal(state, intent, side) {
     case 'finishAttack':
     case 'attackDeclare': {
       if (state.phase !== 'play' || !state.attackModal) return false;
-      // Attacker-drives-all: whoever's activation is in progress drives the modal
-      // (the asset-phase driver during Asset Combat, otherwise the active side).
-      const driver = state.assetActiveSide || state.activeSide;
-      return side === driver;
+      const atk = state.assetActiveSide || state.activeSide;            // attacker drives the flow
+      const def = atk === 'ucm' ? 'shal' : atk === 'shal' ? 'ucm' : null; // defender owns defensive choices
+      // Defensive decisions (Shields / Brace / Contain, save re-rolls, Close
+      // Protection) belong to the defender; the rest (advances, hit re-rolls,
+      // Overcharge / Escort / Impel, finish) to the attacker.
+      const defensive =
+        (intent.type === 'attackFighterReroll') ||
+        (intent.type === 'attackReroll' && intent.which === 'save') ||
+        (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'));
+      return side === (defensive ? def : atk);
     }
     default:
       return false;
