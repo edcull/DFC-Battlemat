@@ -2064,6 +2064,74 @@ export function applyExplosionNext(state, rng, M) {
   proceedQueues(M);
 }
 
+/* AP Re-roll: the attacker re-rolls missed to-hit dice ('hit') or the defender
+   re-rolls failed save dice ('save'), spending that side's AP. Count = M.rerollN. */
+export function attackReroll(state, rng, M, which) {
+  if (which === 'hit') {
+    const hr = M.hitResult;
+    const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? (getDef(state, M.attackerGid) || {}).side : null);
+    const missIdx = hr.dice.map((d, i) => (!d.isHit ? i : -1)).filter(i => i >= 0);
+    const maxRR = Math.min(missIdx.length, (state.planning && state.planning.ap[atkSide]) || 0);
+    const n = Math.min(M.rerollN || maxRR, maxRR);
+    if (atkSide && n > 0) {
+      state.planning.ap[atkSide] -= n;
+      missIdx.slice(0, n).forEach(i => { const d = hr.dice[i]; d.r = rollDie(rng); d.isHit = d.r >= hr.lock; d.isCrit = d.r >= hr.lock + 2; });
+      hr.hits = hr.dice.filter(d => d.isHit).length;
+      hr.crits = hr.dice.filter(d => d.isCrit).length;
+      hr.rerolled = true; M.rerollN = null;
+      M.log.push(`${factionName(state, atkSide)} AP Re-roll ${n} (${n} AP)`);
+    }
+  } else if (which === 'save') {
+    const sr = M.saveResult; const s = M.shots[M.shotIdx];
+    const td = getDef(state, s.targetGid); const defSide = td.side;
+    const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
+    const maxRR = Math.min(failedIdx.length, (state.planning && state.planning.ap[defSide]) || 0);
+    const n = Math.min(M.rerollN || maxRR, maxRR);
+    if (defSide && n > 0) {
+      state.planning.ap[defSide] -= n;
+      failedIdx.slice(0, n).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(rng); d.ok = d.r >= d.sv; });
+      recomputeSaves(sr);
+      sr.rerolled = true; M.rerollN = null;
+      M.log.push(`${factionName(state, defSide)} AP Re-roll ${n} saves (${n} AP)`);
+    }
+  }
+  return state;
+}
+
+/* Close Protection: spend selected friendly Fighters (M.fighterSpend) to re-roll
+   that many failed primary saves. */
+export function attackFighterReroll(state, rng, M) {
+  const sr = M.saveResult; if (!sr) return state;
+  const s = M.shots[M.shotIdx]; const td = getDef(state, s.targetGid);
+  const spend = M.fighterSpend || {};
+  const nSpend = Object.keys(spend).reduce((a, k) => a + (spend[k] || 0), 0);
+  if (nSpend <= 0) return state;
+  Object.keys(spend).forEach(wingId => {
+    const n = spend[wingId] || 0; if (!n) return;
+    const a = (state.launchedAssets || []).find(x => x.id === wingId);
+    if (a) a.count = Math.max(0, a.count - n);
+  });
+  state.launchedAssets = (state.launchedAssets || []).filter(a => a.count > 0);
+  const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
+  failedIdx.slice(0, nSpend).forEach(i => { const d = sr.primDice[i]; d.r = rollDie(rng); d.ok = d.r >= d.sv; });
+  recomputeSaves(sr);
+  sr.fighterRerolled = true; M.fighterSpend = {};
+  M.log.push(`${factionName(state, td.side)} Close Protection: re-rolled ${nSpend} save${nSpend !== 1 ? 's' : ''} (−${nSpend} fighters)`);
+  return state;
+}
+
+/* Re-derive each hit's saved flag from the (possibly re-rolled) primary + backup
+   dice, then recompute total damage / unsaved count. */
+function recomputeSaves(sr) {
+  sr.hitsList.forEach(h => { h.saved = false; h.savedBy = null; });
+  let pIdx = 0;
+  sr.hitsList.forEach(h => { if (h.sv == null || h.noSaveDie) return; const d = sr.primDice[pIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'primary'; } });
+  let bIdx = 0;
+  if (sr.backupVal != null) sr.hitsList.forEach(h => { if (h.saved) return; const d = sr.backDice[bIdx++]; if (d && d.ok) { h.saved = true; h.savedBy = 'backup'; } });
+  sr.dmg = sr.hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+  sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
+}
+
 /* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
    An "intent" is a small serialisable action object { type, ...payload }.
    `apply(state, intent, rng)` is the single entry point the server runs after
@@ -2344,7 +2412,9 @@ export function apply(state, intent, rng) {
     case 'moveShip':     return commitMove(state, rng, intent.gid, intent.si, intent.x, intent.y, intent.layerToggle);
     case 'aimShip':      return aimShip(state, intent.x, intent.y);
     case 'vectoredMove': return commitVectoredSecondMove(state, intent.x, intent.y);
-    case 'attackStep':   return advanceAttack(state, rng, state.attackModal, intent.to);
+    case 'attackStep':         return advanceAttack(state, rng, state.attackModal, intent.to);
+    case 'attackReroll':       return attackReroll(state, rng, state.attackModal, intent.which);
+    case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }
