@@ -98,7 +98,8 @@ export function isLegal(state, intent, side) {
     }
     case 'attackStep':
     case 'attackReroll':
-    case 'attackFighterReroll': {
+    case 'attackFighterReroll':
+    case 'finishAttack': {
       if (state.phase !== 'play' || !state.attackModal) return false;
       // Attacker-drives-all: whoever's activation is in progress drives the modal
       // (the asset-phase driver during Asset Combat, otherwise the active side).

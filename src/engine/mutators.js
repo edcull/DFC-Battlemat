@@ -2132,6 +2132,65 @@ function recomputeSaves(sr) {
   sr.unsaved = sr.hitsList.filter(h => !h.saved).length;
 }
 
+/* Commit a resolved attack: log the summary + per-step lines, then for a bomber
+   attack apply Crippling-Fire and remove the spent bombers, or for group fire mark
+   every ship fired (recording Limited-X uses) and clear its targets. Clears the
+   modal. Returns a bomber-scope continuation hint for the caller (asset-phase
+   orchestration stays client-side); null for group fire. */
+export function finishAttack(state, M) {
+  if (!M) return null;
+  {
+    const atkName = M.bomber ? (M.attackerName || 'Assets') : (getDef(state, M.attackerGid) ? getDef(state, M.attackerGid).name : 'Group');
+    const tgtNames = {};
+    (M.shots || []).forEach(s => {
+      const td = getDef(state, s.targetGid); if (!td) return;
+      const multi = state.groups[s.targetGid] && state.groups[s.targetGid].ships.length > 1;
+      tgtNames[targetKey(s.targetGid, s.targetSi)] = td.name + (multi ? ` #${s.targetSi + 1}` : '');
+    });
+    let totDmg = 0, kills = 0;
+    Object.keys(M.pendingDamage || {}).forEach(k => {
+      totDmg += M.pendingDamage[k] || 0;
+      const [g, si] = k.split('#'); const ts = state.groups[g] && state.groups[g].ships[parseInt(si)];
+      if (ts && ts.destroyed) kills++;
+    });
+    const tgtList = Object.values(tgtNames).join(', ') || 'target';
+    if (totDmg > 0 || kills > 0) logEvent(state, `${atkName} hit ${tgtList} for ${totDmg} dmg${kills ? ` · ${kills} destroyed` : ''}`);
+    else logEvent(state, `${atkName} fired at ${tgtList} — no damage`);
+    (M.log || []).forEach(line => logEvent(state, `· ${line}`));
+  }
+  let hint = null;
+  if (M.bomber) {
+    if (M.cripplingFire) {
+      const s = M.shots[0];
+      const ts = state.groups[s.targetGid] && state.groups[s.targetGid].ships[s.targetSi];
+      if (ts && !ts.destroyed) {
+        ts.fireTokens = (ts.fireTokens || 0) + M.cripplingFire;
+        ts.crippling = ts.crippling || [];
+        if (!ts.crippling.includes('fire')) ts.crippling.push('fire');
+      }
+    }
+    state.launchedAssets = state.launchedAssets.filter(a => !M.bomberAssetIds.includes(a.id));
+    hint = { bomber: true, scope: state._bomberResolveSide, scopeType: state._bomberResolveType };
+  } else {
+    const aDef = getDef(state, M.attackerGid);
+    const grp = state.groups[M.attackerGid];
+    grp.ships.forEach(ship => {
+      if (!ship.weaponTargets) { ship.firedThisActivation = true; return; }
+      ship.limitedUses = ship.limitedUses || {};
+      const seen = new Set();
+      Object.keys(ship.weaponTargets).forEach(wi => {
+        const sp = parseWeaponSpecials(aDef.weapons[wi]);
+        const gk = weaponGroupKey(aDef, parseInt(wi));
+        if (sp.limited && !seen.has(gk)) { seen.add(gk); ship.limitedUses[wi] = (ship.limitedUses[wi] || 0) + 1; }
+      });
+      ship.firedThisActivation = true;
+      ship.weaponTargets = {};
+    });
+  }
+  state.attackModal = null;
+  return hint;
+}
+
 /* ── INTENT LAYER (Phase 1d) ──────────────────────────────────────────────
    An "intent" is a small serialisable action object { type, ...payload }.
    `apply(state, intent, rng)` is the single entry point the server runs after
@@ -2415,6 +2474,7 @@ export function apply(state, intent, rng) {
     case 'attackStep':         return advanceAttack(state, rng, state.attackModal, intent.to);
     case 'attackReroll':       return attackReroll(state, rng, state.attackModal, intent.which);
     case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
+    case 'finishAttack':       finishAttack(state, state.attackModal); return state;
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }
