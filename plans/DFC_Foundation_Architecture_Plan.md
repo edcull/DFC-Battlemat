@@ -1,13 +1,15 @@
 # DFC Battlemat — Foundational Architecture Plan
 
-> **Status (May 2026): PHASES 1–3 COMPLETE; Phase 1d / server-authority migration IN PROGRESS.**
+> **Status (May 2026): PHASES 1–3 COMPLETE; Phase 1d / server-authority migration NEARLY COMPLETE.**
 > Engine extracted; browser hotseat working via modules; Node server with WebSocket rooms running;
 > online client (mode selector + side-gating) working.
-> `gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` now exist; the server has an
-> authoritative intent path alongside the legacy trusted relay. **`pass`, `endRound`, group Orders
-> (`applyOrder`), and play-phase movement (`moveShip` / `aimShip` / `vectoredMove`) are migrated**;
-> the remaining families (combat modal next) move over incrementally, after which the relay path
-> is removed.
+> `gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` exist; the server has an
+> authoritative intent path alongside the legacy trusted relay.
+> **All major play-phase action families are now migrated:** turn-flow, orders, movement, combat
+> (full modal, role-correct attacker/defender split), launches, scoring/initiative, deploy phase
+> (including `rollInitiative` server-side), asset phase (T2T, target lock, reset), battalion
+> combat, and all DA transitions. Relay is only used for: asset board movement, DA feature attack
+> opening, undo deploy, scenery placement board click, and pre-game setup overlay.
 > Phase 4 (fleet import, AI) and Phase 5 (production deploy) are not yet started.
 > See section 3 for Phase 1 delivery notes and section 8 for the full phase-by-phase status table.
 
@@ -330,7 +332,7 @@ one-line guard in each handler).
 | **1a** | Extract `constants.js` | Pure data module, zero risk | ✅ Done |
 | **1b** | Parameterize RNG; extract `rng.js` | Deterministic randomness | ✅ Done |
 | **1c** | Extract `mutators.js` (grouped by area) | Headless engine | ✅ Done |
-| **1d** | Extract `gating.js`; expose `legalActions` / `isLegal` + `apply` dispatcher | Engine API | 🔄 In progress (`pass` / `endRound` / `applyOrder` / movement done; combat modal + other families pending) |
+| **1d** | Extract `gating.js`; expose `legalActions` / `isLegal` + `apply` dispatcher | Engine API | 🔄 Nearly done — all major families migrated; remaining relay: asset board movement, DA feature attack open, undo deploy, scenery placement, pre-game setup |
 | **1e** | Wire `client/local.js`; browser hotseat via modules | Browser hotseat via modules | ✅ Done |
 | **2a** | `package.json`, Express skeleton, WebSocket rooms | Server running locally | ✅ Done |
 | **2b** | Intent protocol end-to-end; two tabs in sync | Local two-player networking | ✅ Done |

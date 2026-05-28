@@ -28,7 +28,7 @@ export function createRoom() {
     seed,
     rng: makeRng(seed),
     state,
-    sockets: { ucm: null, shal: null },
+    sockets: { player1: null, player2: null },
     spectators: [],
     lastActivity: Date.now(),
   };
@@ -44,7 +44,7 @@ export function getRoom(id) {
 
 // Returns { ok: true } or { error: string }.
 export function joinRoom(room, side, ws) {
-  if (side !== 'ucm' && side !== 'shal') return { error: 'Invalid side — use ucm or shal.' };
+  if (side !== 'player1' && side !== 'player2') return { error: 'Invalid side — use player1 or player2.' };
   const existing = room.sockets[side];
   if (existing && existing.readyState === 1 /* OPEN */) {
     return { error: `Side ${side} is already connected.` };
@@ -55,23 +55,23 @@ export function joinRoom(room, side, ws) {
 }
 
 export function leaveRoom(room, ws) {
-  for (const side of ['ucm', 'shal']) {
+  for (const side of ['player1', 'player2']) {
     if (room.sockets[side] === ws) room.sockets[side] = null;
   }
   room.spectators = room.spectators.filter(s => s !== ws);
 }
 
-// Returns the side ('ucm' | 'shal' | 'spectator') this ws is connected as.
+// Returns the side ('player1' | 'player2' | 'spectator') this ws is connected as.
 export function sideOf(room, ws) {
-  if (room.sockets.ucm === ws) return 'ucm';
-  if (room.sockets.shal === ws) return 'shal';
+  if (room.sockets.player1 === ws) return 'player1';
+  if (room.sockets.player2 === ws) return 'player2';
   return 'spectator';
 }
 
 // Broadcast a message to all room participants, optionally excluding one socket.
 export function broadcast(room, msg, exclude = null) {
   const data = JSON.stringify(msg);
-  for (const side of ['ucm', 'shal']) {
+  for (const side of ['player1', 'player2']) {
     const ws = room.sockets[side];
     if (ws && ws !== exclude && ws.readyState === 1) ws.send(data);
   }
@@ -93,7 +93,7 @@ function scheduleExpiry(id) {
       scheduleExpiry(id); // still active — check again later
       return;
     }
-    for (const side of ['ucm', 'shal']) {
+    for (const side of ['player1', 'player2']) {
       if (room.sockets[side]) try { room.sockets[side].close(); } catch {}
     }
     for (const ws of room.spectators) try { ws.close(); } catch {}

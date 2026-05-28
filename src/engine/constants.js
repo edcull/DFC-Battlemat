@@ -507,19 +507,19 @@ export const DEPLOYMENTS = {
     d6:1, name:'Line', short:'Base contact with table edge',
     desc:'All Ships in base contact with opposite table edges.',
     zones:{
-      blue:{ edgeLines:[{x1:0, y1:0, x2:48, y2:0}] },
-      red: { edgeLines:[{x1:0, y1:48, x2:48, y2:48}] }
+      north:{ edgeLines:[{x1:0, y1:0, x2:48, y2:0}] },
+      south: { edgeLines:[{x1:0, y1:48, x2:48, y2:48}] }
     }
   },
   table_corners: {
     d6:2, name:'Table Corners', short:'Edge ≤12" from corners',
     desc:'Base contact with a table edge up to 12" from opposite corners.',
     zones:{
-      blue:{ edgeLines:[
+      north:{ edgeLines:[
         { x1:0, y1:0, x2:12, y2:0 },
         { x1:0, y1:0, x2:0,  y2:12 }
       ]},
-      red: { edgeLines:[
+      south: { edgeLines:[
         { x1:48, y1:48, x2:36, y2:48 },
         { x1:48, y1:48, x2:48, y2:36 }
       ]}
@@ -529,32 +529,32 @@ export const DEPLOYMENTS = {
     d6:3, name:'Midboard', short:'8" from centre of edge',
     desc:'8" from the centre of opposite table edges.',
     zones:{
-      blue:{ edgeSemicircle:{ cx:24, cy:0,  r:8, edge:'top'    } },
-      red: { edgeSemicircle:{ cx:24, cy:48, r:8, edge:'bottom' } }
+      north:{ edgeSemicircle:{ cx:24, cy:0,  r:8, edge:'top'    } },
+      south: { edgeSemicircle:{ cx:24, cy:48, r:8, edge:'bottom' } }
     }
   },
   from_corners: {
     d6:4, name:'From Corners', short:'12" from corners',
     desc:'12" from opposite corners.',
     zones:{
-      blue:{ circleQuad:{ cx:0,  cy:0,  r:12, quad:'br' } },
-      red: { circleQuad:{ cx:48, cy:48, r:12, quad:'tl' } }
+      north:{ circleQuad:{ cx:0,  cy:0,  r:12, quad:'br' } },
+      south: { circleQuad:{ cx:48, cy:48, r:12, quad:'tl' } }
     }
   },
   attacker_defender: {
-    d6:5, name:'Attacker / Defender', short:'Red edge, Blue 12" off',
-    desc:'Attackers (Red) in base contact with a table edge. Defenders (Blue) 12" from opposite edge.',
+    d6:5, name:'Attacker / Defender', short:'South edge, North 12" off',
+    desc:'Attackers (South) in base contact with a table edge. Defenders (North) 12" from opposite edge.',
     zones:{
-      blue:{ polygon:[{x:0,y:0},{x:48,y:0},{x:48,y:12},{x:0,y:12}] },
-      red: { edgeLines:[{x1:0, y1:48, x2:48, y2:48}] }
+      north:{ polygon:[{x:0,y:0},{x:48,y:0},{x:48,y:12},{x:0,y:12}] },
+      south: { edgeLines:[{x1:0, y1:48, x2:48, y2:48}] }
     }
   },
   encirclement: {
-    d6:6, name:'Encirclement', short:'Red corners, Blue centre',
-    desc:'Attackers (Red) 6" from all board corners. Defenders (Blue) 9" from board centre.',
+    d6:6, name:'Encirclement', short:'South corners, North centre',
+    desc:'Attackers (South) 6" from all board corners. Defenders (North) 9" from board centre.',
     zones:{
-      blue:{ circle:{ cx:24, cy:24, r:9 } },
-      red: { corners:[
+      north:{ circle:{ cx:24, cy:24, r:9 } },
+      south: { corners:[
         { cx:0,  cy:0,  r:6, quad:'br' },
         { cx:48, cy:0,  r:6, quad:'bl' },
         { cx:0,  cy:48, r:6, quad:'tr' },
@@ -574,12 +574,12 @@ export const APPROACH_BEHAVIOURS = {
 };
 
 export const APPROACHES = {
-  standoff:                { d6:1, name:'Standoff',                red:'directly_deploy', blue:'directly_deploy' },
-  close_enough:            { d6:2, name:'Close Enough',            red:'close',           blue:'close' },
-  column:                  { d6:3, name:'Column',                  red:'distant',         blue:'distant' },
-  counterattack:           { d6:4, name:'Counterattack',           red:'directly_deploy', blue:'close' },
-  delayed_response:        { d6:5, name:'Delayed Response',        red:'close',           blue:'distant' },
-  home_fleet_disadvantage: { d6:6, name:'Home Fleet Disadvantage', red:'close',           blue:'directly_deploy' }
+  standoff:                { d6:1, name:'Standoff',                south:'directly_deploy', north:'directly_deploy' },
+  close_enough:            { d6:2, name:'Close Enough',            south:'close',           north:'close' },
+  column:                  { d6:3, name:'Column',                  south:'distant',         north:'distant' },
+  counterattack:           { d6:4, name:'Counterattack',           south:'directly_deploy', north:'close' },
+  delayed_response:        { d6:5, name:'Delayed Response',        south:'close',           north:'distant' },
+  home_fleet_disadvantage: { d6:6, name:'Home Fleet Disadvantage', south:'close',           north:'directly_deploy' }
 };
 
 // Internal helpers used only by VARIANTS.apply() functions.

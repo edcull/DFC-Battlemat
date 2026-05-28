@@ -11,11 +11,11 @@
 // apply() dispatcher in mutators.js — every intent type apply() handles must
 // have a matching case here.
 
-import { ORDERS } from './constants.js';
+import { ORDERS, INCH } from './constants.js';
 import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec } from './mutators.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions } from './mutators.js';
 
-const INTENT_TYPES = ['pass', 'endRound'];
+const INTENT_TYPES = ['pass', 'endRound', 'commitScenario'];
 
 // True when it is `side`'s turn to act in the play phase (or there is no active
 // side yet). Pre-play phases impose no active-side restriction.
@@ -26,6 +26,52 @@ function playTurnOk(state, side) {
 export function isLegal(state, intent, side) {
   if (!intent || typeof intent !== 'object') return false;
   switch (intent.type) {
+    case 'commitScenery':
+      return state.phase === 'scenery';
+    case 'beginPlay':
+      return state.phase === 'deploy';
+    case 'giveInitiative': {
+      if (state.phase !== 'play' || !state.initiative) return false;
+      return !side || state.initiative.winner === side;
+    }
+    case 'beginActivation': {
+      if (state.phase !== 'play' || !state.initiative) return false;
+      return !side || state.initiative.holder === side;
+    }
+    case 'commitScenario': {
+      if (state.phase !== 'setup') return false;
+      if (!state.scenario) return false;
+      if (!state.fleetChoices || !state.fleetChoices.f1 || !state.fleetChoices.f2) return false;
+      const missing = ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k]);
+      if (missing) return false;
+      return true;
+    }
+    case 'deployShip': {
+      const { gid, si } = intent;
+      if (state.phase !== 'deploy') return false;
+      const grp = state.groups[gid];
+      if (!grp) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed) return false;
+      return true;
+    }
+    case 'arriveShip': {
+      const { gid, si } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed) return false;
+      // Must be off-table OR justArrived (repositionable until group acts)
+      if (!ship.offTable && !ship.justArrived) return false;
+      // Group must not have acted
+      if (grp.ships.some(s => s.movedThisRound || s.firedThisActivation || (s.launchedThisRound > 0) || s.detectorUsed)) return false;
+      return true;
+    }
     case 'pass': {
       if (state.phase !== 'play') return false;
       if (state.activeSide !== side) return false;
@@ -37,6 +83,35 @@ export function isLegal(state, intent, side) {
       // The active side ends the round. If no side is active (all activations
       // are done) either player may trigger it.
       return state.activeSide === side || state.activeSide === null;
+    }
+    case 'undoMove': {
+      const { gid, si } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      if (state.activeSide && state.activeSide !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed) return false;
+      if (!ship.movedThisRound) return false;
+      if (ship.firedThisActivation || ship.detectorUsed || (ship.launchedThisRound > 0)) return false;
+      const trail = grp.moveTrail || [];
+      return trail.some(t => t.si === si);
+    }
+    case 'finishActivation': {
+      const { gid } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      if (state.activeSide && state.activeSide !== side) return false;
+      // Allow finish if the group has started activating, OR all alive ships are off-table
+      // (group has nothing to activate — auto-skip case).
+      const started = grp.order || grp.ships.some(s => s.movedThisRound || s.firedThisActivation || (s.launchedThisRound > 0) || s.detectorUsed);
+      const allOffTable = grp.ships.every(s => s.destroyed || s.offTable);
+      return !!(started || allOffTable);
     }
     case 'applyOrder': {
       const { gid, order } = intent;
@@ -96,6 +171,46 @@ export function isLegal(state, intent, side) {
       const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
       return dist <= v.remaining + 0.5 && angOff <= 20;
     }
+    case 'launchAsset': {
+      const { gid, si, kind, count } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable) return false;
+      if (!kind || !(count > 0)) return false;
+      return true;
+    }
+    case 'launchGroundAsset': {
+      const { gid, si } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable) return false;
+      return true;
+    }
+    case 'deployPayload': {
+      const { gid, si, porterGid, porterSi, x, y } = intent;
+      if (state.phase !== 'play') return false;
+      const porterGrp = state.groups[porterGid];
+      if (!porterGrp || porterGrp.activated) return false;
+      const porterDef = getDef(state, porterGid);
+      if (!porterDef || porterDef.side !== side) return false;
+      const porter = porterGrp.ships[porterSi];
+      if (!porter || porter.destroyed || porter.offTable) return false;
+      const payGrp = state.groups[gid];
+      const payShip = payGrp && payGrp.ships[si];
+      if (!payShip || !payShip.offTable || !payShip.attachedTo) return false;
+      if (payShip.attachedTo.gid !== porterGid || payShip.attachedTo.si !== porterSi) return false;
+      const distPx = Math.hypot(x - porter.x, y - porter.y);
+      if (distPx > 3 * INCH + 2) return false;
+      return true;
+    }
     case 'attackStep':
     case 'attackReroll':
     case 'attackFighterReroll':
@@ -103,7 +218,7 @@ export function isLegal(state, intent, side) {
     case 'attackDeclare': {
       if (state.phase !== 'play' || !state.attackModal) return false;
       const atk = state.assetActiveSide || state.activeSide;            // attacker drives the flow
-      const def = atk === 'ucm' ? 'shal' : atk === 'shal' ? 'ucm' : null; // defender owns defensive choices
+      const def = atk === 'player1' ? 'player2' : atk === 'player2' ? 'player1' : null; // defender owns defensive choices
       // Defensive decisions (Shields / Brace / Contain, save re-rolls, Close
       // Protection) belong to the defender; the rest (advances, hit re-rolls,
       // Overcharge / Escort / Impel, finish) to the attacker.
@@ -112,6 +227,111 @@ export function isLegal(state, intent, side) {
         (intent.type === 'attackReroll' && intent.which === 'save') ||
         (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'));
       return side === (defensive ? def : atk);
+    }
+    case 'nominateLead': {
+      const { gid, si } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      if (si == null) return true; // clearing the lead is always allowed
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable) return false;
+      return true;
+    }
+    case 'lockWeaponTarget': {
+      const { gid, si, wi, targetGid, targetSi } = intent;
+      if (state.phase !== 'play') { console.log('[gate:LWT] fail: phase', state.phase); return false; }
+      if (state.attackModal) { console.log('[gate:LWT] fail: attackModal active'); return false; }
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) { console.log('[gate:LWT] fail: no grp or activated', {grp: !!grp, activated: grp && grp.activated}); return false; }
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) { console.log('[gate:LWT] fail: def.side', def && def.side, 'vs side', side); return false; }
+      if (!playTurnOk(state, side)) { console.log('[gate:LWT] fail: playTurnOk activeSide', state.activeSide, 'side', side); return false; }
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable) { console.log('[gate:LWT] fail: ship', {si, ship: !!ship, destroyed: ship && ship.destroyed, offTable: ship && ship.offTable}); return false; }
+      const w = def.weapons[wi];
+      if (!w) { console.log('[gate:LWT] fail: no weapon wi=', wi, 'weapons=', def.weapons && def.weapons.length); return false; }
+      const tgrp = state.groups[targetGid];
+      const tship = tgrp && tgrp.ships[targetSi];
+      if (!tship || tship.destroyed || tship.offTable) { console.log('[gate:LWT] fail: tship', {targetGid, targetSi, tship: !!tship, destroyed: tship && tship.destroyed, offTable: tship && tship.offTable}); return false; }
+      const origin = firingOriginShip(state, def, grp, si);
+      if (!origin) { console.log('[gate:LWT] fail: no origin'); return false; }
+      const tDef = getDef(state, targetGid);
+      const canTarget = weaponCanTarget(def, origin, w, tDef, tship, tgrp);
+      if (!canTarget) {
+        const aLayer = origin.layer || 'orbit', tLayer = tship.layer || 'orbit';
+        const inArc = pointInWeaponArc(origin, w, tship.x, tship.y);
+        const range = tDef ? targetingRangePx(def, tDef, tship, tgrp, origin, w) : 0;
+        const dist = Math.hypot(tship.x - origin.x, tship.y - origin.y);
+        console.log('[gate:LWT] weaponCanTarget FAIL', { arc: w.arc, heading: origin.heading, originXY: [origin.x, origin.y], targetXY: [tship.x, tship.y], inArc, dist: Math.round(dist), range: Math.round(range), aLayer, tLayer, attachedTo: tship.attachedTo });
+      }
+      return canTarget;
+    }
+    case 'lockBombardmentTarget': {
+      const { gid, si, wi, dsId } = intent;
+      if (state.phase !== 'play') return false;
+      if (state.attackModal) return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      if (!playTurnOk(state, side)) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable) return false;
+      if ((ship.layer || 'orbit') !== 'orbit') return false;
+      const w = def.weapons[wi];
+      if (!w || !/Bombardment/i.test(w.special || '')) return false;
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+      if (!ds) return false;
+      const origin = firingOriginShip(state, def, grp, si);
+      if (!origin) return false;
+      const dsX = ds.x * INCH, dsY = ds.y * INCH;
+      if (!pointInWeaponArc(origin, w, dsX, dsY)) return false;
+      const scanRangePx = effectiveScan(def, origin) * INCH;
+      if (Math.hypot(dsX - origin.x, dsY - origin.y) > scanRangePx) return false;
+      return true;
+    }
+    case 'resolveBombardCollateral': {
+      const M = state.attackModal;
+      if (!M || M.step !== 'bombardCollateral') return false;
+      if (!M.bombardCollateralQueue || !M.bombardCollateralQueue.length) return false;
+      const q = M.bombardCollateralQueue[0];
+      if (q.side !== side) return false;
+      if (q.dsId !== intent.dsId) return false;
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === intent.dsId);
+      if (!ds) return false;
+      const b = dsBattalions(ds);
+      if (!b[intent.loc] || (b[intent.loc][side] || 0) < 1) return false;
+      return true;
+    }
+    case 'unlockWeapon': {
+      const { gid, si } = intent;
+      if (state.phase !== 'play') return false;
+      if (state.attackModal) return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship) return false;
+      return true;
+    }
+    case 'fireWeapons': {
+      const { gid } = intent;
+      if (state.phase !== 'play') return false;
+      if (state.attackModal) return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      if (!playTurnOk(state, side)) return false;
+      // At least one ship must have a weapon locked onto a valid target.
+      return grp.ships.some(ship => {
+        if (ship.destroyed || ship.offTable || !ship.weaponTargets) return false;
+        return Object.keys(ship.weaponTargets).length > 0;
+      });
     }
     default:
       return false;

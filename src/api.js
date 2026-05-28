@@ -20,7 +20,7 @@ router.get('/rooms/:id', (req, res) => {
   if (!room) return res.status(404).json({ error: 'Room not found.' });
   res.json({
     roomId: room.id,
-    sides: { ucm: !!room.sockets.ucm, shal: !!room.sockets.shal },
+    sides: { player1: !!room.sockets.player1, player2: !!room.sockets.player2 },
     phase: room.state.phase,
   });
 });
@@ -28,8 +28,9 @@ router.get('/rooms/:id', (req, res) => {
 // Called by server.js when the WebSocket server emits 'connection'.
 export function handleConnection(ws, req) {
   const url = new URL(req.url, 'http://localhost');
-  const roomId = (url.searchParams.get('room') || '').toUpperCase();
-  const side   = (url.searchParams.get('side')  || 'spectator').toLowerCase();
+  const roomId  = (url.searchParams.get('room') || '').toUpperCase();
+  const rawSide = (url.searchParams.get('side')  || 'spectator').toLowerCase();
+  const side    = rawSide; // 'player1' | 'player2' | 'spectator'
 
   const room = getRoom(roomId);
   if (!room) {
@@ -38,7 +39,7 @@ export function handleConnection(ws, req) {
     return;
   }
 
-  if (side === 'ucm' || side === 'shal') {
+  if (side === 'player1' || side === 'player2') {
     const result = joinRoom(room, side, ws);
     if (result.error) {
       send(ws, { type: 'error', reason: result.error });
@@ -119,6 +120,13 @@ function onMessage(room, ws, side, msg) {
       }
       apply(room.state, intent, room.rng);
       broadcast(room, { type: 'full', state: room.state }); // to all, incl. sender
+      break;
+    }
+
+    // Client broadcasts its current ship selection so the opponent can show
+    // movement cones / overlays without a full state relay.
+    case 'peerView': {
+      broadcast(room, { type: 'peerView', peerView: msg.peerView }, ws);
       break;
     }
 

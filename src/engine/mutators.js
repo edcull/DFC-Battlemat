@@ -1,9 +1,9 @@
 // Pure game-logic mutators and read-only helpers.
 // No DOM calls — rendering is the caller's responsibility.
 
-import { FEATURES, ORDERS, INCH, BOARD_PX, BOARD_IN, ASSET_PROFILES, DROPSITE_BASE, DEPLOYMENTS, APPROACHES } from './constants.js';
+import { FEATURES, ORDERS, INCH, BOARD_PX, BOARD_IN, ASSET_PROFILES, DROPSITE_BASE, DEPLOYMENTS, APPROACHES, SECONDARY_OBJECTIVES } from './constants.js';
 import { rollD6, rollDie } from './rng.js';
-import { fleetForSide, redFleet, blueFleet, factionName, payloadShips, porterShips, allDefs, getDef, getGroup, assetProfile, fighterRerolls } from './state.js';
+import { fleetForSide, redFleet, blueFleet, factionName, payloadShips, porterShips, allDefs, getDef, getGroup, assetProfile, fighterRerolls, rebuildFleets, buildScenarioState } from './state.js';
 
 const inchToPx = v => v * INCH;
 
@@ -324,7 +324,7 @@ export function recordKill(state, def, killerSide, captured, killedShipKey) {
   if (captured && state.captured) state.captured[killerSide] += shipPoints(def);
   // Extract: +1 VP per enemy Ship destroyed while it was carrying Recon Operatives.
   if (killedShipKey && state.shipReconOps && state.shipReconOps[killedShipKey] > 0) {
-    state.reconKills = state.reconKills || { ucm: 0, shal: 0 };
+    state.reconKills = state.reconKills || { player1: 0, player2: 0 };
     state.reconKills[killerSide] = (state.reconKills[killerSide] || 0) + 1;
     state.shipReconOps[killedShipKey] = 0; // operatives lost with the ship
   }
@@ -350,9 +350,9 @@ export function dropsiteSizeKey(ds) {
      side instead takes a penalty equal to the Dropsite's control value.
    • Raze: a Dropsite Levelled or Ruined ≥24" from a side's Zone scores DOUBLE for the
      OPPOSING side that razed/contests it (handled in runScoring's raze block, not here).
-   Returns { ucm, shal } VP for this round. */
+   Returns { player1, player2 } VP for this round. */
 export function computeStandardScoring(state) {
-  const out = { ucm: 0, shal: 0 };
+  const out = { player1: 0, player2: 0 };
   const rows = []; // per-dropsite breakdown for the scoring modal
   const obj = state.scenario && state.scenario.objective;
   const noms = state.protectNom || {};
@@ -363,23 +363,23 @@ export function computeStandardScoring(state) {
     const isLevelled = !!ds.destroyed;
     let ucmGain = 0, shalGain = 0, statusNote = '';
     if (obj === 'protect') {
-      ['ucm','shal'].forEach(s => { if (noms[s] === ds.id && isLevelled) { out[s] -= vp.control; if (s==='ucm') ucmGain -= vp.control; else shalGain -= vp.control; statusNote = 'Protect penalty'; } });
+      ['player1','player2'].forEach(s => { if (noms[s] === ds.id && isLevelled) { out[s] -= vp.control; if (s==='player1') ucmGain -= vp.control; else shalGain -= vp.control; statusNote = 'Protect penalty'; } });
     }
     if (isLevelled) {
-      rows.push({ name: ds.base.name, sz, status: 'Levelled' + (statusNote?' · '+statusNote:''), ctrl: null, ucm: ucmGain, shal: shalGain });
+      rows.push({ name: ds.base.name, sz, status: 'Levelled' + (statusNote?' · '+statusNote:''), ctrl: null, player1: ucmGain, player2: shalGain });
       return;
     }
     if (ctrl) {
       let gain = vp.control;
       if (obj === 'protect' && noms[ctrl] === ds.id) { gain *= 2; statusNote = 'Protected ×2'; }
       out[ctrl] += gain;
-      if (ctrl === 'ucm') ucmGain += gain; else shalGain += gain;
-      rows.push({ name: ds.base.name, sz, status: 'Controlled' + (statusNote?' · '+statusNote:''), ctrl, ucm: ucmGain, shal: shalGain });
+      if (ctrl === 'player1') ucmGain += gain; else shalGain += gain;
+      rows.push({ name: ds.base.name, sz, status: 'Controlled' + (statusNote?' · '+statusNote:''), ctrl, player1: ucmGain, player2: shalGain });
     } else if (dropsiteContested(ds)) {
-      out.ucm += vp.contest; out.shal += vp.contest;
-      rows.push({ name: ds.base.name, sz, status: 'Contested', ctrl: null, ucm: ucmGain + vp.contest, shal: shalGain + vp.contest });
+      out.player1 += vp.contest; out.player2 += vp.contest;
+      rows.push({ name: ds.base.name, sz, status: 'Contested', ctrl: null, player1: ucmGain + vp.contest, player2: shalGain + vp.contest });
     } else {
-      rows.push({ name: ds.base.name, sz, status: 'Uncontrolled', ctrl: null, ucm: ucmGain, shal: shalGain });
+      rows.push({ name: ds.base.name, sz, status: 'Uncontrolled', ctrl: null, player1: ucmGain, player2: shalGain });
     }
   });
   out.rows = rows;
@@ -394,12 +394,12 @@ export function runScoring(state, rng, round) {
   if ((round === 4 || round === 6) && !state.scoredRounds.includes(round)) {
     state.scoredRounds.push(round);
     const std = computeStandardScoring(state);
-    const l1 = awardVP(state, 'ucm', std.ucm, `Standard Scoring R${round}`, round);
-    const l2 = awardVP(state, 'shal', std.shal, `Standard Scoring R${round}`, round);
+    const l1 = awardVP(state, 'player1', std.player1, `Standard Scoring R${round}`, round);
+    const l2 = awardVP(state, 'player2', std.player2, `Standard Scoring R${round}`, round);
     if (l1) log.push(l1); if (l2) log.push(l2);
     if (!l1 && !l2) log.push(`Standard Scoring (R${round}): no VP scored`);
     // Stash the per-dropsite breakdown for the scoring modal.
-    state.lastScoring = { round, rows: std.rows, ucm: std.ucm, shal: std.shal };
+    state.lastScoring = { round, rows: std.rows, player1: std.player1, player2: std.player2 };
   }
   // Scoring variant bonuses applied at game end (round 6).
   if (round === 6) {
@@ -408,46 +408,46 @@ export function runScoring(state, rng, round) {
     const push = (line) => { if (line) log.push(line); };
     // Attrition: +2 VP per 500 pts destroyed (both sides).
     if (obj === 'attrition') {
-      ['ucm','shal'].forEach(s => push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
+      ['player1','player2'].forEach(s => push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
     }
     // Raze: +2 VP per 500 pts destroyed, PLUS double Standard Scoring value for each
     // Dropsite Levelled or Ruined that lies ≥24" from the scoring side's own Zone.
     if (obj === 'raze') {
-      ['ucm','shal'].forEach(s => push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
-      const razeVP = { ucm: 0, shal: 0 };
+      ['player1','player2'].forEach(s => push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
+      const razeVP = { player1: 0, player2: 0 };
       ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => {
         const remHull = (ds.maxHull || 0) - (ds.damage || 0);
         const levelled = ds.destroyed || remHull <= 0;
         const ruined = !levelled && ds.maxHull && (remHull / ds.maxHull) < 0.5;
         if (!levelled && !ruined) return;
         const vp = (DROPSITE_VP[dropsiteSizeKey(ds)] || DROPSITE_VP.M).control;
-        ['ucm','shal'].forEach(s => { if (distFromZoneIn(state, s, inchToPx(ds.y)) >= 24) razeVP[s] += vp; });
+        ['player1','player2'].forEach(s => { if (distFromZoneIn(state, s, inchToPx(ds.y)) >= 24) razeVP[s] += vp; });
       });
-      ['ucm','shal'].forEach(s => push(awardVP(state, s, razeVP[s], 'Raze: distant Levelled/Ruined', round)));
+      ['player1','player2'].forEach(s => push(awardVP(state, s, razeVP[s], 'Raze: distant Levelled/Ruined', round)));
     }
     // Breakthrough: Red scores 1 VP per 200 pts flown off; the OTHER side scores kills.
     if (obj === 'breakthrough') {
-      const flown = state.breakthroughFlyoff || { ucm: 0, shal: 0 };
-      push(awardVP(state, 'ucm', Math.floor((flown.ucm || 0) / 200), `Breakthrough: ${flown.ucm} pts flown off`, round));
-      push(awardVP(state, 'shal', Math.floor(state.score.shal.kp / 500) * 2, 'Breakthrough: pts destroyed', round));
+      const flown = state.breakthroughFlyoff || { player1: 0, player2: 0 };
+      push(awardVP(state, 'player1', Math.floor((flown.player1 || 0) / 200), `Breakthrough: ${flown.player1} pts flown off`, round));
+      push(awardVP(state, 'player2', Math.floor(state.score.player2.kp / 500) * 2, 'Breakthrough: pts destroyed', round));
     }
     // Survey: +1 VP per Dropsite Surveyed.
     if (obj === 'survey') {
-      const surv = { ucm: 0, shal: 0 };
+      const surv = { player1: 0, player2: 0 };
       ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => (ds.surveyedBy || []).forEach(s => surv[s]++));
-      ['ucm','shal'].forEach(s => push(awardVP(state, s, surv[s], 'Survey', round)));
+      ['player1','player2'].forEach(s => push(awardVP(state, s, surv[s], 'Survey', round)));
     }
     // Extract: 2 VP per Recon Operative still aboard a surviving Ship.
     if (obj === 'extract' && state.shipReconOps) {
-      const ex = { ucm: 0, shal: 0 };
+      const ex = { player1: 0, player2: 0 };
       Object.keys(state.shipReconOps).forEach(k => {
         const n = state.shipReconOps[k]; if (!n) return;
         const [gid, si] = k.split('#');
         const ship = state.groups[gid] && state.groups[gid].ships[parseInt(si)];
         if (ship && !ship.destroyed) ex[getDef(state, gid).side] += n * 2;
       });
-      ['ucm','shal'].forEach(s => push(awardVP(state, s, ex[s], 'Recon Operatives aboard', round)));
-      if (state.reconKills) ['ucm','shal'].forEach(s => push(awardVP(state, s, state.reconKills[s] || 0, 'destroyed operative-carriers', round)));
+      ['player1','player2'].forEach(s => push(awardVP(state, s, ex[s], 'Recon Operatives aboard', round)));
+      if (state.reconKills) ['player1','player2'].forEach(s => push(awardVP(state, s, state.reconKills[s] || 0, 'destroyed operative-carriers', round)));
     }
     // Secondary Objectives (each side scores its one chosen scoring secondary).
     log.push(...scoreSecondaries(state, rng));
@@ -456,16 +456,18 @@ export function runScoring(state, rng, round) {
 }
 
 /* Distance (inches) of a board point from `side`'s deployment edge (its Zone).
-   UCM deploys on the south edge (y≈BOARD_PX), Shaltari on the north (y≈0). */
+   Uses state.deployZone when set; falls back to player1=south, player2=north. */
 export function distFromZoneIn(state, side, yPx) {
-  const edgeY = side === 'ucm' ? BOARD_PX : 0;
+  const zone = state.deployZone && state.deployZone[side];
+  const edgeY = (zone === 'north') ? 0 : (zone === 'south') ? BOARD_PX :
+                (side === 'player1' ? BOARD_PX : 0);
   return Math.abs(yPx - edgeY) / INCH;
 }
 
 /* All valid nomination candidates for a position-based Secondary (for manual choice).
    Returns [{nom, label}]. The default (auto) nomination is the first entry. */
 export function secondaryCandidates(state, side, key) {
-  const enemy = side === 'ucm' ? 'shal' : 'ucm';
+  const enemy = side === 'player1' ? 'player2' : 'player1';
   const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
   const out = [];
   if (key === 'key_site' || key === 'priority_target') {
@@ -502,26 +504,26 @@ export function objectivesBeyondEligible(state, gid, si) {
   if (def.id.split(':').pop() !== nom.shipId.split(':').pop()) return false;
   const ship = state.groups[gid] && state.groups[gid].ships[si];
   if (!ship || ship.destroyed || ship.offTable || !ship.movedThisRound) return false;
-  const enemy = side === 'ucm' ? 'shal' : 'ucm';
+  const enemy = side === 'player1' ? 'player2' : 'player1';
   return distFromZoneIn(state, enemy, ship.y) <= 6;
 }
 
-/* Breakthrough objective: a Red (UCM-slot) Ship that has moved and reached within 6"
+/* Breakthrough objective: a Red (player1-slot) Ship that has moved and reached within 6"
    of the opponent's Zone edge may fly off for 1 VP per 200 pts. */
 export function breakthroughFlyoffEligible(state, gid, si) {
   if (!state.scenario || state.scenario.objective !== 'breakthrough') return false;
   const def = getDef(state, gid);
-  if (!def || def.side !== 'ucm') return false; // only Red flies off for Breakthrough
+  if (!def || def.side !== 'player1') return false; // only Red flies off for Breakthrough
   const ship = state.groups[gid] && state.groups[gid].ships[si];
   if (!ship || ship.destroyed || ship.offTable || !ship.movedThisRound) return false;
-  return distFromZoneIn(state, 'shal', ship.y) <= 6; // within 6" of the opponent's (north) edge
+  return distFromZoneIn(state, 'player2', ship.y) <= 6; // within 6" of the opponent's (north) edge
 }
 
 /* Score each side's selected Secondary Objective at game end. Returns log lines. */
 export function scoreSecondaries(state, rng) {
   const log = [];
   if (!state.secondaries) return log;
-  ['ucm','shal'].forEach(side => {
+  ['player1','player2'].forEach(side => {
     const chosen = state.secondaries[side] || [];
     let best = 0, bestName = '';
     chosen.forEach(key => {
@@ -532,7 +534,7 @@ export function scoreSecondaries(state, rng) {
         let n = 0; ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => { if (ds.surveyedBy && ds.surveyedBy.includes(side)) n++; });
         vp = Math.min(2, n);
       } else if (key === 'decapitate') {
-        const enemy = side === 'ucm' ? 'shal' : 'ucm';
+        const enemy = side === 'player1' ? 'player2' : 'player1';
         vp = (state.admiralKilled && state.admiralKilled[enemy]) ? 2 : 0;
       } else if (key === 'key_site' || key === 'priority_target' || key === 'long_shot' || key === 'objectives_beyond') {
         vp = scorePositionSecondary(state, side, key);
@@ -546,7 +548,7 @@ export function scoreSecondaries(state, rng) {
 
 /* Score a position-based Secondary from its nomination. */
 export function scorePositionSecondary(state, side, key) {
-  const enemy = side === 'ucm' ? 'shal' : 'ucm';
+  const enemy = side === 'player1' ? 'player2' : 'player1';
   const nom = state.secondaryNominations && state.secondaryNominations[side] && state.secondaryNominations[side][key];
   if (!nom) return 0;
   const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
@@ -606,7 +608,7 @@ export function sideHasPendingActivation(state, side) {
 /* Advance the active side after an activation finishes (alternate factions).
    If the other side has nothing left to activate, the same side continues. */
 export function advanceActiveSide(state) {
-  const other = state.activeSide === 'ucm' ? 'shal' : 'ucm';
+  const other = state.activeSide === 'player1' ? 'player2' : 'player1';
   if (sideHasPendingActivation(state, other)) state.activeSide = other;
   else if (sideHasPendingActivation(state, state.activeSide)) { /* same side continues */ }
   else state.activeSide = null;
@@ -615,15 +617,15 @@ export function advanceActiveSide(state) {
 /* Roll initiative for the start of a round: a D6 per faction, reroll ties.
    Stores the result in state.initiative for the modal. */
 export function rollInitiative(state, rng) {
-  const baseLvl = state.admiralLevel || { ucm: 0, shal: 0 };
+  const baseLvl = state.admiralLevel || { player1: 0, player2: 0 };
   // Command Ship-X raises the assigned Admiral's effective Level by X (we model the
   // Admiral as on the side's best on-table Command Ship).
   const aLvl = {
-    ucm: (baseLvl.ucm || 0) + commandShipBonus(state, 'ucm'),
-    shal: (baseLvl.shal || 0) + commandShipBonus(state, 'shal')
+    player1: (baseLvl.player1 || 0) + commandShipBonus(state, 'player1'),
+    player2: (baseLvl.player2 || 0) + commandShipBonus(state, 'player2')
   };
-  const redBonus = (aLvl.ucm >= aLvl.shal && aLvl.ucm > 0) ? 1 : 0;
-  const blueBonus = (aLvl.shal >= aLvl.ucm && aLvl.shal > 0) ? 1 : 0;
+  const redBonus = (aLvl.player1 >= aLvl.player2 && aLvl.player1 > 0) ? 1 : 0;
+  const blueBonus = (aLvl.player2 >= aLvl.player1 && aLvl.player2 > 0) ? 1 : 0;
   let red, blue, rRaw, bRaw;
   do {
     rRaw = 1 + Math.floor(rng() * 6);
@@ -631,23 +633,23 @@ export function rollInitiative(state, rng) {
     red = rRaw + redBonus; blue = bRaw + blueBonus;
   } while (red === blue);
   // AP generation: 1 + Admiral Level per side.
-  const ap = { ucm: 1 + (aLvl.ucm || 0), shal: 1 + (aLvl.shal || 0) };
+  const ap = { player1: 1 + (aLvl.player1 || 0), player2: 1 + (aLvl.player2 || 0) };
   // Comms Uplink: +1 AP if you Control a Dropsite with a working Comms Station.
-  if (sideHasCommsUplink(state, 'ucm')) ap.ucm += 1;
-  if (sideHasCommsUplink(state, 'shal')) ap.shal += 1;
+  if (sideHasCommsUplink(state, 'player1')) ap.player1 += 1;
+  if (sideHasCommsUplink(state, 'player2')) ap.player2 += 1;
   // Pass Tokens: a side 2+ Groups fewer than the leader gets 1, +1 per further fewer.
   const groupCount = (side) => fleetForSide(state, side).filter(def => {
     const g = state.groups[def.id];
     return g && g.ships.some(s => !s.destroyed && (!s.offTable || canDeployNow(state, def)));
   }).length;
-  const gc = { ucm: groupCount('ucm'), shal: groupCount('shal') };
-  const most = Math.max(gc.ucm, gc.shal);
-  const passTokens = { ucm: Math.max(0, (most - gc.ucm) - 1), shal: Math.max(0, (most - gc.shal) - 1) };
+  const gc = { player1: groupCount('player1'), player2: groupCount('player2') };
+  const most = Math.max(gc.player1, gc.player2);
+  const passTokens = { player1: Math.max(0, (most - gc.player1) - 1), player2: Math.max(0, (most - gc.player2) - 1) };
   state.planning = { ap, passTokens, gc, aLvl };
   state.initiative = {
     red, blue, rRaw, bRaw, redBonus, blueBonus,
-    winner: red > blue ? 'ucm' : 'shal',
-    holder: red > blue ? 'ucm' : 'shal',
+    winner: red > blue ? 'player1' : 'player2',
+    holder: red > blue ? 'player1' : 'player2',
     round: state.round
   };
 }
@@ -685,15 +687,15 @@ export function friendlyFightersInRange(state, side, x, y) {
 /* Battalion storage on a dropsite. Lazily initialised. */
 export function dsBattalions(ds) {
   if (!ds.battalions) {
-    ds.battalions = { ground: { ucm: 0, shal: 0 } };
-    (ds.features || []).forEach((fk, fi) => { ds.battalions['feat' + fi] = { ucm: 0, shal: 0 }; });
+    ds.battalions = { ground: { player1: 0, player2: 0 } };
+    (ds.features || []).forEach((fk, fi) => { ds.battalions['feat' + fi] = { player1: 0, player2: 0 }; });
   }
   return ds.battalions;
 }
 
 /* Total enemy battalions on a dropsite (relative to a given side) across all locations. */
 export function dsEnemyBattalions(ds, side) {
-  const enemy = side === 'ucm' ? 'shal' : 'ucm';
+  const enemy = side === 'player1' ? 'player2' : 'player1';
   const b = dsBattalions(ds);
   return Object.values(b).reduce((sum, loc) => sum + (loc[enemy] || 0), 0);
 }
@@ -721,12 +723,12 @@ export function resolveBattalionCombat(state) {
     const b = dsBattalions(ds);
     Object.keys(b).forEach(key => {
       const loc = b[key];
-      const u = loc.ucm || 0, s = loc.shal || 0;
+      const u = loc.player1 || 0, s = loc.player2 || 0;
       if (u > 0 && s > 0) {
         const removed = Math.min(u, s);
-        loc.ucm = u - removed;
-        loc.shal = s - removed;
-        log.push({ where: locDisplayName(ds, key), removed, u, s, nu: loc.ucm, ns: loc.shal });
+        loc.player1 = u - removed;
+        loc.player2 = s - removed;
+        log.push({ where: locDisplayName(ds, key), removed, u, s, nu: loc.player1, ns: loc.player2 });
       }
     });
   });
@@ -794,14 +796,14 @@ export function extractableDropsite(state, ship, side) {
 
 /* A dropsite is "contested" if both sides have any battalions on it. */
 export function dropsiteContested(ds) {
-  return dsSideBattalions(ds, 'ucm') > 0 && dsSideBattalions(ds, 'shal') > 0;
+  return dsSideBattalions(ds, 'player1') > 0 && dsSideBattalions(ds, 'player2') > 0;
 }
 
-/* Which side Controls a dropsite. Returns 'ucm' | 'shal' | null. */
+/* Which side Controls a dropsite. Returns 'player1' | 'player2' | null. */
 export function dropsiteController(ds) {
-  const u = dsSideBattalions(ds, 'ucm'), s = dsSideBattalions(ds, 'shal');
-  if (u > 0 && s === 0) return 'ucm';
-  if (s > 0 && u === 0) return 'shal';
+  const u = dsSideBattalions(ds, 'player1'), s = dsSideBattalions(ds, 'player2');
+  if (u > 0 && s === 0) return 'player1';
+  if (s > 0 && u === 0) return 'player2';
   return null;
 }
 
@@ -892,14 +894,14 @@ export function contestedDropsites(state) {
 
 /* Features on a dropsite that hold ENEMY battalions (relative to `side`). */
 export function enemyFeatures(ds, side) {
-  const enemy = side === 'ucm' ? 'shal' : 'ucm';
+  const enemy = side === 'player1' ? 'player2' : 'player1';
   const b = dsBattalions(ds);
   return Object.keys(b).filter(k => k !== 'ground' && (b[k][enemy] || 0) > 0);
 }
 
 /* Stage 1/2: a side's GROUND battalions attack one Feature; 1-for-1 removal. */
 export function assignGroundToFeature(ds, side, featKey) {
-  const enemy = side === 'ucm' ? 'shal' : 'ucm';
+  const enemy = side === 'player1' ? 'player2' : 'player1';
   const b = dsBattalions(ds);
   const removed = Math.min(b.ground[side] || 0, b[featKey][enemy] || 0);
   b.ground[side] -= removed;
@@ -913,10 +915,10 @@ export function resolveDropsiteRemainder(ds) {
   const log = [];
   Object.keys(b).forEach(key => {
     const loc = b[key];
-    const u = loc.ucm || 0, s = loc.shal || 0;
+    const u = loc.player1 || 0, s = loc.player2 || 0;
     if (u > 0 && s > 0) {
       const removed = Math.min(u, s);
-      loc.ucm = u - removed; loc.shal = s - removed;
+      loc.player1 = u - removed; loc.player2 = s - removed;
       log.push({ where: locDisplayName(ds, key), removed });
     }
   });
@@ -942,8 +944,8 @@ export function featureDestroyOptions(state) {
     Object.keys(b).forEach(key => {
       if (key === 'ground') return;
       const loc = b[key];
-      ['ucm', 'shal'].forEach(side => {
-        const enemy = side === 'ucm' ? 'shal' : 'ucm';
+      ['player1', 'player2'].forEach(side => {
+        const enemy = side === 'player1' ? 'player2' : 'player1';
         if ((loc[side] || 0) >= 4 && (loc[enemy] || 0) === 0) {
           opts.push({ dsId: ds.id, key, side, name: locDisplayName(ds, key) });
         }
@@ -1320,7 +1322,7 @@ export function sceneryValid(state, type, xIn, yIn) {
     return { ok: false, reason: 'too close to board edge (4")' };
   const dep = state.scenario && DEPLOYMENTS[state.scenario.deployment];
   if (dep) {
-    for (const z of [dep.zones.red, dep.zones.blue]) {
+    for (const z of [dep.zones.south, dep.zones.north]) {
       if (z && distToZone(z, xIn, yIn) < MIN) return { ok: false, reason: 'too close to a deployment zone (4")' };
     }
   }
@@ -1392,7 +1394,8 @@ export function directDeploymentStatus(state, side) {
 export function approachFor(state, side) {
   if (!state.scenario) return 'close';
   const app = APPROACHES[state.scenario.approach];
-  return side === 'ucm' ? app.red : app.blue;
+  const zone = state.deployZone && state.deployZone[side];
+  return zone ? app[zone] : app.south;
 }
 
 /* Count of still-undeployed deploy-eligible Groups for a side. */
@@ -1409,27 +1412,29 @@ export function undeployedDeployableCount(state, side) {
 export function deploySideAllowed(state, side) {
   if (state.phase !== 'deploy') return true;
   if (state.deployDone[side]) return false;
-  if (side === 'ucm') return true;
-  return state.deployDone.ucm === true;
+  if (side === 'player1') return true;
+  return state.deployDone.player1 === true;
 }
 
 /* Does the current scenario require a manual deploy phase? */
 export function anyoneNeedsDeployPhase(state) {
   if (!state.scenario) return true;
-  const redApp  = approachFor(state, 'ucm');
-  const blueApp = approachFor(state, 'shal');
+  const redApp  = approachFor(state, 'player1');
+  const blueApp = approachFor(state, 'player2');
   if (redApp === 'directly_deploy' || blueApp === 'directly_deploy') return true;
   const _allDefs = allDefs(state);
   if (_allDefs.some(d => d.vanguard)) return true;
   return false;
 }
 
-/* Mark every ship as off-table. */
+/* Mark every ship as off-table with a heading pointing toward the board centre. */
 export function initShipsOffTable(state) {
   allDefs(state).forEach(def => {
     const grp = state.groups[def.id];
     if (!grp) return;
-    const heading = def.side === 'ucm' ? -90 : 90;
+    const zone = state.deployZone && state.deployZone[def.side];
+    // south zone → face north (heading -90); north zone → face south (heading 90)
+    const heading = (zone === 'north') ? 90 : -90;
     grp.ships.forEach(ship => {
       ship.offTable = true;
       ship.heading = heading;
@@ -1472,8 +1477,8 @@ export function sideHasUnmovedOfType(state, side, type) {
 
 /* Ordered list of {type, side} stages for the current round, initiative side first. */
 export function assetStageOrder(state) {
-  const init = state.initiativeHolder || 'ucm';
-  const other = init === 'ucm' ? 'shal' : 'ucm';
+  const init = state.initiativeHolder || 'player1';
+  const other = init === 'player1' ? 'player2' : 'player1';
   const stages = [];
   ['fighter', 'bomber', 'torpedo'].forEach(type => {
     stages.push({ type, side: init });
@@ -1525,7 +1530,7 @@ export function afterAssetMove(state) {
 /* Any on-table ship carrying enemy Battalions (Boarding candidates)? */
 export function anyShipBattalions(state) {
   return Object.keys(state.groups).some(gid => {
-    const side = getDef(state, gid).side, enemy = side === 'ucm' ? 'shal' : 'ucm';
+    const side = getDef(state, gid).side, enemy = side === 'player1' ? 'player2' : 'player1';
     return state.groups[gid].ships.some(s => !s.destroyed && !s.offTable && s.battalions && s.battalions[enemy] > 0);
   });
 }
@@ -1535,7 +1540,7 @@ export function resolveBoardingActions(state, rng) {
   const log = [];
   Object.keys(state.groups).forEach(gid => {
     const def = getDef(state, gid);
-    const owner = def.side, boarder = owner === 'ucm' ? 'shal' : 'ucm';
+    const owner = def.side, boarder = owner === 'player1' ? 'player2' : 'player1';
     state.groups[gid].ships.forEach((ship, si) => {
       if (ship.destroyed || ship.offTable || !ship.battalions) return;
       let n = ship.battalions[boarder] || 0;
@@ -1708,6 +1713,23 @@ export function groupInFormation(state, def) { return outOfFormationSet(state, d
    the rolls are explicit and can run server-side with the room's seeded rng. */
 export function rollHits(state, rng, M) {
   const s = M.shots[M.shotIdx];
+  // Bombardment vs dropsite: no ship target, simplified roll path.
+  if (s.dsId) {
+    const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === s.dsId);
+    let lock = Math.max(2, lockVal(s.w) - 2); // Bombardment improves Lock by 2 vs all dropsites
+    const dice = [];
+    let hits = 0, crits = 0;
+    for (let i = 0; i < s.w.att; i++) {
+      const r = rollDie(rng);
+      const isHit = r >= lock;
+      const isCrit = r >= lock + 2;
+      if (isHit) hits++;
+      if (isCrit) crits++;
+      dice.push({ r, isHit, isCrit });
+    }
+    M.hitResult = { dice, hits, crits, lock, forceSix: false };
+    return;
+  }
   const td = getDef(state, s.targetGid);
   const ts = state.groups[s.targetGid].ships[s.targetSi];
   const sp = parseWeaponSpecials(s.w);
@@ -1726,10 +1748,12 @@ export function rollHits(state, rng, M) {
     const isCity = td.category === 'city';
     const targetDescent = /Descent/i.test(td.special || '');
     const isBombardment = /Bombardment/i.test(s.w.special || '');
+    const isAirToAir   = /Air.?to.?Air/i.test(s.w.special || '');
+    const ignoreAtmoPenalty = isBombardment || isAirToAir;
     if (isCity && isBombardment) lock = Math.max(2, lock - 2);
-    else if (tL === 'atmosphere' && (isCity || targetDescent)) forceSix = true;
+    else if (!ignoreAtmoPenalty && tL === 'atmosphere' && (isCity || targetDescent)) forceSix = true;
     else if (aL === 'atmosphere' && tL === 'orbit') forceSix = true;
-    else if (aL === 'orbit' && tL === 'atmosphere') lock = Math.min(6, lock + 1);
+    else if (!ignoreAtmoPenalty && aL === 'orbit' && tL === 'atmosphere') lock = Math.min(6, lock + 1);
   }
   // Fusillade-X (per-ship; baked for pooled fire). Sustained Fire: ×2 Att vs a Group hit last round.
   let att = s.w.att;
@@ -1779,6 +1803,46 @@ export function rollHits(state, rng, M) {
 
 export function rollSaves(state, rng, M) {
   const s = M.shots[M.shotIdx];
+  // Bombardment vs dropsite: roll ES/KS saves based on weapon type.
+  if (s.dsId) {
+    const _ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === s.dsId);
+    const _base = _ds && _ds.base;
+    const _hr = M.hitResult;
+    // Best save = base save improved by any features present (lower = better).
+    const _better = (a, b) => {
+      const va = saveVal(a), vb = saveVal(b);
+      if (va == null) return b; if (vb == null) return a;
+      return va < vb ? a : b;
+    };
+    let _bestES = _base && _base.es, _bestKS = _base && _base.ks;
+    (_ds && _ds.features || []).forEach(fk => {
+      const f = FEATURES[fk];
+      if (f) { _bestES = _better(_bestES, f.es); _bestKS = _better(_bestKS, f.ks); }
+    });
+    const _svStr = s.w.type === 'K' ? _bestKS : s.w.type === 'E' ? _bestES : null;
+    const _sv = saveVal(_svStr);
+    const _hitsList = [];
+    for (let i = 0; i < _hr.hits; i++) {
+      _hitsList.push({ type: s.w.type, sv: _sv, dmg: s.w.dmg || 1, saved: false });
+    }
+    const _primDice = [];
+    _hitsList.forEach(h => {
+      if (h.sv == null) return;
+      const r = rollDie(rng);
+      const ok = r >= h.sv;
+      _primDice.push({ r, ok, sv: h.sv });
+      if (ok) h.saved = true;
+    });
+    const _dmg = _hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
+    const _unsaved = _hitsList.filter(h => !h.saved).length;
+    M.saveResult = {
+      hitsList: _hitsList, primDice: _primDice, backDice: [], aegisDice: [],
+      backupVal: null, aegisY: 0, backupRolled: true,
+      unsaved: _unsaved, dmg: _dmg, dsId: s.dsId,
+      flash: 0, crippling: false, penetrator: false, status: false, corruptor: 0, critDamaged: false,
+    };
+    return;
+  }
   const td = getDef(state, s.targetGid);
   const ts = state.groups[s.targetGid].ships[s.targetSi];
   const sp = parseWeaponSpecials(s.w);
@@ -1906,7 +1970,7 @@ export function resolveAttackDamage(state, M) {
       }
       if (M.pendingCorruptor && M.pendingCorruptor[k]) {
         const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null);
-        if (atkSide) { ship.battalions = ship.battalions || { ucm: 0, shal: 0 }; ship.battalions[atkSide] += M.pendingCorruptor[k]; }
+        if (atkSide) { ship.battalions = ship.battalions || { player1: 0, player2: 0 }; ship.battalions[atkSide] += M.pendingCorruptor[k]; }
       }
     }
   });
@@ -1919,12 +1983,67 @@ export function resolveAttackDamage(state, M) {
       if (!M.impelQueue.find(q => q.gid === gid)) M.impelQueue.push({ gid, x: M.pendingImpel[gid].x, big: M.pendingImpel[gid].big });
     });
   }
-  proceedQueues(M);
+  // Bombardment: apply hull damage; queue collateral battalion-removal choices.
+  if (M.pendingBombardDamage) {
+    M.bombardCollateralQueue = M.bombardCollateralQueue || [];
+    Object.keys(M.pendingBombardDamage).forEach(dsId => {
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+      if (!ds) return;
+      const dmg = M.pendingBombardDamage[dsId];
+      if (dmg <= 0) return;
+      ds.damage = (ds.damage || 0) + dmg;
+      if (ds.maxHull && ds.damage >= ds.maxHull) ds.destroyed = true;
+      const dsName = (ds.base && ds.base.name) || dsId;
+      M.log.push(`${dsName}: ${dmg} hull damage${ds.destroyed ? ' · LEVELLED' : ''}`);
+      // Queue 1 collateral choice per hull point per player that has battalions.
+      const b = dsBattalions(ds);
+      const p1Total = Object.values(b).reduce((s, loc) => s + (loc.player1 || 0), 0);
+      const p2Total = Object.values(b).reduce((s, loc) => s + (loc.player2 || 0), 0);
+      for (let i = 0; i < dmg; i++) {
+        if (p1Total > 0) M.bombardCollateralQueue.push({ dsId, dsName, side: 'player1', hullPoint: i + 1, hullTotal: dmg });
+        if (p2Total > 0) M.bombardCollateralQueue.push({ dsId, dsName, side: 'player2', hullPoint: i + 1, hullTotal: dmg });
+      }
+    });
+  }
+  proceedQueues(M, state);
   return state;
 }
 
-/* Advance the modal to the next pending sub-step (crippling → explosion → impel → done). */
-export function proceedQueues(M) {
+/* Apply one collateral battalion-removal choice (player selects location). */
+function applyResolveBombardCollateral(state, intent) {
+  const M = state.attackModal;
+  if (!M || !M.bombardCollateralQueue || !M.bombardCollateralQueue.length) return state;
+  const q = M.bombardCollateralQueue[0];
+  const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === q.dsId);
+  if (ds) {
+    const b = dsBattalions(ds);
+    const loc = intent.loc;
+    if (b[loc] && (b[loc][q.side] || 0) > 0) {
+      b[loc][q.side]--;
+      M.log.push(`${q.dsName}: ${q.side === 'player1' ? 'P1' : 'P2'} battalion removed from ${locDisplayName(ds, loc)} (collateral)`);
+    }
+  }
+  M.bombardCollateralQueue.shift();
+  proceedQueues(M, state);
+  return state;
+}
+
+/* Advance the modal to the next pending sub-step.
+   Skips bombardCollateralQueue entries where the target side has 0 battalions left. */
+export function proceedQueues(M, state) {
+  if (M.bombardCollateralQueue && M.bombardCollateralQueue.length) {
+    if (state) {
+      while (M.bombardCollateralQueue.length) {
+        const q = M.bombardCollateralQueue[0];
+        const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === q.dsId);
+        const b = ds ? dsBattalions(ds) : {};
+        const total = Object.values(b).reduce((s, loc) => s + (loc[q.side] || 0), 0);
+        if (total > 0) break;
+        M.bombardCollateralQueue.shift();
+      }
+    }
+    if (M.bombardCollateralQueue.length) { M.step = 'bombardCollateral'; return; }
+  }
   if (M.crippleQueue.length) { M.step = 'crippling'; return; }
   if (M.explodeQueue.length) { M.step = 'explosion'; return; }
   if (M.impelQueue && M.impelQueue.length) { M.step = 'impel'; return; }
@@ -1984,8 +2103,18 @@ export function advanceAttack(state, rng, M, to) {
   else if (to === 'apply') {
     if (M.saveResult && !M.saveResult.backupRolled) rollDeferredBackupSaves(state, rng, M);
     const s = M.shots[M.shotIdx];
-    const k = targetKey(s.targetGid, s.targetSi);
     const sr = M.saveResult;
+    // Bombardment vs dropsite: accumulate in a separate map; resolved after all shots.
+    if (s.dsId) {
+      M.pendingBombardDamage = M.pendingBombardDamage || {};
+      M.pendingBombardDamage[s.dsId] = (M.pendingBombardDamage[s.dsId] || 0) + sr.dmg;
+      const _bds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === s.dsId);
+      const _bdsName = _bds ? (_bds.base && _bds.base.name) || s.dsId : s.dsId;
+      M.log.push(`${s.w.name} ▶ ${_bdsName}: ${sr.unsaved} unsaved → ${sr.dmg} hull damage`);
+      nextShotOrResolve(state, rng, M);
+      return state;
+    }
+    const k = targetKey(s.targetGid, s.targetSi);
     M.pendingDamage[k] = (M.pendingDamage[k] || 0) + sr.dmg;
     if (sr.dmg > 0 && !parseWeaponSpecials(s.w).focused) {
       M.spillEligible = M.spillEligible || {};
@@ -2053,7 +2182,7 @@ export function applyCripplingNext(state, M) {
   }
   else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
   M.log.push(`${c.name} crippled: ${c.effectName}`);
-  proceedQueues(M);
+  proceedQueues(M, state);
 }
 
 /* Apply the next queued explosion's area effect, then advance the queues. */
@@ -2061,7 +2190,7 @@ export function applyExplosionNext(state, rng, M) {
   const ex = M.explodeQueue.shift();
   M.log.push(`${ex.name} exploded: ${ex.effectName}`);
   applyExplosionEffect(state, rng, ex, M);
-  proceedQueues(M);
+  proceedQueues(M, state);
 }
 
 /* AP Re-roll: the attacker re-rolls missed to-hit dice ('hit') or the defender
@@ -2083,6 +2212,7 @@ export function attackReroll(state, rng, M, which) {
     }
   } else if (which === 'save') {
     const sr = M.saveResult; const s = M.shots[M.shotIdx];
+    if (s.dsId) return state; // dropsites have no AP to spend on save re-rolls
     const td = getDef(state, s.targetGid); const defSide = td.side;
     const failedIdx = sr.primDice.map((d, i) => (!d.ok ? i : -1)).filter(i => i >= 0);
     const maxRR = Math.min(failedIdx.length, (state.planning && state.planning.ap[defSide]) || 0);
@@ -2254,7 +2384,7 @@ export function attackDeclare(state, M, decl) {
           M.log.push(`Impel: ${getDef(state, q.gid).name} moved forward ${q.x * 2}"`);
         }
       }
-      proceedQueues(M);
+      proceedQueues(M, state);
       break;
     }
   }
@@ -2275,7 +2405,7 @@ export function passActivation(state) {
   if (!P || !state.activeSide || !(P.passTokens[state.activeSide] > 0)) return state;
   const passer = state.activeSide;
   P.passTokens[passer]--;
-  const other = passer === 'ucm' ? 'shal' : 'ucm';
+  const other = passer === 'player1' ? 'player2' : 'player1';
   if (sideHasPendingActivation(state, other)) state.activeSide = other;
   else if (!sideHasPendingActivation(state, passer)) state.activeSide = null;
   return state;
@@ -2283,7 +2413,7 @@ export function passActivation(state) {
 
 /* End the Activation Phase: open the end-of-round Dropsite Activation step. */
 export function beginEndRound(state) {
-  state.dropsiteActivation = { side: state.initiativeHolder || 'ucm', done: [], dsId: null };
+  state.dropsiteActivation = { side: state.initiativeHolder || 'player1', done: [], dsId: null };
   return state;
 }
 
@@ -2337,6 +2467,19 @@ export function onIndividualOrders(state, def, grp) {
   if (def.payload) return state.round >= 2;
   return false;
 }
+/* The ship arc/range measurement originates from the lead ship (when explicitly
+   nominated) unless the group is on individual orders (open network / detached
+   payload). When no lead is nominated (leadShipIdx == null) each ship measures
+   from itself. */
+export function firingOriginShip(state, def, grp, shipIdx) {
+  if (!grp) return null;
+  if (!onIndividualOrders(state, def, grp) && grp.leadShipIdx != null) {
+    const lead = grp.ships[grp.leadShipIdx];
+    if (lead && !lead.destroyed && !lead.offTable) return lead;
+  }
+  return grp.ships[shipIdx];
+}
+
 /* Effective Order for a ship: its own Order if on individual orders (networked
    Voidgate / detached Payload), otherwise the Group Order. */
 export function effectiveOrder(state, def, grp, shipIdx) {
@@ -2456,7 +2599,7 @@ export function commitMove(state, rng, gid, si, tx, ty, layerToggle) {
 
   // ── MINES ── enemy ship in Orbit moving through a Mine's Thrust range triggers it.
   if (!ship.destroyed && ship.layer !== 'atmosphere') {
-    const enemySide = def.side === 'ucm' ? 'shal' : 'ucm';
+    const enemySide = def.side === 'player1' ? 'player2' : 'player1';
     const mine = (state.launchedAssets || []).find(a => {
       if (a.kind !== 'mine' || a.side !== enemySide) return false;
       const rPx = assetProfile(state, a.side, 'mine').thrust * INCH;
@@ -2532,9 +2675,490 @@ export function commitVectoredSecondMove(state, tx, ty) {
   return state;
 }
 
+/* Undo the last move for ship `si` in group `gid`, restoring from moveTrail. */
+export function undoMove(state, gid, si) {
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  const trail = grp.moveTrail || [];
+  let idx = -1;
+  for (let i = trail.length - 1; i >= 0; i--) {
+    if (trail[i].si === si) { idx = i; break; }
+  }
+  if (idx < 0) return state;
+  const prev = trail[idx];
+  ship.x = prev.x; ship.y = prev.y; ship.heading = prev.heading;
+  if (prev.layer !== undefined) ship.layer = prev.layer;
+  ship.movedThisRound = false;
+  trail.splice(idx, 1);
+  state.aiming = null;
+  state.vectoredSecondMove = null;
+  state.hoverPoint = null;
+  return state;
+}
+
+/* End a Group's activation: apply end-of-activation effects (spikes, damage,
+   Regenerate), mark the Group as activated, and hand off to the other side. */
+export function finishActivation(state, rng, gid) {
+  const grp = state.groups[gid];
+  const def = getDef(state, gid);
+  if (!grp || !def || grp.activated) return state;
+
+  const openNet = onIndividualOrders(state, def, grp);
+
+  // ── End-of-activation spikes ──
+  if (openNet) {
+    grp.ships.forEach(s => {
+      if (s.destroyed) return;
+      const o = s.order;
+      if (o === 'WF') addShipSpikes(s, def, 2);
+      else if (o === 'CC') addShipSpikes(s, def, 1);
+      else if (o === 'MT') addShipSpikes(s, def, 2);
+      if (o === 'SR') s.sigSilent = true;
+    });
+  } else {
+    const o = grp.order;
+    if (o === 'WF') addGroupSpikes(grp, def, 2);
+    else if (o === 'CC') addGroupSpikes(grp, def, 1);
+    else if (o === 'MT') addGroupSpikes(grp, def, 2);
+    if (o === 'SR') grp.ships.forEach(s => { if (!s.destroyed) s.sigSilent = true; });
+  }
+
+  // ── End-of-activation damage ──
+  const variantKey = state.scenario && state.scenario.variant;
+  const expansiveAtmo = variantKey === 'expansive_atmosphere';
+  const orbitalComplex = variantKey === 'orbital_complex';
+  const d3 = () => Math.ceil(rollDie(rng) / 2);
+  const is2D3 = def.tonnage === 'C';
+  const dmgLog = [];
+
+  grp.ships.forEach((s, si) => {
+    if (s.destroyed || s.offTable) return;
+    let dmg = 0;
+
+    if (s.layer === 'atmosphere' && !/Descent/i.test(def.special || '')) {
+      const a = d3() + (is2D3 ? d3() : 0);
+      dmg += a;
+      dmgLog.push(`${def.name}: ${a} (atmosphere)`);
+    }
+    if (orbitalComplex && s.crippling && s.crippling.includes('decay')) {
+      const a = d3() + (is2D3 ? d3() : 0);
+      dmg += a;
+      dmgLog.push(`${def.name}: ${a} (orbital decay)`);
+    }
+    const effOrd = openNet ? s.order : grp.order;
+    if (expansiveAtmo && (effOrd === 'CC' || effOrd === 'MT')) {
+      const sv = Math.min(saveVal(def.es) || 7, saveVal(def.ks) || 7);
+      if (sv == null || rollDie(rng) < sv) {
+        dmg += 1;
+        dmgLog.push(`${def.name}: 1 (Expansive Atmosphere)`);
+      }
+    }
+
+    if (dmg > 0) {
+      s.hull = Math.max(0, s.hull - dmg);
+      if (s.hull <= 0 && !s.destroyed) {
+        s.destroyed = true;
+        if (isCapital(def)) {
+          applyExplosionEffect(state, rng, makeExplosionRoll(gid, si, def, s), { explodeQueue: [] });
+        }
+      }
+    }
+
+    // Regenerate-X: recover X lost hull (if survived).
+    const reg = (def.special || '').match(/Regenerate-(\d)/i);
+    if (reg && !s.destroyed && s.hull < s.maxHull) {
+      const heal = Math.min(parseInt(reg[1]), s.maxHull - s.hull);
+      if (heal > 0) s.hull += heal;
+    }
+  });
+
+  if (dmgLog.length) logEvent(state, `End-of-activation: ${dmgLog.join(', ')}`);
+
+  grp.activated = true;
+  state.selectedShipIdx = null;
+  state.selectedGroupId = null;
+  advanceActiveSide(state);
+  return state;
+}
+
+/* Commit the chosen scenario: assign deploy zones via seeded RNG, rebuild fleets,
+   initialize all scenario state. Never swaps player1/player2 factions — only the
+   physical north/south zones are assigned randomly. */
+function applyCommitScenario(state, rng) {
+  // Zone assignment: player1 always = f1, player2 always = f2 (no flip).
+  state.factions.player1 = state.fleetChoices.f1;
+  state.factions.player2 = state.fleetChoices.f2;
+  const slotForSide = { player1: 'f1', player2: 'f2' };
+  state.slotForSide = slotForSide;
+  // Randomly assign north/south deployment zones using the seeded RNG.
+  if (rng() < 0.5) {
+    state.deployZone = { player1: 'south', player2: 'north' };
+  } else {
+    state.deployZone = { player1: 'north', player2: 'south' };
+  }
+  // Carry player colour choices through to side assignments.
+  state.sideColors = {
+    player1: (state.playerColors && state.playerColors.f1) || 'blue',
+    player2: (state.playerColors && state.playerColors.f2) || 'red',
+  };
+  rebuildFleets(state);
+  // Apply stored Payload→Porter links to the rebuilt ship objects.
+  ['player1', 'player2'].forEach(side => {
+    const slot = slotForSide[side];
+    const links = (state.payloadLinks && state.payloadLinks[slot]) || {};
+    Object.keys(links).forEach(payKey => {
+      const [payBase, paySi] = payKey.split(':');
+      const [porBase, porSi] = links[payKey].split(':');
+      const payGrp = state.groups[side + ':' + payBase];
+      if (!payGrp) return;
+      const payShip = payGrp.ships[parseInt(paySi)];
+      if (!payShip) return;
+      payShip.attachedTo = { gid: side + ':' + porBase, si: parseInt(porSi) };
+    });
+  });
+  // Admiral Levels and Secondaries follow fleet slot → assigned side.
+  state.admiralLevel = {
+    player1: (state.admiralChoice && state.admiralChoice.f1) || 0,
+    player2: (state.admiralChoice && state.admiralChoice.f2) || 0,
+  };
+  state.secondaries = {
+    player1: ((state.secondaryChoice && state.secondaryChoice.f1) || []).slice(),
+    player2: ((state.secondaryChoice && state.secondaryChoice.f2) || []).slice(),
+  };
+  state.captured = { player1: 0, player2: 0 };
+  state.admiralKilled = { player1: false, player2: false };
+  const scenData = buildScenarioState(state.scenario);
+  state.scenarioData = scenData;
+  // Extract objective: seed Recon Operative tokens on each Dropsite.
+  if (state.scenario.objective === 'extract') {
+    scenData.dropsites.forEach(ds => {
+      const k = dropsiteSizeKey(ds);
+      ds.reconOps = k === 'L' ? 3 : k === 'M' ? 2 : 1;
+    });
+  }
+  state.shipReconOps = {};
+  state.reconKills = { player1: 0, player2: 0 };
+  state.nominationPhase = false;
+  state.breakthroughFlyoff = { player1: 0, player2: 0 };
+  state.scoreLog = [];
+  state.lastScoring = null;
+  state.scoredRounds = [];
+  state.eventLog = [];
+  state.logExpanded = false;
+  // Protect: auto-nominate highest-value dropsite nearest each side's zone.
+  state.protectNom = { player1: null, player2: null };
+  if (state.scenario.objective === 'protect') {
+    const dss = scenData.dropsites.slice();
+    ['player1', 'player2'].forEach(side => {
+      const cands = dss.filter(ds => !Object.values(state.protectNom).includes(ds.id));
+      cands.sort((a, b) => {
+        const va = (DROPSITE_VP[dropsiteSizeKey(a)] || DROPSITE_VP.M).control;
+        const vb = (DROPSITE_VP[dropsiteSizeKey(b)] || DROPSITE_VP.M).control;
+        if (vb !== va) return vb - va;
+        return distFromZoneIn(state, side, inchToPx(a.y)) - distFromZoneIn(state, side, inchToPx(b.y));
+      });
+      if (cands.length) state.protectNom[side] = cands[0].id;
+    });
+  }
+  // Secondary nominations (position-based).
+  state.secondaryNominations = { player1: {}, player2: {} };
+  let needsNomination = false;
+  ['player1', 'player2'].forEach(side => {
+    (state.secondaries[side] || []).forEach(key => {
+      const def = SECONDARY_OBJECTIVES[key];
+      if (!def || !def.nominate) return;
+      const nom = nominateForSecondary(state, side, key);
+      if (nom) { state.secondaryNominations[side][key] = nom; needsNomination = true; }
+    });
+  });
+  state.nominationPhase = needsNomination;
+  initShipsOffTable(state);
+  // Determine starting phase.
+  const t = scenData.sceneryTargets || {};
+  if ((t.micrometeor || 0) + (t.dense || 0) > 0) {
+    state.phase = 'scenery';
+    state.sceneryTurn = 'player1'; // player1 places first in multiplayer
+  } else if (!anyoneNeedsDeployPhase(state)) {
+    state.phase = 'play';
+  } else {
+    state.deployDone = { player1: false, player2: false };
+    state.phase = 'deploy';
+  }
+  return state;
+}
+
+export function applyCommitScenery(state, rng) {
+  state.sceneryPlace = null;
+  state.sceneryTurn = null;
+  if (anyoneNeedsDeployPhase(state)) {
+    state.deployDone = state.deployDone || { player1: false, player2: false };
+    state.phase = 'deploy';
+  } else {
+    state.phase = 'play';
+    rollInitiative(state, rng);
+  }
+  return state;
+}
+
+export function applyBeginPlay(state, rng) {
+  state.phase = 'play';
+  rollInitiative(state, rng);
+  return state;
+}
+
+export function applyGiveInitiative(state, to) {
+  if (state.initiative) state.initiative.holder = to;
+  return state;
+}
+
+export function applyBeginActivation(state) {
+  if (!state.initiative) return state;
+  state.activeSide = state.initiative.holder;
+  state.initiativeHolder = state.initiative.holder;
+  state.initiative = null;
+  return state;
+}
+
+export function deployShip(state, gid, si, x, y, heading) {
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  ship.x = x; ship.y = y; ship.heading = heading;
+  ship.offTable = false;
+  ship.deployedRound = state.round;
+  return state;
+}
+
+export function arriveShip(state, gid, si, x, y, heading) {
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  ship.x = x; ship.y = y; ship.heading = heading;
+  ship.offTable = false;
+  ship.justArrived = true;
+  ship.deployedRound = state.round;
+  state.deployingGroup = gid;
+  return state;
+}
+
+function applyLaunchGroundAsset(state, intent) {
+  const { gid, si, li, dsId, count, locationKey, targetGid, targetSi, gateSel } = intent;
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  const def = getDef(state, gid);
+  if (!def) return state;
+  const entry = (def.launch || [])[li] || {};
+
+  // Voidgate (Shaltari Mothership): decrement the chosen gateship's remaining capacity.
+  if (gateSel) {
+    const gateGrp = state.groups[gateSel.gid];
+    const gateShip = gateGrp && gateGrp.ships[gateSel.si];
+    if (gateShip) {
+      const gateDef = getDef(state, gateSel.gid);
+      gateShip.gateRemaining = Math.max(0, gateRemaining(gateShip, gateDef) - (count || 1));
+    }
+  }
+  // Increment by actual count so multi-gate Mothership launches stack correctly.
+  ship.launchedThisRound = (ship.launchedThisRound || 0) + (count || 1);
+  if (entry.link) { ship.usedLinks = ship.usedLinks || {}; ship.usedLinks[entry.link] = entry.type || entry.link; }
+
+  if (dsId && count > 0 && locationKey) {
+    // Place battalions directly at the chosen location.
+    const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+    if (ds) {
+      const b = dsBattalions(ds);
+      if (b[locationKey]) b[locationKey][def.side] = (b[locationKey][def.side] || 0) + count;
+      let locLabel = ds.base.name;
+      if (locationKey !== 'ground') {
+        const fi = parseInt(locationKey.replace('feat', ''));
+        const fk = (ds.features || [])[fi];
+        if (fk && FEATURES[fk]) locLabel = FEATURES[fk].name;
+      }
+      logEvent(state, `${def.name} landed ${count} battalion${count !== 1 ? 's' : ''} → ${locLabel}`);
+    }
+    state.groundLaunchLines = state.groundLaunchLines || [];
+    state.groundLaunchLines.push({ fromGid: gid, fromSi: si, dsId, side: def.side });
+    state.selectedDropsiteId = dsId;
+  }
+  if (targetGid != null) {
+    const tgrp = state.groups[targetGid];
+    const tship = tgrp && tgrp.ships[targetSi ?? 0];
+    if (tship) {
+      tship.battalions = tship.battalions || { player1: 0, player2: 0 };
+      tship.battalions[def.side] = (tship.battalions[def.side] || 0) + 1;
+    }
+  }
+
+  state.launching = null;
+  return state;
+}
+
+function applyLaunchAsset(state, intent) {
+  const { gid, si, li, kind, count, x, y } = intent;
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  const def = getDef(state, gid);
+  if (!def) return state;
+  const entry = (def.launch || [])[li] || {};
+  state.launchedAssets = state.launchedAssets || [];
+  state._assetId = (state._assetId || 0) + 1;
+  state.launchedAssets.push({ id: 'a' + state._assetId, kind, count, side: def.side, x, y, moved: false, fromGid: gid, fromSi: si });
+  ship.launchedThisRound = (ship.launchedThisRound || 0) + count;
+  if (entry.link) { ship.usedLinks = ship.usedLinks || {}; ship.usedLinks[entry.link] = entry.type || entry.link; }
+  state.launching = null;
+  return state;
+}
+
+function applyNominateLead(state, intent) {
+  const { gid, si } = intent;
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  grp.leadShipIdx = si ?? null; // null clears the nomination
+  return state;
+}
+
+function applyLockWeaponTarget(state, intent) {
+  const { gid, si, wi, targetGid, targetSi } = intent;
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  ship.weaponTargets = ship.weaponTargets || {};
+  ship.weaponTargets[wi] = { gid: targetGid, si: targetSi };
+  return state;
+}
+
+function applyLockBombardmentTarget(state, intent) {
+  const { gid, si, wi, dsId } = intent;
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  ship.weaponTargets = ship.weaponTargets || {};
+  ship.weaponTargets[wi] = { dsId };
+  return state;
+}
+
+/* Deploy a detached payload ship onto the board within 3" of its Porter. */
+function applyDeployPayload(state, intent) {
+  const { gid, si, porterGid, porterSi, x, y } = intent;
+  const payGrp = state.groups[gid];
+  const payShip = payGrp && payGrp.ships[si];
+  if (!payShip) return state;
+  const porterGrp = state.groups[porterGid];
+  const porter = porterGrp && porterGrp.ships[porterSi];
+  if (!porter) return state;
+  payShip.x = x; payShip.y = y;
+  payShip.heading = porter.heading;
+  payShip.layer = porter.layer || 'orbit';
+  payShip.offTable = false;
+  payShip.attachedTo = null;
+  payShip.justArrived = true;
+  payShip.deployedRound = state.round;
+  payShip.movedThisRound = false;
+  payShip.order = 'GQ';
+  return state;
+}
+
+function applyUnlockWeapon(state, intent) {
+  const { gid, si, wi } = intent;
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship || !ship.weaponTargets) return state;
+  delete ship.weaponTargets[wi];
+  return state;
+}
+
+function applyFireWeapons(state, intent) {
+  const { gid, si } = intent;
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const def = getDef(state, gid);
+  if (!def) return state;
+
+  // Pool shots: identical weapon+target pairs from all ships combine Attack dice.
+  const combined = {};
+  grp.ships.forEach((ship, sIdx) => {
+    if (ship.destroyed || ship.offTable || !ship.weaponTargets) return;
+    const shipEO = effectiveOrder(state, def, grp, sIdx);
+    Object.keys(ship.weaponTargets).forEach(wi => {
+      const t = ship.weaponTargets[wi];
+      const w = def.weapons[parseInt(wi)];
+      if (!w) return;
+      const sp = parseWeaponSpecials(w);
+      const shipAtt = w.att + ((sp.fusillade && shipEO === 'WF') ? sp.fusillade : 0);
+      if (t.dsId) {
+        // Bombardment vs dropsite: pool identical weapon+dropsite pairs.
+        const key = w.name + '|ds:' + t.dsId;
+        if (combined[key]) {
+          combined[key].w = { ...combined[key].w, att: combined[key].w.att + shipAtt };
+        } else {
+          combined[key] = { wi: parseInt(wi), w: { ...w, att: shipAtt }, dsId: t.dsId, fusilladeBaked: true };
+        }
+        return;
+      }
+      const tg = state.groups[t.gid];
+      const ts = tg && tg.ships[t.si];
+      if (!ts || ts.destroyed || ts.offTable) return;
+      const reps = sp.volley > 1 ? sp.volley : 1;
+      for (let r = 0; r < reps; r++) {
+        const key = w.name + '|' + t.gid + '|' + t.si + (reps > 1 ? '|v' + r : '');
+        if (combined[key]) {
+          combined[key].w = { ...combined[key].w, att: combined[key].w.att + shipAtt };
+        } else {
+          combined[key] = { wi: parseInt(wi), w: { ...w, att: shipAtt }, targetGid: t.gid, targetSi: t.si,
+            volleyIdx: reps > 1 ? r + 1 : 0, volleyOf: reps, fusilladeBaked: true };
+        }
+      }
+    });
+  });
+
+  const shots = Object.values(combined);
+  if (!shots.length) return state;
+
+  // Origin ship: lead ship unless group is on individual orders.
+  let originSi = si != null ? si : (grp.leadShipIdx != null ? grp.leadShipIdx : 0);
+  if (!onIndividualOrders(state, def, grp)) {
+    const li = grp.leadShipIdx != null ? grp.leadShipIdx : 0;
+    const lead = grp.ships[li];
+    if (lead && !lead.destroyed && !lead.offTable) originSi = li;
+  }
+
+  state.attackModal = {
+    attackerGid: gid, attackerSi: originSi,
+    groupFire: true,
+    shots,
+    step: 'intro',
+    shotIdx: 0,
+    shieldsUp: {},
+    log: [],
+    pendingDamage: {},
+    hitResult: null, saveResult: null, crippleQueue: [], explodeQueue: [],
+  };
+  return state;
+}
+
 /* Dispatch an intent to its mutator. Mutates `state` in place; returns it. */
 export function apply(state, intent, rng) {
   switch (intent && intent.type) {
+    case 'commitScenery':     return applyCommitScenery(state, rng);
+    case 'beginPlay':         return applyBeginPlay(state, rng);
+    case 'giveInitiative':    return applyGiveInitiative(state, intent.to);
+    case 'beginActivation':   return applyBeginActivation(state);
+    case 'commitScenario':    return applyCommitScenario(state, rng);
+    case 'finishActivation':  return finishActivation(state, rng, intent.gid);
+    case 'undoMove':          return undoMove(state, intent.gid, intent.si);
+    case 'deployShip':        return deployShip(state, intent.gid, intent.si, intent.x, intent.y, intent.heading);
+    case 'arriveShip':        return arriveShip(state, intent.gid, intent.si, intent.x, intent.y, intent.heading);
     case 'pass':         return passActivation(state);
     case 'endRound':     return beginEndRound(state);
     case 'applyOrder':   return applyOrder(state, rng, intent.gid, intent.order);
@@ -2546,6 +3170,15 @@ export function apply(state, intent, rng) {
     case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
     case 'finishAttack':       finishAttack(state, state.attackModal); return state;
     case 'attackDeclare':      return attackDeclare(state, state.attackModal, intent);
+    case 'launchAsset':        return applyLaunchAsset(state, intent);
+    case 'launchGroundAsset':  return applyLaunchGroundAsset(state, intent);
+    case 'deployPayload':      return applyDeployPayload(state, intent);
+    case 'nominateLead':       return applyNominateLead(state, intent);
+    case 'lockWeaponTarget':          return applyLockWeaponTarget(state, intent);
+    case 'lockBombardmentTarget':        return applyLockBombardmentTarget(state, intent);
+    case 'resolveBombardCollateral':     return applyResolveBombardCollateral(state, intent);
+    case 'unlockWeapon':              return applyUnlockWeapon(state, intent);
+    case 'fireWeapons':        return applyFireWeapons(state, intent);
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }

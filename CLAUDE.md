@@ -31,7 +31,7 @@ The pure game logic has been extracted from the monolith into ES modules. The en
 | `src/engine/rng.js` | Seeded PRNG (`makeRng(seed)`) + `localRng` (Math.random wrapper for browser play) |
 | `src/engine/state.js` | `createState()` factory, `buildSideFleet()`, `rebuildFleets()` |
 | `src/engine/mutators.js` | All state-mutating functions (combat, scoring, asset resolution…), the shared crippling/explosion resolvers (`makeCrippleRoll`, `rollCrippleEffect`, `makeExplosionRoll`, `rollExplosionEffect`, `applyExplosionEffect`), plus `apply(state, intent, rng)`, the intent dispatcher. |
-| `src/engine/gating.js` | Intent legality: `isLegal(state, intent, side)` + `legalActions(state, side)`. Phase 1d / the intent layer — **in progress**: `pass`, `endRound`, and group Orders (`applyOrder`) are modelled; other action families still live inline in client handlers and migrate over incrementally. |
+| `src/engine/gating.js` | Intent legality: `isLegal(state, intent, side)` + `legalActions(state, side)`. Covers all migrated intent families; un-migrated families fall through to `default: return false`. |
 
 All engine functions take `state` (and `rng` where randomness is needed) as explicit parameters — no globals, safe for concurrent server use.
 
@@ -110,9 +110,26 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 
 **In progress — Phase 1d / server authority (intent migration):**
 - `src/engine/gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` exist; the server's intent path validates and applies authoritatively.
-- **Migrated so far:** turn-flow `pass` / `endRound`, group Orders (`applyOrder`), and play-phase movement — `moveShip` (full geometric cone validation via the shared `moveCone`), plus the vectored / Course-Change follow-ups `aimShip` and `vectoredMove`. A move resolves its scenery/mine effects server-side (the rng-driven crippling/explosion resolvers live in `mutators.js`; the interactive `applyCrippling`/`applyExplosion` queue wrappers stay client-side). Deploy/reserve-arrival facing (aiming `mode:'deploy'`) is still on the relay — it's part of the deploy family.
-- **Combat (in progress):** being reworked into a *server-driven* multi-step resolution — each modal decision becomes an intent, the server rolls every die with the room's seeded rng, and the defender makes their own defensive choices. **Engine groundwork complete** (combat resolution now lives entirely in `mutators.js`, shimmed in the client, behaviour unchanged): post-save resolution (`resolveAttackDamage` / `proceedQueues` / `rollDeferredBackupSaves`), to-hit / save rolling (`rollHits` / `rollSaves` + coherency helpers `coherencyInches` / `outOfFormationSet` / `groupInFormation`), and the step machine (`advanceAttack` / `nextShotOrResolve` / `applyCripplingNext` / `applyExplosionNext`). Step 4 in progress: the step-machine **advances are now server-driven** — `advanceAttack` rolls the dice in the step machine (not in render), and the modal's "next" buttons `dispatch({type:'attackStep', to})`, so the server rolls every die with the room's seeded rng and broadcasts identical results to both clients (verified with a live two-client WebSocket test). `gating.js#isLegal` enforces attacker-drives-all (the active / asset-active side) for the migrated combat intents. **Migrated — the play-phase attack modal is now fully server-driven** (every die *and* decision routes through the server): step advances (`attackStep`), the dice re-rolls (`attackReroll` / `attackFighterReroll`), the group-fire commit (`finishAttack`), and all the deterministic declarations (`attackDeclare`: shields / overcharge / escort, Brace / Contain, Impel). The bomber/asset-phase finish still commits client-side (it re-opens the next pooled-attack modal — asset orchestration not yet migrated), and the no-damage abort/cancel button stays on the relay. **Step 5 done — combat is now role-correct:** `gating.js#isLegal` splits the decisions by side. The **attacker** (asset-active / active side) drives advances, hit re-rolls, Overcharge / Escort / Impel, and finish; the **defender** (opponent) owns the defensive choices — Shields, Brace, Contain, save re-rolls (`attackReroll which:'save'`) and Close Protection (`attackFighterReroll`). The client `_intentSide` attributes those defensive intents to the defender, so in hotseat one operator makes both sides' calls and online each player drives only their own. Verified live: defender raises shields / the attacker can't, attacker advances / the defender can't (4/4). **Remaining (UX only):** disable/hide the buttons a given online client can't use (today a wrong-side click silently no-ops + resyncs); the bomber/asset-phase finish orchestration and the no-damage abort/cancel still use the relay.
-- **Remaining families:** launches, deploy (incl. reserve-arrival facing), scoring, dropsite/asset/battalion steps — each into an intent + `apply` case + `isLegal` case + a `dispatch()` call. Once all families are migrated the legacy relay path can be removed.
+- **Migrated (complete families):**
+  - Turn flow: `pass`, `endRound`, `finishActivation`
+  - Orders: `applyOrder`, `applyShipOrder`
+  - Movement: `moveShip` (full geometric cone validation), `aimShip`, `vectoredMove`, `holdPosition`, `undoMove`, `nominateLead`
+  - Deploy: `deployShip`, `deployDone` (server-enforced side check), `beginPlay` (rolls initiative server-side), `advanceFromScenery` (scenery→deploy or play; rolls initiative when no deploy phase)
+  - Weapons: `fireWeapons`, `lockWeaponTarget`, `unlockWeapon`
+  - Combat modal: `attackStep`, `attackReroll`, `attackFighterReroll`, `finishAttack`, `attackDeclare` (shields/overcharge/escort/brace/contain/impel). Every die rolls server-side; attacker and defender each drive only their own decisions.
+  - Launches: `launchAsset`, `cancelLaunch`
+  - Scoring / round: `advanceRound` (runs `runScoring` + `rollInitiative` with seeded rng)
+  - Activation extras: `surveySite`, `extractRecon`, `breakthroughFlyoff`, `objectivesFlyoff`
+  - Asset phase: `resolveBoarding`, `startAssetMove`, `assetT2T`, `assetLockTarget`, `assetUntarget`, `assetResetMove`
+  - Battalion combat: `startBattalionCombat`, `bcPickDropsite`, `bcAssignGround`, `bcSkipAssign`, `bcToDestroy`, `bcFinish`, `daDestroyFeature`
+  - DA transitions: `daFinishDropsite`, `daSwitchSide`, `daEnd`
+- **Still on relay (remaining work):**
+  - Asset board movement (board click during asset step) — complex split/dogfight/scenery logic; asset stage-advance buttons (`#asset-finish-stage`, `#asset-move-done`)
+  - DA feature attack modal opening (`openFeatureAttackModal` sets `state.attackModal` client-side; subsequent modal steps are already server-authoritative)
+  - Undo deploy (`data-undo-deploy`)
+  - Scenery placement board click
+  - Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes) — acceptable relay for pre-game config
+- **UX gap (no-op instead of disabled):** wrong-side online clicks silently no-op + resync rather than having their buttons visually disabled.
 
 **Pending (later phases):**
 - **Custom Fleet Import** (`DFC_Fleet_Import_Plan.md`) — `src/fleet/` parser + ship/weapon DBs for the New Recruit export format.
@@ -124,5 +141,9 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
 - Named admirals not implemented (uses generic admiral stats)
 - No custom fleet import yet (only built-in faction rosters)
 - No AI opponent yet
-- Online multiplayer is **partly server-authoritative**: migrated intents (`pass`, `endRound`, `applyOrder`, `moveShip`, `aimShip`, `vectoredMove`) are validated/applied by the server; all other actions still use the trusted-relay path (client mutates and pushes full state, no server-side legality check). Online play also requires running the Node server (the GitHub Pages deploy is hotseat-only)
-- `src/engine/gating.js` covers only the turn-flow intents so far — the full legality surface (range, arc, fire limits, AP, coherency) is not yet extracted from `client/index.html`
+- Online multiplayer is **mostly server-authoritative**: the vast majority of play actions (movement, combat, scoring, asset phase, battalion combat, deploy) route through server-validated intents. Remaining relay items: asset board movement, DA feature attack opening, undo deploy, scenery placement, pre-game setup.
+- Wrong-side online clicks silently no-op + resync rather than having their buttons visually disabled
+- No custom fleet import yet (only built-in faction rosters)
+- No AI opponent yet
+- Named admirals not implemented (uses generic admiral stats)
+- Online play requires running the Node server (the GitHub Pages deploy is hotseat-only)

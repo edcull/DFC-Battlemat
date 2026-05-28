@@ -1,4 +1,4 @@
-// State factory and fleet/scenario helpers.
+﻿// State factory and fleet/scenario helpers.
 // All functions that read or mutate state take `state` as their first parameter,
 // making them safe to use in Node.js server contexts with multiple concurrent games.
 
@@ -14,7 +14,7 @@ import { rollD6 } from './rng.js';
    collisions in mirror matches (same faction on both sides) and avoids mutating
    the shared module fleet constants. */
 export function buildSideFleet(state, side) {
-  const fk = (state.factions && state.factions[side]) || (side === 'ucm' ? 'ucm' : 'shaltari');
+  const fk = (state.factions && state.factions[side]) || (side === 'player1' ? 'ucm' : 'shaltari');
   const base = (FACTIONS[fk] && FACTIONS[fk].fleet) || [];
   return base.map(def => {
     const clone = Object.assign({}, def);
@@ -36,13 +36,13 @@ export function fleetForSide(state, side) {
   if (!state.activeFleets[side]) state.activeFleets[side] = buildSideFleet(state, side);
   return state.activeFleets[side];
 }
-export function redFleet(state)  { return fleetForSide(state, 'ucm'); }
-export function blueFleet(state) { return fleetForSide(state, 'shal'); }
+export function redFleet(state)  { return fleetForSide(state, 'player1'); }
+export function blueFleet(state) { return fleetForSide(state, 'player2'); }
 
-/* Display name of the faction occupying a colour slot ('ucm'=red, 'shal'=blue). */
+/* Display name of the faction occupying a colour slot ('player1'=red, 'player2'=blue). */
 export function factionName(state, side) {
   const fk = state.factions && state.factions[side];
-  return (fk && FACTIONS[fk]) ? FACTIONS[fk].name : (side === 'ucm' ? 'Red' : 'Blue');
+  return (fk && FACTIONS[fk]) ? FACTIONS[fk].name : (side === 'player1' ? 'Red' : 'Blue');
 }
 
 /* ── PAYLOAD / PORTER (Bioficer) helpers ──
@@ -127,7 +127,7 @@ export function detachedReattachCandidates(state, side, porterShip, porterSize) 
 /* Sync attached payloads with their Porter: if the Porter ship is destroyed,
    any payload still attached to it is destroyed too (14.1.11). */
 export function syncPayloads(state) {
-  ['ucm', 'shal'].forEach(side => {
+  ['player1', 'player2'].forEach(side => {
     payloadShips(state, side).forEach(p => {
       const a = p.ship.attachedTo;
       if (a) {
@@ -217,26 +217,31 @@ export function createState() {
     assetPhase: null,    // {log, resolved} — Asset Phase modal state at round end
     battalionCombat: null, // guided battalion-combat sequence state
     dropsiteActivation: null, // {side, done:[]} — end-of-Activation Dropsite Activation step
-    initiativeHolder: null, // 'ucm'|'shal' — who held 1st initiative this round
+    initiativeHolder: null, // 'player1'|'player2' — who held 1st initiative this round
     initiative: null,    // {red, blue, winner, holder, round} — start-of-round initiative roll
-    activeSide: null,    // 'ucm' | 'shal' — whose turn it is to activate a Group
+    activeSide: null,    // 'player1' | 'player2' — whose turn it is to activate a Group
     assetMove: null,     // {id, count} — selected launched asset being moved (Asset Combat)
     assetActiveSide: null, // side currently activating an asset (alternates by initiative)
     _assetId: 0,         // counter for stable launched-asset ids
-    factions: { ucm: 'ucm', shal: 'shaltari' }, // chosen faction per slot (red=ucm, blue=shal)
+    factions: { player1: 'ucm', player2: 'shaltari' }, // chosen faction per slot (red=player1, blue=player2)
+    playerNames: { f1: 'Player 1', f2: 'Player 2' }, // editable display names per fleet slot
+    playerColors: { f1: 'blue', f2: 'red' },       // chosen colour key per fleet slot
+    sideColors: null,                                 // { player1: colorKey, player2: colorKey } — set at commitScenario
+    deployZone: null,                                 // { player1: 'north'|'south', player2: 'south'|'north' } — set at commitScenario
+    slotForSide: null,                                // { player1: 'f1'|'f2', player2: 'f1'|'f2' } — set at commitScenario
     fleetChoices: { f1: null, f2: null }, // picker selections (randomised to slots at commit)
     admiralChoice: { f1: 0, f2: 0 },      // admiral Level per fleet slot (0 = no admiral)
     secondaryChoice: { f1: [], f2: [] },  // chosen Secondary Objective keys per fleet slot
-    admiralLevel: { ucm: 0, shal: 0 },    // admiral Level per side (set at commit)
-    planning: null,                       // {ap:{ucm,shal}, passTokens:{ucm,shal}} for the round
-    score: { ucm: { vp: 0, kp: 0 }, shal: { vp: 0, kp: 0 } }, // victory + kill points
-    secondaries: { ucm: [], shal: [] }, // chosen Secondary Objective keys per side
-    secondaryNominations: { ucm: {}, shal: {} }, // position-based secondary nominations
+    admiralLevel: { player1: 0, player2: 0 },    // admiral Level per side (set at commit)
+    planning: null,                       // {ap:{player1,player2}, passTokens:{player1,player2}} for the round
+    score: { player1: { vp: 0, kp: 0 }, player2: { vp: 0, kp: 0 } }, // victory + kill points
+    secondaries: { player1: [], player2: [] }, // chosen Secondary Objective keys per side
+    secondaryNominations: { player1: {}, player2: {} }, // position-based secondary nominations
     shipReconOps: {},      // ship key → Recon Operatives carried (Extract objective)
-    reconKills: { ucm: 0, shal: 0 }, // enemy operative-carriers destroyed
+    reconKills: { player1: 0, player2: 0 }, // enemy operative-carriers destroyed
     nominationPhase: false, // secondary-objective nomination editor active
-    captured: { ucm: 0, shal: 0 },      // points of captured enemy ships
-    admiralKilled: { ucm: false, shal: false }, // was this side's admiral killed
+    captured: { player1: 0, player2: 0 },      // points of captured enemy ships
+    admiralKilled: { player1: false, player2: false }, // was this side's admiral killed
     scoredRounds: [],                     // standard-scoring rounds already awarded
     scoreLog: [],                         // structured VP award history {round,side,vp,reason}
     lastScoring: null,                    // most recent R4/R6 standard-scoring breakdown
@@ -245,7 +250,7 @@ export function createState() {
     payloadLinks: { f1: {}, f2: {} }, // per-fleet-slot: { '<payloadBaseId>:<si>': '<porterBaseId>:<si>' }
     payloadDetach: null, // {gid, si, porterGid, porterSi} — placing a detached payload
     payloadReattach: null, // {porterGid, porterSi} — picking a payload within 3" to reattach
-    deployDone: { ucm: false, shal: false }, // explicit "finished deploying" flag per side
+    deployDone: { player1: false, player2: false }, // explicit "finished deploying" flag per side
     targeting: null,       // {gid, si, wi} — assigning weapon wi of ship (gid,si) to a target
     attackModal: null,     // multi-step attack resolution state
     repairPhase: null,     // End-Phase repair (Fire damage + crippling repair rolls)
@@ -255,9 +260,11 @@ export function createState() {
     logExpanded: false,    // event-log panel expanded (scrollable) vs collapsed (last 3)
     detector: null,        // {gid, si, wi} — Detector weapon awaiting an enemy LoS target
     antiWing: null,        // {gid, si, wi} — Anti-Wing weapon awaiting an enemy Wing target
-    activeFleets: null,  // {ucm:[...clonedDefs], shal:[...clonedDefs]} — built by rebuildFleets
+    activeFleets: null,  // {player1:[...clonedDefs], player2:[...clonedDefs]} — built by rebuildFleets
+    sceneryTurn: null,   // 'player1'|'player2' — whose turn to place scenery (null = unrestricted)
     scenario: null,      // generated by scenario gen (see SCENARIO_TABLES)
     dropsites: [],       // [{id,x,y,size:'S'|'M'|'L',type:'station'|'city',hull,maxHull,name}]
+    groundLaunchLines: [], // [{fromGid, fromSi, dsId, side}] — drawn each round, cleared by advanceRound
     groups: {}           // groupId → { order, spikes, activated, ships:[...], moveTrail:[] }
   };
 }
@@ -270,10 +277,10 @@ export function initFleet(state, fleet, side) {
     const groupSize = def.groupSize || 1;
     const ships = [];
     // distribute along the deployment edge:
-    // UCM south: y = BOARD_PX - 30, heading = -90 (pointing up / north)
-    // Shaltari north: y = 30, heading = 90 (pointing down / south)
-    const baseY = side === 'ucm' ? BOARD_PX - 30 : 30;
-    const heading = side === 'ucm' ? -90 : 90; // -90 = up, 90 = down (SVG +y is down)
+    // player1 south: y = BOARD_PX - 30, heading = -90 (pointing up / north)
+    // player2 north: y = 30, heading = 90 (pointing down / south)
+    const baseY = side === 'player1' ? BOARD_PX - 30 : 30;
+    const heading = side === 'player1' ? -90 : 90; // -90 = up, 90 = down (SVG +y is down)
     // x distribution per side — spread groups left-to-right
     const sideFleet = fleet;
     const idx = sideFleet.indexOf(def);
@@ -311,8 +318,8 @@ export function initFleet(state, fleet, side) {
 export function rebuildFleets(state) {
   state.activeFleets = {}; // force fresh clones for the chosen factions
   state.groups = {};
-  initFleet(state, redFleet(state), 'ucm');
-  initFleet(state, blueFleet(state), 'shal');
+  initFleet(state, redFleet(state), 'player1');
+  initFleet(state, blueFleet(state), 'player2');
 }
 
 // All currently-active defs combined for lookup.
@@ -322,7 +329,7 @@ export function getGroup(state, id) { return state.groups[id]; }
 
 export function assetProfile(state, side, kind) {
   const fk = state.factions && state.factions[side];
-  const tbl = ASSET_PROFILES[fk] || ASSET_PROFILES.ucm;
+  const tbl = ASSET_PROFILES[fk] || ASSET_PROFILES['ucm'];
   return tbl[kind] || tbl.bomber;
 }
 /* Thrust for an asset entry — resolves the faction from its side slot. */
@@ -333,3 +340,4 @@ export function assetThrust(state, asset) {
 export function fighterRerolls(state, side) {
   return (assetProfile(state, side, 'fighter').rerolls) || 0;
 }
+
