@@ -13,7 +13,7 @@
 
 import { ORDERS, INCH } from './constants.js';
 import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions } from './mutators.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed } from './mutators.js';
 
 const INTENT_TYPES = ['pass', 'endRound', 'commitScenario'];
 
@@ -53,6 +53,7 @@ export function isLegal(state, intent, side) {
       if (!grp) return false;
       const def = getDef(state, gid);
       if (!def || def.side !== side) return false;
+      if (!deploySideAllowed(state, side)) return false;
       const ship = grp.ships[si];
       if (!ship || ship.destroyed) return false;
       return true;
@@ -333,6 +334,69 @@ export function isLegal(state, intent, side) {
         return Object.keys(ship.weaponTargets).length > 0;
       });
     }
+    case 'advanceRound':
+      return state.phase === 'play';
+
+    case 'daFinishDropsite':
+      // dsId is local-only; just verify DA is active and the dropsite isn't already done
+      return !!(state.dropsiteActivation && intent.dsId
+        && !state.dropsiteActivation.done.includes(intent.dsId));
+
+    case 'daSwitchSide':
+      return !!(state.dropsiteActivation);
+
+    case 'daEnd':
+      return !!(state.dropsiteActivation);
+
+    case 'launchDropsiteAsset': {
+      const da = state.dropsiteActivation;
+      if (!da) return false;
+      // dsId is local-only; validate using the intent's fromDropsite field instead
+      const ds = intent.fromDropsite && state.scenarioData && state.scenarioData.dropsites &&
+                 state.scenarioData.dropsites.find(d => d.id === intent.fromDropsite);
+      if (!ds) return false;
+      return true;
+    }
+
+    case 'fireFeatureWeapon': {
+      const da = state.dropsiteActivation;
+      if (!da) return false;
+      if (state.phase !== 'play') return false;
+      // dsId is local-only; validate using intent.dsId
+      const ds = intent.dsId && state.scenarioData && state.scenarioData.dropsites &&
+                 state.scenarioData.dropsites.find(d => d.id === intent.dsId);
+      if (!ds) return false;
+      return true;
+    }
+
+    case 'holdPosition':
+    case 'applyShipOrder':
+    case 'surveySite':
+    case 'objectivesFlyoff':
+    case 'breakthroughFlyoff':
+    case 'extractRecon':
+    case 'startAssetMove':
+    case 'assetT2T':
+    case 'assetLockTarget':
+    case 'assetUntarget':
+    case 'assetResetMove':
+    case 'resolveBoarding':
+    case 'startBattalionCombat':
+    case 'bcPickDropsite':
+    case 'bcAssignGround':
+    case 'bcSkipAssign':
+    case 'bcToDestroy':
+    case 'bcFinish':
+    case 'daDestroyFeature':
+      return state.phase === 'play' || state.phase === 'deploy';
+    case 'deployDone': {
+      if (state.phase !== 'deploy') return false;
+      if (!intent.side || intent.side !== side) return false;
+      if (state.deployDone && state.deployDone[side]) return false;
+      if (side === 'player2' && !(state.deployDone && state.deployDone.player1)) return false;
+      return true;
+    }
+
     default:
       return false;
   }

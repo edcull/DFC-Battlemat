@@ -2417,6 +2417,130 @@ export function beginEndRound(state) {
   return state;
 }
 
+// ── STEP 2: REPAIR PHASE ──
+
+export const REPAIRABLE = ['fire', 'defence', 'scanners', 'weapons', 'navigation', 'decay'];
+
+export function anyRepairWork(state) {
+  return Object.keys(state.groups).some(gid =>
+    state.groups[gid].ships.some(s =>
+      !s.destroyed && !s.offTable &&
+      ((s.fireTokens > 0) || (s.crippling && s.crippling.some(c => REPAIRABLE.includes(c))))
+    )
+  );
+}
+
+function advanceRoundInternal(state, rng) {
+  // Status tokens are automatically removed at the start of the End Phase.
+  Object.values(state.groups).forEach(g => g.ships.forEach(s => {
+    if (s.statusToken) {
+      s.statusToken = false;
+      if (s.crippling) { const i = s.crippling.indexOf('scanners'); if (i >= 0) s.crippling.splice(i, 1); }
+    }
+  }));
+  state.assetPhase = null;
+  state.assetMove = null;
+  state.battalionCombat = null;
+  state.dropsiteActivation = null;
+  // Victory Point scoring for the round just completed (before advancing).
+  const completedRound = state.round;
+  // runScoring is in mutators too — use internal reference
+  const scoreLog = runScoring(state, rng, completedRound);
+  if (completedRound >= 6) {
+    const u = state.score.ucm, s2 = state.score.shal;
+    let winner;
+    if (u.vp !== s2.vp) winner = u.vp > s2.vp ? 'ucm' : 'shal';
+    else if (u.kp !== s2.kp) winner = u.kp > s2.kp ? 'ucm' : 'shal';
+    else winner = 'draw';
+    state.gameOver = { winner, scoreLog };
+    return state;
+  }
+  if (state.lastScoring) state.scoringModal = { ...state.lastScoring, log: scoreLog };
+  state.round = state.round + 1;
+  logEvent(state, `── Round ${state.round} begins ──`);
+  Object.values(state.groups).forEach(g => {
+    g.activated = false;
+    g.order = null;
+    g.hitByLastRound = g.hitByThisRound || [];
+    g.hitByThisRound = [];
+    g.ships.forEach(s => {
+      s.movedThisRound = false; s.justArrived = false; s.launchedThisRound = 0;
+      s.usedLinks = {}; s.gateRemaining = undefined; s.order = null;
+      s.firedThisActivation = false; s.weaponTargets = {}; s.dcRepaired = false;
+      s.dcThisRound = false; s.detectorUsed = false; s.arrestedThisRound = false;
+      s.usedVectoredSecondMove = false;
+    });
+    g.moveTrail = [];
+  });
+  state.selectedShipIdx = null;
+  ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => { ds.firedFeatures = []; });
+  if (scoreLog.length) state._lastScoreLog = scoreLog;
+  rollInitiative(state, rng);
+  return state;
+}
+
+export function startRepairPhase(state, rng) {
+  // Step 1: apply Fire token damage; clear tokens; track capital destructions.
+  const fireLog = [], explosions = [];
+  Object.keys(state.groups).forEach(gid => {
+    const def = getDef(state, gid);
+    state.groups[gid].ships.forEach((s, si) => {
+      if (s.destroyed || s.offTable || !s.fireTokens) return;
+      const dmg = s.fireTokens;
+      s.hull = Math.max(0, s.hull - dmg);
+      s.fireTokens = 0;
+      fireLog.push(`${def.name} takes ${dmg} Fire damage (${s.hull}/${s.maxHull})`);
+      if (s.hull <= 0) { s.destroyed = true; if (isCapital(def)) explosions.push(makeExplosionRoll(gid, si, def, s)); }
+    });
+  });
+  while (explosions.length) {
+    const ex = explosions.shift();
+    fireLog.push(`${ex.name} exploded: ${ex.effectName}`);
+    applyExplosionEffect(state, rng, ex, { explodeQueue: explosions });
+  }
+  // Step 2: roll repair dice server-side (pre-roll all so client just displays results).
+  const repairLog = [], targets = [];
+  Object.keys(state.groups).forEach(gid => {
+    const def = getDef(state, gid);
+    state.groups[gid].ships.forEach((s, si) => {
+      if (s.destroyed || s.offTable || !s.crippling) return;
+      const eff = s.crippling.filter(c => REPAIRABLE.includes(c));
+      if (!eff.length) return;
+      const rolled = eff.map(e2 => {
+        const dice = s.dcThisRound ? [rollDie(rng), rollDie(rng)] : [rollDie(rng)];
+        const need = e2 === 'decay' ? 6 : 4;
+        const success = dice.some(d => d >= need);
+        if (success) {
+          const i = s.crippling.indexOf(e2);
+          if (i >= 0) s.crippling.splice(i, 1);
+          if (e2 === 'fire') s.fireTokens = 0;
+          repairLog.push(`${def.name}: repaired ${e2}`);
+        }
+        return { eff: e2, dice, need, success };
+      });
+      targets.push({ gid, si, name: def.name, effects: eff.slice(), dc: !!s.dcThisRound, rolled });
+    });
+  });
+  state.repairPhase = { step: fireLog.length ? 'fire' : 'repair', fireLog, targets, idx: 0, log: repairLog };
+  return state;
+}
+
+export function advanceRound(state, rng) {
+  if (anyRepairWork(state)) {
+    state.assetPhase = null;
+    state.assetMove = null;
+    state.battalionCombat = null;
+    state.dropsiteActivation = null;
+    return startRepairPhase(state, rng);
+  }
+  return advanceRoundInternal(state, rng);
+}
+
+export function finishRepairPhase(state, rng) {
+  state.repairPhase = null;
+  return advanceRoundInternal(state, rng);
+}
+
 /* Assign an Order to a Group, applying its immediate effects (Spike changes and
    Damage Control hull recovery). Legality is checked by gating.js#isLegal — this
    only mutates. The DC hull roll uses `rng`, so it resolves on whichever runtime
@@ -2983,7 +3107,8 @@ function applyLaunchGroundAsset(state, intent) {
       logEvent(state, `${def.name} landed ${count} battalion${count !== 1 ? 's' : ''} → ${locLabel}`);
     }
     state.groundLaunchLines = state.groundLaunchLines || [];
-    state.groundLaunchLines.push({ fromGid: gid, fromSi: si, dsId, side: def.side });
+    state.groundLaunchLines.push({ fromGid: gid, fromSi: si, dsId, side: def.side,
+      ...(gateSel ? { gateGid: gateSel.gid, gateSi: gateSel.si } : {}) });
     state.selectedDropsiteId = dsId;
   }
   if (targetGid != null) {
@@ -3147,6 +3272,69 @@ function applyFireWeapons(state, intent) {
   return state;
 }
 
+function applyDaFinishDropsite(state, intent) {
+  const da = state.dropsiteActivation;
+  if (!da) return state;
+  if (intent.dsId && !da.done.includes(intent.dsId)) da.done.push(intent.dsId);
+  da.dsId = null;
+  state.launching = null;
+  state.featureAttack = null;
+  return state;
+}
+
+function applyDaSwitchSide(state) {
+  const da = state.dropsiteActivation;
+  if (!da) return state;
+  da.side = da.side === 'player1' ? 'player2' : 'player1';
+  da.dsId = null;
+  state.launching = null;
+  state.featureAttack = null;
+  return state;
+}
+
+function applyDaEnd(state) {
+  state.dropsiteActivation = null;
+  state.featureAttack = null;
+  state.launching = null;
+  state.assetPhase = { resolved: false, log: [] };
+  return state;
+}
+
+function applyLaunchDropsiteAsset(state, intent) {
+  const { kind, count, x, y, fromDropsite } = intent;
+  state.launchedAssets = state.launchedAssets || [];
+  state._assetId = (state._assetId || 0) + 1;
+  const side = (state.dropsiteActivation && state.dropsiteActivation.side) || 'player1';
+  state.launchedAssets.push({ id: 'a' + state._assetId, kind, count, side, x, y, moved: false, fromDropsite });
+  logEvent(state, `Dropsite launched ${count} ${kind}${count > 1 ? 's' : ''}`);
+  state.launching = null;
+  return state;
+}
+
+function applyFireFeatureWeapon(state, intent) {
+  const { dsId, fi, targetGid, targetSi } = intent;
+  const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+  if (!ds) return state;
+  const fk = ds.features && ds.features[fi];
+  if (!fk) return state;
+  const f = FEATURES[fk];
+  if (!f || !f.weapon) return state;
+  const wp = f.weapon;
+  const wObj = { name: `${f.name}: ${wp.name}`, arc: '—', att: wp.att, lock: wp.lock, dmg: wp.dmg, type: wp.type, special: wp.special || '' };
+  const side = (state.dropsiteActivation && state.dropsiteActivation.side) || 'player1';
+  state.attackModal = {
+    bomber: true, bomberKind: 'feature', bomberAssetIds: [], bomberSide: side, saturation: 0, cripplingFire: 0,
+    attackerName: `${f.name}: ${wp.name}`, attackerGid: null, attackerSi: null,
+    shots: [{ wi: 0, w: wObj, targetGid, targetSi }],
+    step: 'intro', shotIdx: 0, shieldsUp: {}, log: [], pendingDamage: {},
+    hitResult: null, saveResult: null, crippleQueue: [], explodeQueue: []
+  };
+  ds.firedFeatures = ds.firedFeatures || [];
+  if (!ds.firedFeatures.includes(fi)) ds.firedFeatures.push(fi);
+  state.featureAttack = null;
+  return state;
+}
+
 /* Dispatch an intent to its mutator. Mutates `state` in place; returns it. */
 export function apply(state, intent, rng) {
   switch (intent && intent.type) {
@@ -3179,6 +3367,103 @@ export function apply(state, intent, rng) {
     case 'resolveBombardCollateral':     return applyResolveBombardCollateral(state, intent);
     case 'unlockWeapon':              return applyUnlockWeapon(state, intent);
     case 'fireWeapons':        return applyFireWeapons(state, intent);
+    case 'advanceRound':          return advanceRound(state, rng);
+    case 'daFinishDropsite':       return applyDaFinishDropsite(state, intent);
+    case 'daSwitchSide':           return applyDaSwitchSide(state);
+    case 'daEnd':                  return applyDaEnd(state);
+    case 'launchDropsiteAsset':    return applyLaunchDropsiteAsset(state, intent);
+    case 'fireFeatureWeapon':      return applyFireFeatureWeapon(state, intent);
+    case 'holdPosition':
+    case 'applyShipOrder':
+    case 'surveySite':
+    case 'objectivesFlyoff':
+    case 'breakthroughFlyoff':
+    case 'extractRecon':
+    case 'startBattalionCombat':
+      state.battalionCombat = { stage: 'pick', dsId: null, done: [], log: [] };
+      return state;
+    case 'bcPickDropsite':
+      if (state.battalionCombat) { state.battalionCombat.dsId = intent.dsId; state.battalionCombat.stage = 'init'; }
+      return state;
+    case 'bcAssignGround': {
+      const bc = state.battalionCombat;
+      if (!bc) return state;
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === bc.dsId);
+      if (!ds) return state;
+      const actor = bc.stage === 'init' ? (state.initiativeHolder || 'player1') : (state.initiativeHolder === 'player1' ? 'player2' : 'player1');
+      const r = assignGroundToFeature(ds, actor, intent.featKey);
+      if (r.removed > 0) bc.log.push(`${ds.base.name}: ground vs ${r.where} — ${r.removed} each`);
+      if (bc.stage === 'init') bc.stage = 'other'; else bcResolveDropsite(state, bc, ds);
+      return state;
+    }
+    case 'bcSkipAssign': {
+      const bc2 = state.battalionCombat;
+      if (!bc2) return state;
+      const ds2 = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === bc2.dsId);
+      if (bc2.stage === 'init') bc2.stage = 'other'; else if (ds2) bcResolveDropsite(state, bc2, ds2);
+      return state;
+    }
+    case 'bcToDestroy':
+      if (state.battalionCombat) { state.battalionCombat.stage = 'destroy'; state.battalionCombat.dsId = null; }
+      return state;
+    case 'bcFinish':
+      state.battalionCombat = null;
+      if (state.assetPhase) state.assetPhase.resolved = true;
+      return state;
+    case 'resolveBoarding': {
+      const boardLog = resolveBoardingActions(state, rng);
+      if (state.assetPhase) { state.assetPhase.boardingResolved = true; state.assetPhase.boardingLog = boardLog.length ? boardLog : ['No boarding damage.']; }
+      return state;
+    }
+    case 'startAssetMove':
+      if (state.assetPhase) { state.assetPhase.step = 'assets'; }
+      state.assetMove = null;
+      (state.launchedAssets || []).forEach(a => { a.moved = false; a.t2t = false; a.bomberTarget = null; a._preMove = null; });
+      state.dogfightResult = null;
+      state.assetPhase.assetType = null; state.assetActiveSide = null;
+      advanceAssetStage(state, null);
+      return state;
+    case 'assetT2T': {
+      const at2t = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
+      if (at2t) { at2t.moved = false; at2t.t2t = true; at2t._t2tRange = 6; }
+      return state;
+    }
+    case 'assetLockTarget': {
+      const alck = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
+      if (alck) { alck.bomberTarget = { gid: intent.gid, si: intent.si }; }
+      return state;
+    }
+    case 'assetUntarget': {
+      const aut = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
+      if (aut) { aut.bomberTarget = null; }
+      return state;
+    }
+    case 'assetResetMove': {
+      const arm = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
+      if (arm) {
+        if (arm._preMove) { arm.x = arm._preMove.x; arm.y = arm._preMove.y; arm._t2tRange = arm._preMove.t2tRange; arm._preMove = null; }
+        arm.moved = false; arm.bomberTarget = null;
+      }
+      return state;
+    }
+    case 'daDestroyFeature': {
+      const dds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === intent.dsId);
+      if (dds) { dds.destroyedFeatures = dds.destroyedFeatures || []; if (!dds.destroyedFeatures.includes(intent.fi)) dds.destroyedFeatures.push(intent.fi); }
+      return state;
+    }
+    case 'deployDone': {
+      state.deployDone = state.deployDone || { player1: false, player2: false };
+      if (intent.side) state.deployDone[intent.side] = true;
+      if (state.deployDone.player1 && state.deployDone.player2) applyBeginPlay(state, rng);
+      return state;
+    }
+    case 'holdPosition':
+    case 'applyShipOrder':
+    case 'surveySite':
+    case 'objectivesFlyoff':
+    case 'breakthroughFlyoff':
+    case 'extractRecon':
+      return state; // client handles these mutations; intent authorises the relay
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }
 }

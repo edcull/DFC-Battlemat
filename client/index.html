@@ -1082,6 +1082,7 @@ import { isLegal as _isLegal, legalActions as _legalActions } from '../src/engin
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 
 // ─── STATE INIT ───────────────────────────────────────────────────────────────
 const DROPSITE_VP = { S: { control: 2, contest: 0 }, M: { control: 3, contest: 1 }, L: { control: 4, contest: 2 } };
@@ -1302,6 +1303,19 @@ function renderDropsite(d) {
   if (state.selectedDropsiteId === d.id) {
     html += `<circle cx="${cx}" cy="${cy}" r="${r + 4}" fill="none"
               stroke="${ringCol}" stroke-width="1.4" stroke-dasharray="3 2"/>`;
+  }
+  // Dropsite Activation: highlight dropsites the active player can click to activate
+  const _da = state.dropsiteActivation;
+  if (_da && !_da.dsId && dropsiteController(d) === _da.side && !_da.done.includes(d.id)) {
+    const hlCol = _da.side === 'player1' ? 'var(--ucm)' : 'var(--shal)';
+    html += `<circle cx="${cx}" cy="${cy}" r="${r + 6}" fill="none"
+              stroke="${hlCol}" stroke-width="1.8" stroke-dasharray="4 2" opacity="0.8"/>
+             <circle cx="${cx}" cy="${cy}" r="${r}" fill="${_da.side === 'player1' ? 'rgba(74,214,255,0.08)' : 'rgba(212,166,71,0.08)'}"/>`;
+  }
+  // Show activating dropsite with solid glow
+  if (_da && _da.dsId === d.id) {
+    const hlCol = _da.side === 'player1' ? 'var(--ucm)' : 'var(--shal)';
+    html += `<circle cx="${cx}" cy="${cy}" r="${r + 5}" fill="none" stroke="${hlCol}" stroke-width="2"/>`;
   }
   const sizeLetter = base.size === 'small' ? 'S' : base.size === 'medium' ? 'M' : 'L';
   html += `<text x="${cx}" y="${cy + 1}" font-family="var(--display)" font-size="${r * 0.7}"
@@ -2068,12 +2082,32 @@ function renderDropsiteDetail(ds) {
             const meta = launchMeta(l.type);
             const lActive = state.launching && state.launching.fromDropsite === ds.id &&
               state.launching.fromFeature === fi && state.launching.type === l.type;
-            launchCardHTML += `<div class="weapon-row" data-da-launch="${ds.id}|${fi}|${l.type}"
-                style="cursor:pointer;margin-top:6px;${lActive ? `border-left:3px solid var(--${sideCssKey(daSide)});background:rgba(${daSide==='player1'?'212,166,71':'74,214,255'},0.06);` : ''}">
-              <div class="weapon-name">${l.name}${lActive ? ' <span style="color:var(--'+sideCssKey(daSide)+')">◉</span>' : ''}</div>
-              <div class="weapon-stats">Launch ${l.n} · ${meta.auraIn}" range · ${launchTargetLabel(meta.target)}</div>
-              ${lActive ? '' : `<div class="weapon-special" style="color:var(--text-mute);">Click to launch ▸ place on map ≤${meta.auraIn}"</div>`}
-            </div>`;
+            const lSideKey = sideCssKey(daSide);
+            launchCardHTML += `<div class="weapon-row"${!lActive
+              ? ` data-da-launch="${ds.id}|${fi}|${l.type}" style="cursor:pointer;margin-top:6px;"`
+              : ` style="margin-top:6px;border-left:3px solid var(--${lSideKey});background:rgba(${daSide==='player1'?'212,166,71':'74,214,255'},0.06);"` }>
+              <div class="weapon-name">${l.name}${lActive ? ` <span style="color:var(--${lSideKey})">◉</span>` : ''}</div>
+              <div class="weapon-stats">Launch ${l.n} · ${meta.auraIn}" range · ${launchTargetLabel(meta.target)}</div>`;
+            if (lActive && l.type === 'fighter_bomber') {
+              const fCnt = state.launching.fighters || 0, bCnt = state.launching.bombers || 0;
+              launchCardHTML += `<div class="launch-counter">
+                <div class="lc-row"><span class="lc-lbl">Fighters</span>
+                  <button class="hp-btn" data-da-fb="fighters|-1" ${fCnt<=0?'disabled':''}>−</button>
+                  <span class="lc-val" style="color:var(--${lSideKey})">${fCnt}</span>
+                  <button class="hp-btn" data-da-fb="fighters|1" ${bCnt>0?'disabled':''}>+</button></div>
+                <div class="lc-row"><span class="lc-lbl">Bombers</span>
+                  <button class="hp-btn" data-da-fb="bombers|-1" ${bCnt<=0?'disabled':''}>−</button>
+                  <span class="lc-val" style="color:var(--${lSideKey})">${bCnt}</span>
+                  <button class="hp-btn" data-da-fb="bombers|1" ${fCnt>0?'disabled':''}>+</button></div>
+                <div class="weapon-special" style="color:var(--${lSideKey});margin-top:4px;">${(fCnt>0||bCnt>0)
+                  ? `Click board ≤${meta.auraIn}" to place ${fCnt>0?`${fCnt} Fighter${fCnt>1?'s':''}`:bCnt>0?`${bCnt} Bomber${bCnt>1?'s':''}`:''}`
+                  : 'Set Fighters or Bombers, then click the board'}</div>
+                <button class="btn" id="da-launch-cancel" style="width:100%;margin-top:4px;">Cancel</button>
+              </div>`;
+            } else if (!lActive) {
+              launchCardHTML += `<div class="weapon-special" style="color:var(--text-mute);">Click to launch ▸ place on map ≤${meta.auraIn}"</div>`;
+            }
+            launchCardHTML += `</div>`;
           });
         }
       }
@@ -3397,12 +3431,26 @@ function renderBoard() {
     if (ds && f && f.weapon) {
       const scanPx = (parseInt(f.weapon.scan) || 6) * INCH;
       const dsx = inchToPx(ds.x), dsy = inchToPx(ds.y);
-      const acol = fa.side === 'player1' ? 'var(--ucm)' : 'var(--shal)';
+      const isCA = /Close Action/i.test(f.weapon.special || '');
       html += `<circle cx="${dsx}" cy="${dsy}" r="${scanPx}"
         fill="rgba(255,82,82,0.05)" stroke="var(--hull-crit)" stroke-width="1" stroke-dasharray="4 3"/>`;
       html += `<text x="${dsx}" y="${dsy - scanPx - 4}" font-family="var(--mono)" font-size="8"
         font-weight="700" fill="var(--hull-crit)" text-anchor="middle" stroke="var(--bg)" stroke-width="2"
         paint-order="stroke" pointer-events="none">${f.weapon.name.toUpperCase()} ${parseInt(f.weapon.scan)||6}"</text>`;
+      // Highlight each valid enemy ship target with a red dotted ring
+      const enemySide = fa.side === 'player1' ? 'player2' : 'player1';
+      Object.keys(state.groups).forEach(gid => {
+        const def = getDef(gid);
+        if (!def || def.side !== enemySide) return;
+        state.groups[gid].ships.forEach((s) => {
+          if (s.destroyed || s.offTable) return;
+          const sigBonusIn = isCA ? 0 : ((s.sigSilent ? 0 : (def.sig || 0)) + ((state.groups[gid].spikes||0)+(s.spikes||0)) * 3);
+          const reach = scanPx + sigBonusIn * INCH;
+          if (Math.hypot(s.x - dsx, s.y - dsy) <= reach) {
+            html += `<circle cx="${s.x}" cy="${s.y}" r="9" fill="none" stroke="var(--hull-crit)" stroke-width="1.5" stroke-dasharray="2 2"/>`;
+          }
+        });
+      });
     }
   }
 
@@ -3555,8 +3603,14 @@ function renderBoard() {
       const pgDef = getDef(pg.gid);
       const pgCol = pgDef && pgDef.side === 'player1' ? 'var(--ucm)' : 'var(--shal)';
       const pgDx = inchToPx(pgDs.x), pgDy = inchToPx(pgDs.y);
-      html += `<line x1="${pgShip.x}" y1="${pgShip.y}" x2="${pgDx}" y2="${pgDy}" stroke="${pgCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
-        <circle cx="${pgDx}" cy="${pgDy}" r="9" fill="none" stroke="${pgCol}" stroke-width="1.2" opacity="0.7"/>`;
+      if (pg.gateSel) {
+        html += `<line x1="${pgShip.x}" y1="${pgShip.y}" x2="${pg.gateSel.x}" y2="${pg.gateSel.y}" stroke="${pgCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+          <line x1="${pg.gateSel.x}" y1="${pg.gateSel.y}" x2="${pgDx}" y2="${pgDy}" stroke="${pgCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+          <circle cx="${pgDx}" cy="${pgDy}" r="9" fill="none" stroke="${pgCol}" stroke-width="1.2" opacity="0.7"/>`;
+      } else {
+        html += `<line x1="${pgShip.x}" y1="${pgShip.y}" x2="${pgDx}" y2="${pgDy}" stroke="${pgCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+          <circle cx="${pgDx}" cy="${pgDy}" r="9" fill="none" stroke="${pgCol}" stroke-width="1.2" opacity="0.7"/>`;
+      }
     }
   }
   // groundLaunchLines: persistent server-broadcast lines after intent is confirmed.
@@ -3567,8 +3621,21 @@ function renderBoard() {
     if (glShip && !glShip.destroyed && !glShip.offTable && glDs) {
       const glCol = gl.side === 'player1' ? 'var(--ucm)' : 'var(--shal)';
       const glDx = inchToPx(glDs.x), glDy = inchToPx(glDs.y);
-      html += `<line x1="${glShip.x}" y1="${glShip.y}" x2="${glDx}" y2="${glDy}" stroke="${glCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
-        <circle cx="${glDx}" cy="${glDy}" r="9" fill="none" stroke="${glCol}" stroke-width="1.2" opacity="0.7"/>`;
+      if (gl.gateGid != null) {
+        const glGateGrp = state.groups[gl.gateGid];
+        const glGate = glGateGrp && glGateGrp.ships[gl.gateSi];
+        if (glGate && !glGate.destroyed && !glGate.offTable) {
+          html += `<line x1="${glShip.x}" y1="${glShip.y}" x2="${glGate.x}" y2="${glGate.y}" stroke="${glCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+            <line x1="${glGate.x}" y1="${glGate.y}" x2="${glDx}" y2="${glDy}" stroke="${glCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+            <circle cx="${glDx}" cy="${glDy}" r="9" fill="none" stroke="${glCol}" stroke-width="1.2" opacity="0.7"/>`;
+        } else {
+          html += `<line x1="${glShip.x}" y1="${glShip.y}" x2="${glDx}" y2="${glDy}" stroke="${glCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+            <circle cx="${glDx}" cy="${glDy}" r="9" fill="none" stroke="${glCol}" stroke-width="1.2" opacity="0.7"/>`;
+        }
+      } else {
+        html += `<line x1="${glShip.x}" y1="${glShip.y}" x2="${glDx}" y2="${glDy}" stroke="${glCol}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+          <circle cx="${glDx}" cy="${glDy}" r="9" fill="none" stroke="${glCol}" stroke-width="1.2" opacity="0.7"/>`;
+      }
     }
   });
 
@@ -4182,18 +4249,27 @@ function renderAttackModal() {
     const locOrder = Object.keys(b).filter(k => k !== 'ground').concat(b.ground ? ['ground'] : []);
     const isActing = !_netSide || _netSide === q.side;
     const pName = q.side === 'player1' ? 'Player 1' : 'Player 2';
-    const locBtns = locOrder.map(k => {
-      const cnt = (b[k] && b[k][q.side]) || 0;
-      if (cnt === 0) return '';
-      const lname = _bds ? locDisplayName(_bds, k) : k;
-      return `<button class="btn" data-bombard-collateral="${k}" style="font-size:10px;margin:2px;">${lname} <span style="color:var(--hull-warn)">(${cnt})</span></button>`;
-    }).join('');
-    body = `<div class="am-step-head">Collateral Damage — ${q.dsName}</div>
-      <div class="am-line">Hull point ${q.hullPoint} of ${q.hullTotal} · <b>${pName}</b> must remove 1 battalion</div>
-      ${isActing
-        ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">${locBtns || '<span style="color:var(--text-mute);font-size:10px;">No battalions present</span>'}</div>`
-        : `<div class="am-line" style="color:var(--text-mute);margin-top:8px;">Waiting for ${pName} to choose…</div>`}`;
-    footer = '';
+    // Locations where the affected player has at least one battalion
+    const eligibleLocs = locOrder.filter(k => (b[k] && b[k][q.side]) > 0);
+    // Auto-pick: if only one location has battalions, remove from it immediately — no picker needed
+    if (isActing && eligibleLocs.length === 1) {
+      setTimeout(() => dispatch({ type: 'resolveBombardCollateral', dsId: q.dsId, loc: eligibleLocs[0] }), 0);
+      body = `<div class="am-step-head">Collateral Damage — ${q.dsName}</div>
+        <div class="am-line" style="color:var(--text-mute);">Removing battalion from ${_bds ? locDisplayName(_bds, eligibleLocs[0]) : eligibleLocs[0]}…</div>`;
+      footer = '';
+    } else {
+      const locBtns = eligibleLocs.map(k => {
+        const cnt = (b[k] && b[k][q.side]) || 0;
+        const lname = _bds ? locDisplayName(_bds, k) : k;
+        return `<button class="btn" data-bombard-collateral="${k}" style="font-size:10px;margin:2px;">${lname} <span style="color:var(--hull-warn)">(${cnt})</span></button>`;
+      }).join('');
+      body = `<div class="am-step-head">Collateral Damage — ${q.dsName}</div>
+        <div class="am-line">Hull point ${q.hullPoint} of ${q.hullTotal} · <b>${pName}</b> must remove 1 battalion</div>
+        ${isActing
+          ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">${locBtns || '<span style="color:var(--text-mute);font-size:10px;">No battalions present</span>'}</div>`
+          : `<div class="am-line" style="color:var(--text-mute);margin-top:8px;">Waiting for ${pName} to choose…</div>`}`;
+      footer = '';
+    }
   }
 
   else if (M.step === 'done') {
@@ -4325,7 +4401,8 @@ function rollDeferredBackupSaves(M) { _rollDeferredBackupSaves(state, rng, M); }
 function finishAttack() {
   const M = state.attackModal;
   if (!M) return;
-  if (!M.bomber) { dispatch({ type: 'finishAttack' }); return; }
+  // Feature weapon attacks and regular ship attacks both close via the finishAttack intent
+  if (!M.bomber || M.bomberKind === 'feature') { dispatch({ type: 'finishAttack' }); return; }
   const hint = _finishAttack(state, M);
   if (hint && hint.bomber) {
     const { scope, scopeType } = hint;
@@ -4569,7 +4646,6 @@ function renderRepairPhase() {
 function finishRepairPhase() {
   state.repairPhase = null;
   dispatch({ type: 'advanceRound' });
-  renderAll();
 }
 
 
@@ -4985,7 +5061,6 @@ function applyPayloadLinks(slotForSide) {
 /* Phase transition: scenery → deploy (or play). */
 function commitScenery() {
   dispatch({ type: 'commitScenery' });
-  renderAll();
 }
 
 function commitDeployment() {
@@ -5007,7 +5082,6 @@ function commitDeployment() {
     if (!ok) return;
   }
   dispatch({ type: 'beginPlay' });
-  renderAll();
 }
 
 function goToPhase(phase) {
@@ -5067,8 +5141,10 @@ function renderVanguardHalo() {
   if (state.phase !== 'deploy') return '';
   const depKey = state.scenario.deployment;
   const dep = DEPLOYMENTS[depKey];
-  const side = def.side === 'player1' ? 'red' : 'blue';
-  const zone = dep.zones[side];
+  if (!dep) return '';
+  const zoneSide = (state.deployZone && state.deployZone[def.side]) || (def.side === 'player1' ? 'south' : 'north');
+  const zone = dep.zones && dep.zones[zoneSide];
+  if (!zone) return '';
   const X = def.vanguard;
 
   // Each branch returns a single SVG path string for the Vanguard outline.
@@ -5081,7 +5157,7 @@ function renderVanguardHalo() {
     if (zone.edgeLines)    html += vanguardStripFromEdgeLine(zone.edgeLines[0], X);
     else if (zone.polygon) html += vanguardStripPath(zone.polygon, X);
   } else if (depKey === 'table_corners') {
-    html += vanguardTableCornerPath(side, X);
+    html += vanguardTableCornerPath(zoneSide, X);
   } else if (depKey === 'midboard') {
     // Semicircle expanded radially by X.
     const c = zone.edgeSemicircle;
@@ -5169,7 +5245,7 @@ function vanguardTableCornerPath(side, X) {
   const s = vanguardStyle();
   const L = 12; // arm length
   let path = '';
-  if (side === 'blue') {
+  if (side === 'north') {
     // Corner at (0,0). Walk outline clockwise:
     //   (0,0) → (L,0)         top table edge, full L length
     //   arc cap at top-arm tip (L,0): centred (L,0) radius X,
@@ -5429,53 +5505,18 @@ function renderSceneryPlacement() {
 
 function renderDropsiteActivation() {
   const board = document.querySelector('.board-wrap');
-  let overlay = document.getElementById('da-overlay');
-  if (overlay) overlay.remove();
-  const oldBanner = document.getElementById('da-launch-banner');
-  if (oldBanner && !(state.dropsiteActivation && state.launching && state.launching.fromDropsite)) oldBanner.remove();
-  if (!state.dropsiteActivation) { const b = document.getElementById('da-ds-banner'); if (b) b.remove(); return; }
-  // While targeting a launch from a dropsite, show a counter banner (board usable).
-  if (state.launching && state.launching.fromDropsite) {
-    const dsb = document.getElementById('da-ds-banner'); if (dsb) dsb.remove();
-    let lb = document.getElementById('da-launch-banner');
-    if (lb) lb.remove();
-    const L = state.launching;
-    lb = document.createElement('div');
-    lb.id = 'da-launch-banner';
-    lb.className = 'deploy-hint';
-    if (L.type === 'fighter_bomber') {
-      const f = L.fighters||0, b = L.bombers||0;
-      lb.innerHTML = `<span><b>${L.name}:</b></span>
-        <span>Ftr</span>
-        <button class="hp-btn" data-da-fb="fighters|-1" ${b>0||f<=0?'disabled':''}>−</button>
-        <b style="color:var(--${L.side})">${f}</b>
-        <button class="hp-btn" data-da-fb="fighters|1" ${b>0?'disabled':''}>+</button>
-        <span>Bmr</span>
-        <button class="hp-btn" data-da-fb="bombers|-1" ${f>0||b<=0?'disabled':''}>−</button>
-        <b style="color:var(--${L.side})">${b}</b>
-        <button class="hp-btn" data-da-fb="bombers|1" ${f>0?'disabled':''}>+</button>
-        <span>· click ≤${L.auraIn}" to place</span>
-        <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
-    } else {
-      const cnt = L.type === 'fireship' ? (L.fireships||0) : (L.assetCount||1);
-      const cntCtl = L.type === 'fireship'
-        ? `<button class="hp-btn" data-da-fb="fireships|-1" ${cnt<=0?'disabled':''}>−</button>
-           <b style="color:var(--${L.side})">${cnt}</b>
-           <button class="hp-btn" data-da-fb="fireships|1">+</button>`
-        : `<b style="color:var(--${L.side})">${cnt}</b>`;
-      lb.innerHTML = `<span><b>${L.name}:</b></span> ${cntCtl}
-        <span>· click ≤${L.auraIn}" to place</span>
-        <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
-    }
-    document.querySelector('.board-wrap').appendChild(lb);
+  // Always remove legacy separate elements
+  ['da-overlay','da-launch-banner'].forEach(id => { const b = document.getElementById(id); if (b) b.remove(); });
+  if (!state.dropsiteActivation) {
+    const b = document.getElementById('da-ds-banner'); if (b) b.remove();
     return;
   }
-  let lbOld = document.getElementById('da-launch-banner');
-  if (lbOld) lbOld.remove();
 
   const da = state.dropsiteActivation;
   const sideName = (s) => FACTIONS[state.factions[s]] ? FACTIONS[state.factions[s]].name : s.toUpperCase();
   const otherSide = da.side === 'player1' ? 'player2' : 'player1';
+  const sideKey = da.side === 'player1' ? 'ucm' : 'shal';
+  const isMyTurn = !_netSide || _gs() === da.side;
 
   // Dropsites this side Controls (not contested) and hasn't activated yet.
   const controlled = (state.scenarioData ? state.scenarioData.dropsites : [])
@@ -5483,52 +5524,76 @@ function renderDropsiteActivation() {
   const otherControlled = (state.scenarioData ? state.scenarioData.dropsites : [])
     .filter(d => dropsiteController(d) === otherSide && !da.done.includes(d.id));
 
-  const ds = da.dsId ? state.scenarioData.dropsites.find(d => d.id === da.dsId) : null;
-
-  // ── ACTIVATING A SPECIFIC DROPSITE ──
-  // Controls now live in the right detail panel (renderDropsiteDetail). The board stays
-  // fully usable for targeting weapons / placing launched assets; no bottom banner.
-  if (ds) {
-    let banner = document.getElementById('da-ds-banner');
-    if (banner) banner.remove();
-    return; // panel-driven; board remains usable
+  // Auto-advance: if the active side has no controlled dropsites and nothing is activating,
+  // silently pass to the other side (or end the phase) after a brief paint.
+  if (!da.dsId && controlled.length === 0 && isMyTurn) {
+    setTimeout(() => {
+      if (!state.dropsiteActivation || state.dropsiteActivation.dsId) return;
+      if (otherControlled.length > 0) dispatch({ type: 'daSwitchSide' });
+      else dispatch({ type: 'daEnd' });
+    }, 0);
   }
+
+  // Build bottom banner
   let dsBan = document.getElementById('da-ds-banner');
-  if (dsBan) dsBan.remove();
+  if (!dsBan) { dsBan = document.createElement('div'); dsBan.id = 'da-ds-banner'; dsBan.className = 'deploy-hint'; board.appendChild(dsBan); }
 
-  let bodyHTML = '', footerHTML = '';
-  {
-    bodyHTML = `<div class="ap-section">
-      <div class="ap-title">${sideName(da.side)} — activate Controlled Dropsites</div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:5px;">In initiative order, alternate activating Dropsites you Control (not Contest).</div>`;
-    if (controlled.length) {
-      bodyHTML += controlled.map(d => `<button class="btn" data-da-pick="${d.id}" style="width:100%;margin-bottom:3px;">
-        ${d.base.name} <span style="color:var(--text-mute)">Controlled</span></button>`).join('');
+  const ds = da.dsId ? (state.scenarioData && state.scenarioData.dropsites.find(d => d.id === da.dsId)) : null;
+
+  // Launch-targeting mode: show fighter/bomber ±/+ controls in the banner
+  if (state.launching && state.launching.fromDropsite && ds) {
+    const L = state.launching;
+    const lSideKey = L.side === 'player1' ? 'ucm' : 'shal';
+    if (L.type === 'fighter_bomber') {
+      const f = L.fighters||0, b = L.bombers||0;
+      dsBan.innerHTML = `<span><b>${L.name}:</b></span>
+        <span>Ftr</span>
+        <button class="hp-btn" data-da-fb="fighters|-1" ${b>0||f<=0?'disabled':''}>−</button>
+        <b style="color:var(--${lSideKey})">${f}</b>
+        <button class="hp-btn" data-da-fb="fighters|1" ${b>0?'disabled':''}>+</button>
+        <span>Bmr</span>
+        <button class="hp-btn" data-da-fb="bombers|-1" ${f>0||b<=0?'disabled':''}>−</button>
+        <b style="color:var(--${lSideKey})">${b}</b>
+        <button class="hp-btn" data-da-fb="bombers|1" ${f>0?'disabled':''}>+</button>
+        <span>· click ≤${L.auraIn}" to place</span>
+        <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
     } else {
-      bodyHTML += `<div class="ap-log" style="color:var(--text-mute)">${sideName(da.side)} controls no further Dropsites.</div>`;
+      const cnt = L.type === 'fireship' ? (L.fireships||0) : (L.assetCount||1);
+      const cntCtl = L.type === 'fireship'
+        ? `<button class="hp-btn" data-da-fb="fireships|-1" ${cnt<=0?'disabled':''}>−</button>
+           <b style="color:var(--${lSideKey})">${cnt}</b>
+           <button class="hp-btn" data-da-fb="fireships|1">+</button>`
+        : `<b style="color:var(--${lSideKey})">${cnt}</b>`;
+      dsBan.innerHTML = `<span><b>${L.name}:</b></span> ${cntCtl}
+        <span>· click ≤${L.auraIn}" to place</span>
+        <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
     }
-    bodyHTML += `</div>`;
-    // Footer: pass to other side if they have controlled dropsites, else done.
-    footerHTML = otherControlled.length
-      ? `<button class="btn" id="da-next-side">${sideName(otherSide)}'S TURN →</button>`
-      : '';
-    footerHTML += `<button class="btn-primary" id="da-done">PROCEED TO ASSET PHASE →</button>`;
+  } else if (ds) {
+    // A dropsite is selected — show a minimal banner; panel handles the detail
+    dsBan.innerHTML = `<span><b style="color:var(--${sideKey})">${sideName(da.side)}</b> activating <b>${ds.base.name}</b> · use right panel to fire weapons / launch assets</span>
+      ${isMyTurn ? `<button class="btn" id="da-skip-all" style="padding:4px 10px;font-size:10px;margin-left:8px;">SKIP ALL ACTIVATIONS</button>` : ''}`;
+  } else if (controlled.length > 0) {
+    // Picking phase — controlled dropsites are highlighted on the map; click one to activate
+    dsBan.innerHTML = `<span><b style="color:var(--${sideKey})">${sideName(da.side)}</b> — click a highlighted dropsite to activate it</span>
+      ${isMyTurn ? `<button class="btn" id="da-skip-all" style="padding:4px 10px;font-size:10px;margin-left:8px;">SKIP ALL ACTIVATIONS</button>` : ''}`;
+  } else {
+    // No dropsites left for this side
+    dsBan.innerHTML = `<span style="color:var(--text-dim)"><b style="color:var(--${sideKey})">${sideName(da.side)}</b> has no more Dropsites to activate</span>
+      ${isMyTurn ? (otherControlled.length
+        ? `<button class="btn-primary" id="da-next-side" style="padding:4px 12px;font-size:10px;margin-left:8px;">${sideName(otherSide).toUpperCase()}'S TURN →</button>`
+        : `<button class="btn-primary" id="da-done" style="padding:4px 12px;font-size:10px;margin-left:8px;">PROCEED TO ASSET PHASE →</button>`) : ''}`;
   }
 
-  overlay = document.createElement('div');
-  overlay.id = 'da-overlay';
-  overlay.className = 'setup-overlay';
-  overlay.innerHTML = `
-    <div class="setup-card" style="max-width:440px;">
-      <div class="setup-header">
-        <h2 class="setup-title">ACTIVATE DROPSITES</h2>
-        <div class="setup-sub">Round ${state.round} · ${sideName(state.initiativeHolder||'player1')} has initiative</div>
-      </div>
-      <div class="setup-body">${bodyHTML}</div>
-      <div class="setup-footer">${footerHTML}</div>
-    </div>
-  `;
-  board.appendChild(overlay);
+  // "Skip All Activations" — marks all this side's remaining dropsites done
+  const skipAll = dsBan.querySelector('#da-skip-all');
+  if (skipAll) skipAll.addEventListener('click', () => {
+    if (otherControlled.length > 0) dispatch({ type: 'daSwitchSide' });
+    else dispatch({ type: 'daEnd' });
+  });
+  const nextBtn = dsBan.querySelector('#da-next-side');
+  if (nextBtn) nextBtn.addEventListener('click', () => dispatch({ type: 'daSwitchSide' }));
+  const doneBtn = dsBan.querySelector('#da-done');
+  if (doneBtn) doneBtn.addEventListener('click', () => dispatch({ type: 'daEnd' }));
 }
 
 /* ── ASSET ACTIVATION SEQUENCING (rulebook order) ──
@@ -6141,10 +6206,15 @@ function renderDeployHint() {
       const undeployedIdx = nextUndeployedShipIdx(state.selectedGroupId);
       const total = grp.ships.filter(s => !s.destroyed).length;
       const placed = total - (grp.ships.filter(s => !s.destroyed && s.offTable).length);
-      if (undeployedIdx >= 0) {
+      const rdp = state.redeployingShip;
+      if (rdp && rdp.gid === state.selectedGroupId) {
+        const rdpShip = grp.ships[rdp.si];
+        const rdpName = rdpShip ? `ship ${rdp.si + 1}` : 'ship';
+        status = `<b>${def.name}</b> · <span style="color:var(--hull-warn)">redeploying ${rdpName} — click in zone to place</span>`;
+      } else if (undeployedIdx >= 0) {
         status = `<b>${def.name}</b> · click in zone to place ship <b>${placed + 1}</b> of <b>${total}</b>`;
       } else {
-        status = `<b>${def.name}</b> · all ships placed · click to fine-tune`;
+        status = `<b>${def.name}</b> · all ships placed · click a ship to redeploy it`;
       }
     }
   } else {
@@ -6165,9 +6235,9 @@ function renderDeployHint() {
   let footerBtn;
   if (state.aiming) {
     footerBtn = '';
-  } else if (!state.deployDone.player1) {
+  } else if (!state.deployDone.player1 && netIsMySide('player1')) {
     footerBtn = `<button class="btn-finish-act" id="deploy-done-red" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player1')} DONE ▸</button>`;
-  } else if (!state.deployDone.player2) {
+  } else if (!state.deployDone.player2 && netIsMySide('player2')) {
     footerBtn = `<button class="btn-finish-act" id="deploy-done-blue" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player2')} DONE ▸</button>`;
   } else {
     footerBtn = `<button class="btn-primary" id="commit-deploy" style="padding:5px 14px;font-size:11px;">BEGIN PLAY →</button>`;
@@ -6335,10 +6405,10 @@ function renderAll(localOnly = false) {
     } else if (state.selectedGroupId) {
       const def = getDef(state.selectedGroupId);
       const undeployedIdx = nextUndeployedShipIdx(state.selectedGroupId);
-      if (def && undeployedIdx >= 0) {
-        if (state.phase === 'deploy' && canDeployNow(def) && deploySideAllowed(def.side)) {
-          showCrosshair = true;
-        } else if (state.phase === 'play') {
+      if (def && state.phase === 'deploy' && canDeployNow(def) && deploySideAllowed(def.side)) {
+        if (undeployedIdx >= 0 || state.redeployingShip) showCrosshair = true;
+      } else if (def && state.phase === 'play') {
+        if (undeployedIdx >= 0) {
           const grp = state.groups[state.selectedGroupId];
           if (!grp.activated && canActivateOffTable(def).eligible) showCrosshair = true;
         }
@@ -6351,13 +6421,447 @@ function renderAll(localOnly = false) {
 // ─── 3D VIEW ─────────────────────────────────────────────────────────────────
 let _view3d = false;
 let _3d = null;
+let _3dShipMeshes = []; // [{mesh, gid, si}] rebuilt each sync3d — used for raycasting
+// How far to lower station GLB so the disc intersects the orbital plane (set after GLB loads).
+// Procedural fallback uses 0 — the disc is already centred at wy there.
+let _3D_STATION_Y_DROP = 0;
 
 const _3D_LAYER_Y = { orbit: 120, atmosphere: 60 };
 const _3D_SHIP_DIMS = { SH: [28, 4, 12], H: [20, 3.5, 9], M: [14, 3, 6], L: [10, 2.5, 4] };
 
+// Per-faction Y-rotation (radians) to align bow to -Z after GLB import
+const _FACTION_GLB_YAW = {
+  ucm:        -Math.PI / 2,  // 90° clockwise from above
+  scourge:    0,
+  shaltari:   -Math.PI / 2,
+  phr:        -Math.PI / 2,
+  bioficer:   -Math.PI / 2,
+  resistance: -Math.PI / 2,
+};
+const _FACTION_GLB = {
+  ucm:        '/client/assets/ucm_cruiser.glb',
+  scourge:    '/client/assets/sco_cruiser.glb',
+  shaltari:   '/client/assets/sha_cruiser.glb',
+  phr:        '/client/assets/phr_cruiser.glb',
+  bioficer:   '/client/assets/bio_cruiser.glb',
+  resistance: '/client/assets/res_cruiser.glb',
+};
+const _FACTION_GLB_FRIGATE = {
+  ucm:        '/client/assets/ucm_frigate.glb',
+  scourge:    '/client/assets/sco_frigate.glb',
+  shaltari:   '/client/assets/sha_frigate.glb',
+  phr:        '/client/assets/phr_frigate.glb',
+  bioficer:   '/client/assets/bio_frigate.glb',
+  resistance: '/client/assets/res_frigate.glb',
+};
+const _BIO_CELL_GLB  = '/client/assets/bio_cell.glb';
+const _STATION_GLB   = '/client/assets/station.glb';
+const _CITY_GLB = {
+  S: '/client/assets/city_small.glb',
+  M: '/client/assets/city_medium.glb',
+  L: '/client/assets/city_large.glb',
+};
+// Cached normalised templates (scale/position set so longest bbox dim = 14)
+let _glbModels   = {}; // faction → cruiser GLB
+let _glbFrigates = {}; // faction → frigate GLB
+let _glbBioCell  = null;
+let _glbCities   = {}; // S/M/L → city GLB
+let _glbStation  = null; // single station template, scaled per S/M/L at placement
+
 function _3dShipRotY(headingDeg) {
   const r = headingDeg * Math.PI / 180;
   return Math.atan2(-Math.cos(r), -Math.sin(r));
+}
+
+// ─── 3D INTERACTION HELPERS ──────────────────────────────────────────────────
+
+// Convert a pointer event to normalised device coords (-1..1) for the 3D canvas.
+function _3dNDC(e) {
+  const canvas = _3d.renderer.domElement;
+  const rect = canvas.getBoundingClientRect();
+  return new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width)  *  2 - 1,
+    ((e.clientY - rect.top)  / rect.height) * -2 + 1
+  );
+}
+
+// Project a pointer event onto a horizontal plane at world Y = planeY.
+// Returns board coords {x, y} (0-576) or null if the ray misses the plane.
+function _3dProjectToPlane(e, planeY) {
+  if (!_3d) return null;
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(_3dNDC(e), _3d.camera);
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY);
+  const hit = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(plane, hit)) return null;
+  return { x: Math.max(0, Math.min(576, hit.x + 288)), y: Math.max(0, Math.min(576, hit.z + 288)) };
+}
+
+// Raycast against all ship meshes; return hit info or null.
+// Optional filterFn({gid, si, mesh}) can restrict candidates.
+function _3dHitShip(e, filterFn) {
+  if (!_3d || !_3dShipMeshes.length) return null;
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(_3dNDC(e), _3d.camera);
+  const candidates = filterFn ? _3dShipMeshes.filter(filterFn) : _3dShipMeshes;
+  const meshes = candidates.map(m => m.mesh);
+  const hits = raycaster.intersectObjects(meshes, true);
+  if (!hits.length) return null;
+  // Walk up to the tagged ancestor
+  let obj = hits[0].object;
+  while (obj && !obj.userData.gid) obj = obj.parent;
+  if (!obj) return null;
+  const { gid, si: siStr } = obj.userData;
+  const si = parseInt(siStr);
+  const grp = state.groups[gid];
+  if (!grp) return null;
+  const ship = grp.ships[si];
+  if (!ship || ship.destroyed || ship.offTable) return null;
+  return { gid, si, ship, grp, def: getDef(gid) };
+}
+
+// ─── 3D CLICK HANDLER ────────────────────────────────────────────────────────
+
+function _handle3dClick(e) {
+  if (state.phase === 'setup') return;
+
+  // Browse-only when it is not our turn
+  if (!netIsMyTurn()) {
+    const hit = _3dHitShip(e);
+    if (hit) {
+      if (state.selectedGroupId !== hit.gid) { state.selectedGroupId = hit.gid; arcViewMode = 1; }
+      state.selectedShipIdx = hit.si;
+      state.selectedDropsiteId = null;
+      state.hoverPoint = null;
+      state.layerToggle = false;
+      state.launching = null;
+      state.extracting = null;
+      renderAll(true);
+      netSendPeerView();
+    }
+    return;
+  }
+
+  // Aiming / vectored second move
+  if (state.aiming || state.vectoredSecondMove) {
+    if (state.aiming) {
+      const a = state.aiming;
+      const ag = state.groups[a.gid];
+      const aship = ag && ag.ships[a.si];
+      if (!aship) { state.aiming = null; return; }
+      const layerY = _3D_LAYER_Y[aship.layer] ?? 120;
+      const pt = _3dProjectToPlane(e, layerY);
+      if (!pt) return;
+      if (a.mode === 'deploy') {
+        const finalX = aship.x, finalY = aship.y;
+        const heading = headingToward(finalX, finalY, pt.x, pt.y);
+        state.aiming = null; state.hoverPoint = null;
+        if (state.phase === 'deploy') {
+          aship.offTable = true; aship.x = undefined; aship.y = undefined;
+          aship.heading = undefined; aship.deployedRound = undefined;
+          dispatch({ type: 'deployShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
+        } else {
+          dispatch({ type: 'arriveShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
+          renderAll();
+        }
+      } else {
+        dispatch({ type: 'aimShip', gid: a.gid, x: pt.x, y: pt.y });
+        state.aiming = null; renderAll();
+      }
+    } else {
+      const grp = state.groups[state.selectedGroupId];
+      const ship = grp && grp.ships[state.selectedShipIdx];
+      const layerY = ship ? (_3D_LAYER_Y[ship.layer] ?? 120) : 120;
+      const pt = _3dProjectToPlane(e, layerY);
+      if (!pt) return;
+      dispatch({ type: 'vectoredMove', gid: state.selectedGroupId, si: state.selectedShipIdx, x: pt.x, y: pt.y });
+    }
+    return;
+  }
+
+  // Weapon targeting
+  if (state.targeting) {
+    const t = state.targeting;
+    const aDef = getDef(t.gid);
+    const aGrp = state.groups[t.gid];
+    const aShip = aGrp && aGrp.ships[t.si];
+    const w = aDef && aDef.weapons[t.wi];
+    if (!aShip || !w) { state.targeting = null; renderAll(true); return; }
+    if (/Bombardment/i.test(w.special || '')) {
+      const pt = _3dProjectToPlane(e, 0);
+      if (!pt) return;
+      const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
+      let nearestDs = null, nearestD = Infinity;
+      dss.forEach(ds => {
+        const d = Math.hypot(inchToPx(ds.x) - pt.x, inchToPx(ds.y) - pt.y);
+        if (d < nearestD) { nearestD = d; nearestDs = ds; }
+      });
+      if (nearestDs && nearestD <= 2.5 * INCH) {
+        dispatch({ type: 'lockBombardmentTarget', gid: t.gid, si: t.si, wi: t.wi, dsId: nearestDs.id });
+        state.targeting = null;
+        flashLaunchMsg(`${w.name} → ${nearestDs.base.name}`, true);
+      } else { flashLaunchMsg('Click a Dropsite to bombard'); }
+      renderAll(); return;
+    }
+    const hit = _3dHitShip(e, m => getDef(m.gid) && getDef(m.gid).side !== aDef.side);
+    if (!hit) { flashLaunchMsg('Click an enemy ship'); return; }
+    const originShip = firingOriginShip(aDef, aGrp, t.si);
+    if (!weaponCanTarget(aDef, originShip, w, hit.def, hit.ship, hit.grp)) {
+      flashLaunchMsg('Target not in arc / range / layer'); return;
+    }
+    dispatch({ type: 'lockWeaponTarget', gid: t.gid, si: t.si, wi: t.wi, targetGid: hit.gid, targetSi: hit.si });
+    state.targeting = null;
+    flashLaunchMsg(`${w.name} → ${hit.def.name}`, true);
+    return;
+  }
+
+  // Asset launch — point-target types (fighters/bombers/torpedoes/mines/fireshops).
+  // Complex gate-dropship launches fall back to panel UI.
+  if (state.launching && !state.launching.fromDropsite) {
+    const L = state.launching;
+    const meta = launchMeta(L.type);
+    if (meta && meta.target === 'point') {
+      const ship = state.groups[L.gid] && state.groups[L.gid].ships[L.si];
+      if (!ship || ship.destroyed || ship.offTable) { state.launching = null; renderAll(); return; }
+      const pt = _3dProjectToPlane(e, _3D_LAYER_Y.orbit);
+      if (!pt) return;
+      if (Math.hypot(pt.x - ship.x, pt.y - ship.y) > L.auraIn * INCH + 2) { flashLaunchMsg('Out of range'); return; }
+      let count, kind, kindLabel;
+      if (L.type === 'fireship') {
+        count = L.fireships || 0; kind = 'fireship'; kindLabel = 'Fire Ship';
+        if (count <= 0) { flashLaunchMsg('Set Fire Ships first'); return; }
+      } else if (L.type === 'torpedo' || L.type === 'mine') {
+        count = L.assetCount || 1; kind = L.type; kindLabel = L.type === 'torpedo' ? 'Torpedo' : 'Mine';
+      } else {
+        const f = L.fighters || 0, b = L.bombers || 0;
+        count = f > 0 ? f : b; kind = f > 0 ? 'fighter' : (b > 0 ? 'bomber' : null);
+        kindLabel = kind === 'fighter' ? 'Fighter' : 'Bomber';
+        if (!kind || count <= 0) { flashLaunchMsg('Set Fighters or Bombers first'); return; }
+      }
+      flashLaunchMsg(`Launched ${count} ${kindLabel}${count > 1 ? 's' : ''}`, true);
+      dispatch({ type: 'launchAsset', gid: L.gid, si: L.si, li: L.li, kind, count, x: pt.x, y: pt.y });
+      return;
+    }
+  }
+
+  // Ship selection
+  const hit = _3dHitShip(e);
+  if (hit) {
+    if (!_netSide) {
+      if (state.phase === 'deploy' && !deploySideAllowed(hit.def.side)) {
+        const active = !state.deployDone.player1 ? 'player1' : 'player2';
+        flashLaunchMsg(`${playerNameForSide(active)} deploys first`); return;
+      }
+      if (state.phase === 'play' && state.activeSide && hit.def.side !== state.activeSide) {
+        flashLaunchMsg(`${playerNameForSide(state.activeSide)}'s turn to activate`); return;
+      }
+    }
+    if (state.phase === 'play' && state.selectedGroupId !== hit.gid) {
+      const isMyGroup = !_netSide || hit.def.side === _netSide;
+      if (isMyGroup && !hit.grp.activated) {
+        const lockGid = activeGroupIdForSide(hit.def.side);
+        if (lockGid && lockGid !== hit.gid) { flashLaunchMsg('Finish the current activation first'); return; }
+      }
+    }
+    if (state.selectedGroupId !== hit.gid) { state.selectedGroupId = hit.gid; arcViewMode = 1; }
+    state.selectedShipIdx = hit.si;
+    state.selectedDropsiteId = null;
+    state.hoverPoint = null;
+    state.layerToggle = false;
+    state.launching = null;
+    state.extracting = null;
+    if (state.phase === 'deploy') {
+      const rdShip = hit.grp.ships[hit.si];
+      state.redeployingShip = (rdShip && !rdShip.offTable && deploySideAllowed(hit.def.side))
+        ? { gid: hit.gid, si: hit.si } : null;
+    } else { state.redeployingShip = null; }
+    renderAll(true);
+    netSendPeerView();
+    return;
+  }
+
+  // Dropsite selection — project onto orbit (station) or ground (city) plane and pick nearest
+  if (state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
+    const dss = state.scenarioData.dropsites;
+    let bestDs = null, bestDist = Infinity;
+    const HIT_PX = 4 * INCH; // generous click radius
+    // Check orbit dropsites (stations)
+    const ptOrbit = _3dProjectToPlane(e, _3D_LAYER_Y.orbit);
+    if (ptOrbit) {
+      dss.forEach(ds => {
+        if (DROPSITE_BASE[ds.type]?.category !== 'station') return;
+        const d = Math.hypot(inchToPx(ds.x) - ptOrbit.x, inchToPx(ds.y) - ptOrbit.y);
+        if (d < HIT_PX && d < bestDist) { bestDist = d; bestDs = ds; }
+      });
+    }
+    // Check ground dropsites (cities)
+    const ptGround = _3dProjectToPlane(e, 0);
+    if (ptGround) {
+      dss.forEach(ds => {
+        if (DROPSITE_BASE[ds.type]?.category === 'station') return;
+        const d = Math.hypot(inchToPx(ds.x) - ptGround.x, inchToPx(ds.y) - ptGround.y);
+        if (d < HIT_PX && d < bestDist) { bestDist = d; bestDs = ds; }
+      });
+    }
+    if (bestDs) {
+      const did = bestDs.id;
+      const isActivating = state.dropsiteActivation && state.dropsiteActivation.dsId === did;
+      state.selectedDropsiteId = (state.selectedDropsiteId === did && !isActivating) ? null : did;
+      state.selectedGroupId = null;
+      state.selectedShipIdx = null;
+      state.hoverPoint = null;
+      renderAll(true);
+      return;
+    }
+  }
+
+  // Deploy phase: place next off-table ship onto the orbit layer
+  if (state.phase === 'deploy' && state.selectedGroupId) {
+    const _dpDef = getDef(state.selectedGroupId);
+    const _dpIdx = _dpDef ? nextUndeployedShipIdx(state.selectedGroupId) : -1;
+    if (_dpIdx >= 0) {
+      if (!deploySideAllowed(_dpDef.side)) {
+        const _dpActive = !state.deployDone.player1 ? 'player1' : 'player2';
+        flashLaunchMsg(`${playerNameForSide(_dpActive)} deploys first`);
+        return;
+      }
+      const _dpPt = _3dProjectToPlane(e, _3D_LAYER_Y.orbit);
+      if (!_dpPt) return;
+      const _dpDep = DEPLOYMENTS[state.scenario?.deployment];
+      const _dpZoneName = state.deployZone?.[_dpDef.side] || (_dpDef.side === 'player1' ? 'south' : 'north');
+      const _dpZone = _dpDep?.zones?.[_dpZoneName];
+      if (_dpZone && !isInZone(_dpPt.x / INCH, _dpPt.y / INCH, _dpZone)) {
+        flashLaunchMsg('Click within your deployment zone');
+        return;
+      }
+      const _dpSnap = _dpZone ? (snapToEdgeLineTangent(_dpZone, _dpPt, _dpDef) || _dpPt) : _dpPt;
+      const _dpShip = state.groups[state.selectedGroupId].ships[_dpIdx];
+      _dpShip.x = _dpSnap.x; _dpShip.y = _dpSnap.y;
+      _dpShip.heading = _dpDef.side === 'player1' ? -90 : 90;
+      _dpShip.offTable = false;
+      _dpShip.deployedRound = state.round;
+      state.selectedShipIdx = _dpIdx;
+      state.hoverPoint = null;
+      state.aiming = { gid: state.selectedGroupId, si: _dpIdx, mode: 'deploy' };
+      renderAll(true);
+      return;
+    }
+    // All ships in group deployed — fall through to redeploy / ship-selection handling
+  }
+
+  // Play phase: place next off-table ship onto the orbit layer (arrival)
+  if (state.phase === 'play' && state.selectedGroupId) {
+    const _arDef = getDef(state.selectedGroupId);
+    const _arGrp = state.groups[state.selectedGroupId];
+    const _arIdx = _arDef ? nextUndeployedShipIdx(state.selectedGroupId) : -1;
+    if (_arIdx >= 0 && _arGrp && !_arGrp.activated) {
+      const _arElig = canActivateOffTable(_arDef);
+      if (!_arElig?.eligible) {
+        flashLaunchMsg(_arElig?.reason || 'Cannot arrive this round');
+        return;
+      }
+      const _arPt = _3dProjectToPlane(e, _3D_LAYER_Y.orbit);
+      if (!_arPt) return;
+      const _arDep = DEPLOYMENTS[state.scenario?.deployment];
+      const _arZoneName = state.deployZone?.[_arDef.side] || (_arDef.side === 'player1' ? 'south' : 'north');
+      const _arZone = _arDep?.zones?.[_arZoneName];
+      if (_arZone && !isInZone(_arPt.x / INCH, _arPt.y / INCH, _arZone)) {
+        flashLaunchMsg('Click within your deployment zone');
+        return;
+      }
+      const _arSnap = _arZone ? (snapToEdgeLineTangent(_arZone, _arPt, _arDef) || _arPt) : _arPt;
+      const _arShip = _arGrp.ships[_arIdx];
+      _arShip.x = _arSnap.x; _arShip.y = _arSnap.y;
+      _arShip.offTable = false;
+      _arShip.justArrived = true;
+      _arShip.deployedRound = state.round;
+      _arShip.heading = _arDef.side === 'player1' ? -90 : 90;
+      state.selectedShipIdx = _arIdx;
+      state.deployingGroup = state.selectedGroupId;
+      state.hoverPoint = null;
+      state.aiming = { gid: state.selectedGroupId, si: _arIdx, mode: 'deploy' };
+      renderAll(true);
+      return;
+    }
+  }
+
+  // Board click → move / redeploy the selected ship
+  if (state.selectedGroupId === null || state.selectedShipIdx === null) return;
+  const selGrp = state.groups[state.selectedGroupId];
+  const selShip = selGrp && selGrp.ships[state.selectedShipIdx];
+  if (!selShip || selShip.destroyed || selShip.offTable) return;
+  const layerY = _3D_LAYER_Y[selShip.layer] ?? 120;
+  const pt = _3dProjectToPlane(e, layerY);
+  if (!pt) return;
+  if (state.phase === 'deploy') {
+    const selDef = getDef(state.selectedGroupId);
+    if (!deploySideAllowed(selDef.side)) return;
+    selShip.x = pt.x; selShip.y = pt.y;
+    selShip.heading = selDef.side === 'player1' ? -90 : 90;
+    state.aiming = { gid: state.selectedGroupId, si: state.selectedShipIdx, mode: 'deploy' };
+    renderAll(true);
+    return;
+  }
+  if (state.phase === 'play' && !selGrp.activated) {
+    dispatch({ type: 'moveShip', gid: state.selectedGroupId, si: state.selectedShipIdx, x: pt.x, y: pt.y, layerToggle: state.layerToggle });
+  }
+}
+
+// ─── 3D MOUSEMOVE HANDLER ────────────────────────────────────────────────────
+
+function _handle3dMousemove(e) {
+  // Aiming: rotate selected ship to face cursor live
+  if (state.aiming) {
+    const a = state.aiming;
+    const ag = state.groups[a.gid];
+    const aship = ag && ag.ships[a.si];
+    if (!aship) return;
+    const pt = _3dProjectToPlane(e, _3D_LAYER_Y[aship.layer] ?? 120);
+    if (!pt) return;
+    const desired = headingToward(aship.x, aship.y, pt.x, pt.y);
+    aship.heading = (a.mode === 'deploy') ? desired : clampHeading(a.originHeading, desired, 45);
+    sync3d();
+    return;
+  }
+
+  // Deploy/arrival hover: show ghost preview of next off-table ship at cursor position
+  if ((state.phase === 'deploy' || state.phase === 'play') && state.selectedGroupId) {
+    const _dhDef = getDef(state.selectedGroupId);
+    const _dhGrp = state.groups[state.selectedGroupId];
+    const _dhIdx = _dhDef ? nextUndeployedShipIdx(state.selectedGroupId) : -1;
+    const _dhOk = _dhIdx >= 0 && (
+      state.phase === 'deploy'
+        ? (_dhDef && deploySideAllowed(_dhDef.side))
+        : (_dhGrp && !_dhGrp.activated && canActivateOffTable(_dhDef)?.eligible)
+    );
+    if (_dhOk) {
+      const pt = _3dProjectToPlane(e, _3D_LAYER_Y.orbit);
+      if (pt) { state.hoverPoint = pt; sync3d(); }
+      else if (state.hoverPoint) { state.hoverPoint = null; sync3d(); }
+      return;
+    }
+  }
+
+  // Hover ghost: show move-preview at cursor position
+  if (state.selectedGroupId === null || state.selectedShipIdx === null) {
+    if (state.hoverPoint) { state.hoverPoint = null; sync3d(); }
+    return;
+  }
+  const grp = state.groups[state.selectedGroupId];
+  const defMM = getDef(state.selectedGroupId);
+  const ordMM = grp && effectiveOrder(defMM, grp, state.selectedShipIdx);
+  if (!grp || grp.activated || !ordMM || ORDERS[ordMM].moveMax <= 0) {
+    if (state.hoverPoint) { state.hoverPoint = null; sync3d(); }
+    return;
+  }
+  const ship = grp.ships[state.selectedShipIdx];
+  const targetLayer = state.layerToggle
+    ? (ship.layer === 'orbit' ? 'atmosphere' : 'orbit')
+    : ship.layer;
+  const pt = _3dProjectToPlane(e, _3D_LAYER_Y[targetLayer] ?? 120);
+  if (!pt) return;
+  state.hoverPoint = pt;
+  sync3d();
 }
 
 function init3d() {
@@ -6370,6 +6874,8 @@ function init3d() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setClearColor(0x050a0d);
   renderer.localClippingEnabled = true;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x050a0d, 0.00045);
@@ -6387,15 +6893,15 @@ function init3d() {
   controls.maxPolarAngle = Math.PI * 0.48;
   controls.update();
 
-  // Lighting
-  // Hemisphere: deep-space sky above, void below — gives everything a subtle directional tint
-  scene.add(new THREE.HemisphereLight(0x0a1a30, 0x020508, 0.55));
-  // Primary sun — warm, strong, raking across the scene from upper-front-right
-  const sun = new THREE.DirectionalLight(0xfff6e0, 1.5);
+  // Lighting — low ambient + strong key gives deep shading on PBR model faces
+  // Hemisphere kept very dim so unlit faces go dark rather than being filled in
+  scene.add(new THREE.HemisphereLight(0x0a1a30, 0x020508, 0.12));
+  // Primary sun — warm, raking from upper-front-right; high intensity for sharp lit/shadow contrast
+  const sun = new THREE.DirectionalLight(0xfff6e0, 3.0);
   sun.position.set(350, 500, 250);
   scene.add(sun);
-  // Cool blue rim from behind-below — silhouette pop against the darkness
-  const rim = new THREE.DirectionalLight(0x1a40a0, 0.4);
+  // Cool blue rim from behind-below — silhouette separation against the darkness
+  const rim = new THREE.DirectionalLight(0x2050c0, 0.8);
   rim.position.set(-250, -80, -350);
   scene.add(rim);
 
@@ -6456,6 +6962,22 @@ function init3d() {
   ro.observe(wrap);
 
   _3d = { renderer, scene, camera, controls, dyn, animId, ro };
+
+  // Interaction: disambiguate click from OrbitControls drag by checking pointer delta.
+  let _pdPos = null;
+  canvas.addEventListener('pointerdown', e => { _pdPos = { x: e.clientX, y: e.clientY }; });
+  canvas.addEventListener('pointerup', e => {
+    if (!_pdPos) return;
+    const dx = e.clientX - _pdPos.x, dy = e.clientY - _pdPos.y;
+    _pdPos = null;
+    if (Math.hypot(dx, dy) < 5) _handle3dClick(e);
+  });
+  canvas.addEventListener('pointermove', _handle3dMousemove);
+  canvas.addEventListener('pointerleave', () => {
+    if (state.hoverPoint) { state.hoverPoint = null; sync3d(); }
+  });
+
+  _loadGlbModels();
   sync3d();
 }
 
@@ -6468,19 +6990,592 @@ function teardown3d() {
   _3d = null;
 }
 
+// Recursively dispose all geometries and materials in an Object3D subtree.
+function _disposeObj3d(obj) {
+  obj.traverse(child => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+      else child.material.dispose();
+    }
+  });
+}
+
+// Wrap a loaded GLB scene so its yaw correction lives on an inner Group.
+// The outer Group's rotation.y stays free for per-ship heading direction —
+// without this the heading assignment in _sync3dShips would overwrite the yaw.
+// Returns the outer Group, normalised so the longest bbox dim = 14 and the
+// bbox centre is at the local origin.
+function _normaliseGlb(gltfScene, yaw) {
+  const inner = new THREE.Group();
+  inner.rotation.y = yaw || 0;
+  inner.add(gltfScene);
+
+  const outer = new THREE.Group();
+  outer.add(inner);
+
+  const box    = new THREE.Box3().setFromObject(outer);
+  const center = new THREE.Vector3();
+  const size   = new THREE.Vector3();
+  box.getCenter(center);
+  box.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  if (maxDim > 0) {
+    const s = 14 / maxDim;
+    outer.scale.setScalar(s);
+    outer.position.copy(center).multiplyScalar(-s);
+  }
+  return outer;
+}
+
+// Normalise a city GLB: scale to targetFootprint, centre in XZ, and ground-pin
+// so the bottom of the geometry sits at y=0 (same formula as XZ centering but
+// using min rather than midpoint).
+function _normaliseGlbCity(gltfScene, targetFootprint) {
+  const outer = new THREE.Group();
+  outer.add(gltfScene);
+  outer.updateMatrixWorld(true);
+
+  const box  = new THREE.Box3().setFromObject(outer);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+
+  const footprint = Math.max(size.x, size.z);
+  if (footprint > 0) {
+    const s = targetFootprint / footprint;
+    outer.scale.setScalar(s);
+    outer.position.x = -(box.min.x + box.max.x) / 2 * s;
+    outer.position.z = -(box.min.z + box.max.z) / 2 * s;
+    outer.position.y = -box.min.y * s;
+  }
+  return outer;
+}
+
+// Load all faction GLBs (cruisers, frigates, bio cell) and cache normalised templates.
+function _loadGlbModels() {
+  const loader = new GLTFLoader();
+
+  // Cruisers (M / H / SH tonnage)
+  Object.entries(_FACTION_GLB).forEach(([faction, url]) => {
+    loader.load(url, gltf => {
+      _glbModels[faction] = _normaliseGlb(gltf.scene, _FACTION_GLB_YAW[faction] || 0);
+      if (_view3d && _3d) sync3d();
+    }, undefined, err => console.warn(`[3D] cruiser GLB failed (${faction}):`, err));
+  });
+
+  // Frigates (L tonnage, non-cell)
+  Object.entries(_FACTION_GLB_FRIGATE).forEach(([faction, url]) => {
+    loader.load(url, gltf => {
+      _glbFrigates[faction] = _normaliseGlb(gltf.scene, _FACTION_GLB_YAW[faction] || 0);
+      if (_view3d && _3d) sync3d();
+    }, undefined, err => console.warn(`[3D] frigate GLB failed (${faction}):`, err));
+  });
+
+  // Bioficer cell
+  loader.load(_BIO_CELL_GLB, gltf => {
+    _glbBioCell = _normaliseGlb(gltf.scene, _FACTION_GLB_YAW['bioficer'] || 0);
+    if (_view3d && _3d) sync3d();
+  }, undefined, err => console.warn('[3D] bio_cell GLB failed:', err));
+
+  // City dropsites — all normalised to the same footprint so S/M/L keep their
+  // natural relative size instead of being independently rescaled.
+  const _CITY_FOOTPRINT = 55;
+  Object.entries(_CITY_GLB).forEach(([sk, url]) => {
+    loader.load(url, gltf => {
+      _glbCities[sk] = _normaliseGlbCity(gltf.scene, _CITY_FOOTPRINT);
+      if (_view3d && _3d) sync3d();
+    }, undefined, err => console.warn(`[3D] city GLB failed (${sk}):`, err));
+  });
+
+  // Station — normalise to 28 units (longest dim) centered at origin; caller
+  // scales by 1.0 / 0.68 / 0.45 for L / M / S at placement time.
+  loader.load(_STATION_GLB, gltf => {
+    const outer = new THREE.Group();
+    outer.add(gltf.scene);
+    outer.updateMatrixWorld(true);
+    const box    = new THREE.Box3().setFromObject(outer);
+    const center = new THREE.Vector3();
+    const size   = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (maxDim > 0) {
+      const s = 28 / maxDim;
+      outer.scale.setScalar(s);
+      outer.position.copy(center).multiplyScalar(-s);
+      // Disc sits in the upper portion of the model; bbox centre is in the pylon.
+      // Drop the station by ~55% of the normalised half-height so the disc
+      // intersects the orbital plane instead of floating above it.
+      _3D_STATION_Y_DROP = (size.y * s / 2) * 0.80;
+    }
+    _glbStation = outer;
+    if (_view3d && _3d) sync3d();
+  }, undefined, err => console.warn('[3D] station GLB failed:', err));
+}
+
+// Apply a grey/blue-grey palette to a city or station GLB clone.
+// Each mesh gets a tone from a deterministic sequence; dead models are charred.
+function _tintGlbScenery(clone, dead) {
+  const LIVE_PALETTE = [
+    0xd0d8e0,  // near-white
+    0x8898aa,  // mid blue-grey
+    0xc0ccd8,  // light steel
+    0x50667a,  // deep slate
+    0xa0b4c4,  // sky grey
+    0x38485a,  // dark navy-grey
+  ];
+  const DEAD_PALETTE = [0x2a1a10, 0x1c1208, 0x3a2010, 0x241408];
+  const palette = dead ? DEAD_PALETTE : LIVE_PALETTE;
+  let idx = 0;
+  clone.traverse(child => {
+    if (!child.isMesh) return;
+    const col = palette[idx % palette.length];
+    idx++;
+    const applyTone = m => {
+      const nm = m.clone();
+      if (nm.color) nm.color.setHex(col);
+      if (nm.emissive !== undefined) {
+        nm.emissive.setHex(dead ? 0x200800 : 0x0a1e32);
+        nm.emissiveIntensity = dead ? 0.4 : 0.12;
+      }
+      return nm;
+    };
+    child.material = Array.isArray(child.material)
+      ? child.material.map(applyTone)
+      : applyTone(child.material);
+  });
+}
+
+// Clone a cached GLB ship, scale to tonnage, and paint in varied tones of the
+// player colour — three alternating tones (main / light / dark) so different
+// hull sections read as belonging to the same faction without being flat.
+function _cloneGlbShip(template, tonnage, playerColorHex) {
+  const model = template.clone(true);
+  const t     = (_3D_SHIP_DIMS[tonnage] || _3D_SHIP_DIMS['M'])[0] / 14;
+  model.scale.multiplyScalar(t);
+  model.position.multiplyScalar(t);
+
+  const pr = ((playerColorHex >> 16) & 0xff) / 255;
+  const pg = ((playerColorHex >>  8) & 0xff) / 255;
+  const pb = ( playerColorHex        & 0xff) / 255;
+
+  let meshIdx = 0;
+  model.traverse(child => {
+    if (!child.isMesh) return;
+    const tone = meshIdx++ % 3;
+    // 0 = main hull (70 % brightness), 1 = secondary (light blend), 2 = accent (dark)
+    const [cr, cg, cb] = tone === 0
+      ? [pr * 0.70,          pg * 0.70,          pb * 0.70         ]
+      : tone === 1
+      ? [pr * 0.40 + 0.32,   pg * 0.40 + 0.32,   pb * 0.40 + 0.32 ]
+      : [pr * 0.25,          pg * 0.25,           pb * 0.25        ];
+    const tintMat = m => {
+      const nm = m.clone();
+      if (nm.color)    nm.color.setRGB(cr, cg, cb);
+      if (nm.emissive !== undefined) {
+        nm.emissive.setRGB(pr * 0.22, pg * 0.22, pb * 0.22);
+        nm.emissiveIntensity = 0.65;
+      }
+      return nm;
+    };
+    child.material = Array.isArray(child.material)
+      ? child.material.map(tintMat)
+      : tintMat(child.material);
+  });
+  return model;
+}
+
+// ─── 3D DEPLOY ZONES ─────────────────────────────────────────────────────────
+
+function _3dRenderDeployZones(group) {
+  if (!state.scenario) return;
+  if (state.phase !== 'deploy') {
+    // Also show during play when the selected group has off-table ships eligible to arrive.
+    if (state.phase !== 'play' || !state.selectedGroupId) return;
+    const _rzDef = getDef(state.selectedGroupId);
+    const _rzGrp = state.groups[state.selectedGroupId];
+    if (!_rzDef || !_rzGrp || _rzGrp.activated) return;
+    if (!_rzGrp.ships.some(s => !s.destroyed && s.offTable && !s.attachedTo)) return;
+    if (!canActivateOffTable(_rzDef)?.eligible) return;
+  }
+  const dep = DEPLOYMENTS[state.scenario.deployment];
+  if (!dep) return;
+  const dz = state.deployZone || { player1: 'south', player2: 'north' };
+  const northSide = dz.player1 === 'north' ? 'player1' : 'player2';
+  const southSide = dz.player1 === 'south' ? 'player1' : 'player2';
+  const OY = _3D_LAYER_Y.orbit;
+
+  // Board inch → world unit (board is 576px wide, centred at 0)
+  const iw = (inch) => inch * INCH - 288;
+
+  const addZone = (zone, colorHex) => {
+    const fillMat = new THREE.MeshBasicMaterial({
+      color: colorHex, transparent: true, opacity: 0.10,
+      side: THREE.DoubleSide, depthWrite: false
+    });
+    const dashMat = new THREE.LineDashedMaterial({
+      color: colorHex, transparent: true, opacity: 0.75, dashSize: 10, gapSize: 6
+    });
+
+    // Emit a filled flat shape + dashed outline at OY.
+    // Shape coords are in (worldX, worldZ) — ShapeGeometry lives in XY then rotateX(π/2)→XZ.
+    const emitShape = (shape) => {
+      const geo = new THREE.ShapeGeometry(shape);
+      geo.rotateX(Math.PI / 2);
+      geo.translate(0, OY, 0);
+      group.add(new THREE.Mesh(geo, fillMat.clone()));
+      const pts = shape.getPoints(64).map(p => new THREE.Vector3(p.x, OY, p.y));
+      pts.push(pts[0].clone());
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), dashMat.clone());
+      line.computeLineDistances();
+      group.add(line);
+    };
+
+    if (zone.edgeLines) {
+      // Edge-contact zone: draw thick bright lines along the board edge.
+      zone.edgeLines.forEach(seg => {
+        const pts = [
+          new THREE.Vector3(iw(seg.x1), OY, iw(seg.y1)),
+          new THREE.Vector3(iw(seg.x2), OY, iw(seg.y2)),
+        ];
+        group.add(new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: 0.90 })
+        ));
+        // Glow halo
+        group.add(new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: 0.25 })
+        ));
+      });
+    }
+
+    if (zone.polygon) {
+      emitShape(new THREE.Shape(zone.polygon.map(p => new THREE.Vector2(iw(p.x), iw(p.y)))));
+    }
+
+    if (zone.circle) {
+      const c = zone.circle;
+      const shape = new THREE.Shape();
+      shape.absarc(iw(c.cx), iw(c.cy), c.r * INCH, 0, Math.PI * 2, false);
+      emitShape(shape);
+    }
+
+    if (zone.circleQuad) {
+      const c = zone.circleQuad;
+      const cx = iw(c.cx), cz = iw(c.cy), r = c.r * INCH;
+      // Map SVG quad names to (startAngle, endAngle) in XZ plane.
+      // SVG y-down aligns with 3D +Z, so quadrant mapping is direct.
+      const qa = { br: [0, Math.PI/2], tl: [Math.PI, 3*Math.PI/2], tr: [-Math.PI/2, 0], bl: [Math.PI/2, Math.PI] }[c.quad] || [0, Math.PI/2];
+      const shape = new THREE.Shape();
+      shape.moveTo(cx, cz);
+      const N = 32;
+      for (let i = 0; i <= N; i++) {
+        const a = qa[0] + (qa[1] - qa[0]) * i / N;
+        shape.lineTo(cx + Math.cos(a) * r, cz + Math.sin(a) * r);
+      }
+      shape.closePath();
+      emitShape(shape);
+    }
+
+    if (zone.edgeSemicircle) {
+      const c = zone.edgeSemicircle;
+      const cx = iw(c.cx), cz = iw(c.cy), r = c.r * INCH;
+      // Arc sweeps inward from the edge: top→south(+Z), bottom→north(-Z), left→east(+X), right→west(-X)
+      const [a0, a1] = { top: [0, Math.PI], bottom: [Math.PI, 2*Math.PI], left: [-Math.PI/2, Math.PI/2], right: [Math.PI/2, 3*Math.PI/2] }[c.edge] || [0, Math.PI];
+      const shape = new THREE.Shape();
+      const N = 32;
+      shape.moveTo(cx + Math.cos(a0) * r, cz + Math.sin(a0) * r);
+      for (let i = 1; i <= N; i++) {
+        const a = a0 + (a1 - a0) * i / N;
+        shape.lineTo(cx + Math.cos(a) * r, cz + Math.sin(a) * r);
+      }
+      shape.closePath();
+      emitShape(shape);
+    }
+
+    if (zone.corners) {
+      zone.corners.forEach(c => addZone({ circleQuad: c }, colorHex));
+    }
+  };
+
+  addZone(dep.zones.north, _3dSideColor(northSide));
+  addZone(dep.zones.south, _3dSideColor(southSide));
+}
+
+// ─── 3D OVERLAY HELPERS ──────────────────────────────────────────────────────
+
+// Build a dashed ring (circle) lying flat at world Y = y.
+function _3dDashedCircle(cx, cz, r, y, color, opacity, dashSize, gapSize) {
+  const segs = Math.max(48, Math.ceil(r * 0.6));
+  const pts = [];
+  for (let i = 0; i <= segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    pts.push(new THREE.Vector3(cx + Math.cos(a) * r, y, cz + Math.sin(a) * r));
+  }
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineDashedMaterial({ color, transparent: true, opacity, dashSize, gapSize })
+  );
+  line.computeLineDistances();
+  return line;
+}
+
+// Render weapon arc wedge(s) for one weapon onto group at world Y = wy.
+// dimFactor scales fill/outline opacity for mode-2 enemy arcs.
+function _sync3dWeaponArc(group, ship, def, w, wy, dimFactor = 1) {
+  const r   = def.scan * INCH;
+  const cx  = ship.x - 288, cz = ship.y - 288;
+  const h   = ship.heading;
+
+  const ARC_STYLE = {
+    F:  { fill: 0x4ad6ff, fo: 0.18, stroke: 0x4488ff, so: 0.55 },
+    R:  { fill: 0x7a8a94, fo: 0.12, stroke: 0x7a8a94, so: 0.40 },
+    S:  { fill: 0x7a8a94, fo: 0.15, stroke: 0x7a8a94, so: 0.40 },
+    FN: { fill: 0xffb547, fo: 0.30, stroke: 0xffb547, so: 0.65 },
+    RN: { fill: 0xffb547, fo: 0.30, stroke: 0xffb547, so: 0.65 },
+    B:  { fill: 0x7a8a94, fo: 0.15, stroke: 0x7a8a94, so: 0.40 },
+  };
+
+  function addWedge(centreOffset, halfWidth, key) {
+    const st = ARC_STYLE[key] || ARC_STYLE.S;
+    const a1 = (h + centreOffset - halfWidth) * Math.PI / 180;
+    const a2 = (h + centreOffset + halfWidth) * Math.PI / 180;
+    const steps = Math.max(8, Math.ceil(Math.abs(a2 - a1) * 16));
+
+    // Filled shape — defined in XY with shape X = world X, shape Y = world Z;
+    // rotateX(PI/2) lays it flat, then translate up to wy.
+    const shape = new THREE.Shape();
+    shape.moveTo(cx, cz);
+    for (let i = 0; i <= steps; i++) {
+      const a = a1 + (a2 - a1) * i / steps;
+      shape.lineTo(cx + Math.cos(a) * r, cz + Math.sin(a) * r);
+    }
+    shape.closePath();
+    const fillGeo = new THREE.ShapeGeometry(shape, steps);
+    fillGeo.rotateX(Math.PI / 2);
+    fillGeo.translate(0, wy, 0);
+    group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({
+      color: st.fill, transparent: true, opacity: st.fo * dimFactor, side: THREE.DoubleSide, depthWrite: false
+    })));
+
+    // Outline: center → arc → back to center
+    const outPts = [new THREE.Vector3(cx, wy, cz)];
+    for (let i = 0; i <= steps; i++) {
+      const a = a1 + (a2 - a1) * i / steps;
+      outPts.push(new THREE.Vector3(cx + Math.cos(a) * r, wy, cz + Math.sin(a) * r));
+    }
+    outPts.push(new THREE.Vector3(cx, wy, cz));
+    group.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(outPts),
+      new THREE.LineBasicMaterial({ color: st.stroke, transparent: true, opacity: st.so * dimFactor })
+    ));
+  }
+
+  const components = w.arc.split('/').map(s => s.trim());
+  components.forEach(c => {
+    if      (c === 'F')  addWedge(0,   45, 'F');
+    else if (c === 'R')  addWedge(180, 45, 'R');
+    else if (c === 'S')  { addWedge( 90, 45, 'S'); addWedge(-90, 45, 'S'); }
+    else if (c === 'FN') addWedge(0,   11, 'FN');
+    else if (c === 'RN') addWedge(180, 11, 'RN');
+    else if (c === 'B')  { addWedge( 90, 45, 'B'); addWedge(-90, 45, 'B'); }
+  });
+}
+
+// Main overlay pass: scan rings, weapon arcs, sig auras, coherency, launch radius.
+function _sync3dOverlays(group) {
+  const selGid = state.selectedGroupId;
+  if (!selGid) return;
+  const def = getDef(selGid);
+  const grp = state.groups[selGid];
+  if (!def || !grp) return;
+
+  const sideColHex = def.side === 'player1' ? 0x4488ff : 0xff8844;
+  const selSi      = state.selectedShipIdx;
+  const selOrd     = effectiveOrder(def, grp, selSi);
+  const movingActive = (selSi !== null && selOrd && ORDERS[selOrd] && ORDERS[selOrd].moveMax > 0)
+    || (state.aiming && state.aiming.gid === selGid)
+    || (state.vectoredSecondMove && state.vectoredSecondMove.gid === selGid);
+  const aliveCount = grp.ships.filter(s => !s.destroyed && !s.offTable).length;
+
+  // 1. Formation coherency rings around non-selected ships while moving
+  if (aliveCount >= 2 && movingActive && !noFormation(def)) {
+    const cohPx = coherencyInches(def) * INCH;
+    grp.ships.forEach((s, si) => {
+      if (s.destroyed || s.offTable || si === selSi) return;
+      group.add(_3dDashedCircle(s.x - 288, s.y - 288, cohPx, _3D_LAYER_Y[s.layer] ?? 120, sideColHex, 0.35, 3, 4));
+    });
+  }
+
+  // 2. Enemy signature auras (mode 1 or while moving)
+  if (arcViewMode !== 2 && (movingActive || arcViewMode === 1)) {
+    const enemySide = def.side === 'player1' ? 'player2' : 'player1';
+    fleetForSide(enemySide).forEach(edef => {
+      const eg = getGroup(edef.id);
+      if (!eg) return;
+      eg.ships.forEach(es => {
+        if (es.destroyed || es.offTable) return;
+        const sig   = es.sigSilent ? 0 : edef.sig;
+        const sigPx = (sig + 3 * (eg.spikes || 0)) * INCH;
+        if (sigPx <= 0) return;
+        const wy = _3D_LAYER_Y[es.layer] ?? 120;
+        const sigCircle = _3dDashedCircle(es.x - 288, es.y - 288, sigPx, wy, 0xff5252, 0.45, 2, 4);
+        group.add(sigCircle);
+        // Faint fill
+        const fillGeo = new THREE.CircleGeometry(sigPx, 64);
+        fillGeo.rotateX(-Math.PI / 2);
+        fillGeo.translate(es.x - 288, wy, es.y - 288);
+        group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({
+          color: 0xff5252, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false
+        })));
+      });
+    });
+  }
+
+  // 3. Per-ship scan rings + weapon arcs for selected group
+  const launchingHere = state.launching && state.launching.gid === selGid;
+  grp.ships.forEach((ship, si) => {
+    if (ship.destroyed || ship.offTable) return;
+    const isSel = si === selSi;
+    const wy    = _3D_LAYER_Y[ship.layer] ?? 120;
+    if (launchingHere && state.launching.si === si) return; // replaced by launch aura
+
+    // Mode 2 + selected ship: show own sig aura instead of weapon arcs
+    if (arcViewMode === 2 && isSel) {
+      const sigPx = ((ship.sigSilent ? 0 : def.sig) + 3 * (grp.spikes || 0)) * INCH;
+      if (sigPx > 0) group.add(_3dDashedCircle(ship.x - 288, ship.y - 288, sigPx, wy, 0xff5252, 0.5, 2, 4));
+      return;
+    }
+
+    // Scan ring
+    const scanR   = def.scan * INCH;
+    const scanOp  = isSel ? 0.55 : 0.18;
+    group.add(_3dDashedCircle(ship.x - 288, ship.y - 288, scanR, wy, sideColHex, scanOp, 3, 4));
+
+    if (!isSel) return;
+
+    // Weapon arcs (from lead ship / arc origin)
+    const arcOrigin = firingOriginShip(def, grp, si);
+    const origin    = (arcOrigin && arcOrigin !== ship) ? arcOrigin : ship;
+    const oway      = _3D_LAYER_Y[origin.layer] ?? 120;
+    if (def.weapons) {
+      def.weapons.forEach(w => {
+        if (!w.arc || w.arc === 'LoS' || w.arc === '—') return;
+        _sync3dWeaponArc(group, origin, def, w, oway);
+      });
+    }
+  });
+
+  // 4. Arc view mode 2: enemy ships' scans + weapon arcs (dimmed)
+  if (arcViewMode === 2) {
+    const enemySide2 = def.side === 'player1' ? 'player2' : 'player1';
+    fleetForSide(enemySide2).forEach(edef => {
+      const eg = getGroup(edef.id);
+      if (!eg) return;
+      const eCol = edef.side === 'player1' ? 0x4488ff : 0xff8844;
+      eg.ships.forEach(es => {
+        if (es.destroyed || es.offTable) return;
+        const ewy = _3D_LAYER_Y[es.layer] ?? 120;
+        group.add(_3dDashedCircle(es.x - 288, es.y - 288, edef.scan * INCH, ewy, eCol, 0.07, 3, 4));
+        if (edef.weapons) {
+          edef.weapons.forEach(w => {
+            if (!w.arc || w.arc === 'LoS' || w.arc === '—') return;
+            _sync3dWeaponArc(group, es, edef, w, ewy, 0.38);
+          });
+        }
+      });
+    });
+  }
+
+  // 5. Launch aura (point-type launches)
+  if (launchingHere && state.launching.type !== 'gate_dropship') {
+    const lship = grp.ships[state.launching.si];
+    if (lship && !lship.destroyed && !lship.offTable) {
+      const auraPx = state.launching.auraIn * INCH;
+      const lwy    = _3D_LAYER_Y.orbit; // assets always land at orbit
+      group.add(_3dDashedCircle(lship.x - 288, lship.y - 288, auraPx, lwy, sideColHex, 0.75, 5, 3));
+      const fillGeo = new THREE.CircleGeometry(auraPx, 64);
+      fillGeo.rotateX(-Math.PI / 2);
+      fillGeo.translate(lship.x - 288, lwy, lship.y - 288);
+      group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({
+        color: sideColHex, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false
+      })));
+    }
+  }
+
+  // 6. Active weapon targeting — brighten arc, ring valid targets, dim invalid ones
+  if (state.targeting) {
+    const t    = state.targeting;
+    const aGrp = state.groups[t.gid];
+    const aShip = aGrp && aGrp.ships[t.si];
+    const aDef  = getDef(t.gid);
+    const w     = aDef && aDef.weapons[t.wi];
+    if (aShip && w) {
+      const originShip = firingOriginShip(aDef, aGrp, t.si);
+      const owy = _3D_LAYER_Y[originShip.layer] ?? 120;
+
+      // Ring the lead ship when it differs from the clicked ship (shows arc origin)
+      if (originShip !== aShip) {
+        const [oLen] = _3D_SHIP_DIMS[aDef.tonnage || 'L'] || _3D_SHIP_DIMS.L;
+        group.add(_3dDashedCircle(originShip.x - 288, originShip.y - 288, oLen * 0.85, owy, 0xff5252, 0.75, 3, 2));
+      }
+
+      // Redraw the weapon arc at full brightness so it stands out during targeting
+      if (w.arc && w.arc !== 'LoS' && w.arc !== '—') {
+        _sync3dWeaponArc(group, originShip, aDef, w, owy, 1.6);
+      }
+
+      if (/Bombardment/i.test(w.special || '')) {
+        // Bombardment: ring dropsites that are in arc + scan range
+        const scanPx = (aDef.scan || 0) * INCH;
+        ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => {
+          const dx = inchToPx(ds.x), dy = inchToPx(ds.y);
+          if (!pointInWeaponArc(originShip, w, dx, dy)) return;
+          if (Math.hypot(dx - originShip.x, dy - originShip.y) > scanPx) return;
+          const dsY = DROPSITE_BASE[ds.type]?.category === 'station' ? _3D_LAYER_Y.orbit - _3D_STATION_Y_DROP : 0;
+          group.add(_3dDashedCircle(dx - 288, dy - 288, 15, dsY, 0xff3030, 0.9, 2, 2));
+          group.add(_3dDashedCircle(dx - 288, dy - 288, 22, dsY, 0xff5252, 0.35, 4, 3));
+        });
+      } else {
+        // Ship targets: scan every enemy ship for validity
+        Object.keys(state.groups).forEach(gid => {
+          const tDef = getDef(gid);
+          if (!tDef || tDef.side === aDef.side) return;
+          const tGrp = state.groups[gid];
+          tGrp.ships.forEach(s => {
+            if (s.destroyed || s.offTable || s.attachedTo) return;
+            const twy  = _3D_LAYER_Y[s.layer] ?? 120;
+            const [tLen] = _3D_SHIP_DIMS[tDef.tonnage || 'L'] || _3D_SHIP_DIMS.L;
+            if (weaponCanTarget(aDef, originShip, w, tDef, s, tGrp)) {
+              // Valid target: tight bright ring + outer glow
+              group.add(_3dDashedCircle(s.x - 288, s.y - 288, tLen * 0.85, twy, 0xff3030, 0.9, 2, 2));
+              group.add(_3dDashedCircle(s.x - 288, s.y - 288, tLen * 1.25, twy, 0xff5252, 0.35, 4, 3));
+            } else {
+              // Out of arc/range/layer: dim grey halo so player knows it exists but can't be picked
+              group.add(_3dDashedCircle(s.x - 288, s.y - 288, tLen * 0.85, twy, 0x444444, 0.25, 2, 4));
+            }
+          });
+        });
+      }
+    }
+  }
+}
+
 function sync3d() {
   if (!_3d) return;
   const { dyn } = _3d;
-  // Dispose and clear previous dynamic objects
+  // Dispose and clear previous dynamic objects (recurse into nested Object3Ds / GLB clones)
   for (let i = dyn.children.length - 1; i >= 0; i--) {
     const obj = dyn.children[i];
-    if (obj.geometry) obj.geometry.dispose();
-    if (obj.material) obj.material.dispose();
+    _disposeObj3d(obj);
     dyn.remove(obj);
   }
   _sync3dScenery(dyn);
+  _3dRenderDeployZones(dyn);
   _sync3dShips(dyn);
   _sync3dAssets(dyn);
+  _sync3dOverlays(dyn);
 }
 
 function _sync3dScenery(group) {
@@ -6630,159 +7725,138 @@ function _sync3dScenery(group) {
   });
 }
 
-// City dropsite — cluster of buildings on a ground plate
+// City dropsite
 function _add3dCity(group, wx, wz, sk, dead, ds) {
-  // Deterministic layout seeded from position (no Math.random — stable across resyncs)
-  const seed = Math.round(Math.abs(wx * 7 + wz * 13)) % 97;
-  const pseudo = (i) => ((seed * 31 + i * 17) % 97) / 97; // 0–1
-
-  const platR = sk === 'L' ? 30 : sk === 'M' ? 20 : 13;
-  const platH = 2;
-  const platCol = dead ? 0x2a1a10 : 0x606060;
-
-  // Ground plate
-  const platGeo = new THREE.CylinderGeometry(platR, platR * 1.05, platH, 8);
-  const platMesh = new THREE.Mesh(platGeo, new THREE.MeshLambertMaterial({ color: platCol }));
-  platMesh.position.set(wx, platH / 2, wz);
-  group.add(platMesh);
-
-  // Building layout configs per size
-  const cfg = {
-    L: { count: 24, maxH: 42, minH: 8, spread: 22, wRange: [4, 10] },
-    M: { count: 14, maxH: 28, minH: 6, spread: 14, wRange: [3,  8] },
-    S: { count:  7, maxH: 16, minH: 5, spread:  8, wRange: [3,  6] },
-  }[sk] || { count: 7, maxH: 16, minH: 5, spread: 8, wRange: [3, 6] };
-
-  const buildCol  = dead ? 0x2a1a10 : 0x909090;
-  const emissCol  = dead ? 0x000000 : 0x080808;
-  const accentCol = dead ? 0x4a1a08 : 0xc0c0c0;
-
-  for (let i = 0; i < cfg.count; i++) {
-    const angle  = (i / cfg.count) * Math.PI * 2 + pseudo(i) * 0.8;
-    const dist   = pseudo(i + 10) * cfg.spread;
-    const bx     = wx + Math.cos(angle) * dist;
-    const bz     = wz + Math.sin(angle) * dist;
-    const bh     = cfg.minH + pseudo(i + 20) * (cfg.maxH - cfg.minH);
-    const bw     = cfg.wRange[0] + pseudo(i + 30) * (cfg.wRange[1] - cfg.wRange[0]);
-    const bd     = cfg.wRange[0] + pseudo(i + 40) * (cfg.wRange[1] - cfg.wRange[0]);
-
-    const bGeo  = new THREE.BoxGeometry(bw, bh, bd);
-    const bMesh = new THREE.Mesh(bGeo, new THREE.MeshLambertMaterial({ color: buildCol, emissive: emissCol }));
-    bMesh.position.set(bx, platH + bh / 2, bz);
-    group.add(bMesh);
-
-    // Accent stripe on tallest buildings
-    if (bh > cfg.maxH * 0.65) {
-      const stripeGeo = new THREE.BoxGeometry(bw + 0.4, 1.2, bd + 0.4);
-      const stripeMesh = new THREE.Mesh(stripeGeo, new THREE.MeshBasicMaterial({ color: accentCol }));
-      stripeMesh.position.set(bx, platH + bh * 0.75, bz);
-      group.add(stripeMesh);
+  const tmpl = _glbCities[sk];
+  if (tmpl) {
+    const clone = tmpl.clone(true);
+    _tintGlbScenery(clone, dead);
+    const locator = new THREE.Group();
+    locator.position.set(wx, 0, wz);
+    locator.add(clone);
+    group.add(locator);
+    // Ground-pin: compute precise world-space min Y (precise:true iterates actual
+    // vertex positions, not cached geometry.boundingBox) and zero it.
+    // Must run after adding to the scene so the full matrixWorld chain is live.
+    _3d.scene.updateMatrixWorld(true);
+    const _cityBbox = new THREE.Box3().setFromObject(locator, true);
+    if (isFinite(_cityBbox.min.y) && Math.abs(_cityBbox.min.y) > 0.01) {
+      locator.position.y -= _cityBbox.min.y;
+    }
+  } else {
+    // Procedural fallback — deterministic layout seeded from position
+    const seed   = Math.round(Math.abs(wx * 7 + wz * 13)) % 97;
+    const pseudo = (i) => ((seed * 31 + i * 17) % 97) / 97;
+    const cfg = {
+      L: { count: 24, maxH: 42, minH: 8, spread: 22, wRange: [4, 10] },
+      M: { count: 14, maxH: 28, minH: 6, spread: 14, wRange: [3,  8] },
+      S: { count:  7, maxH: 16, minH: 5, spread:  8, wRange: [3,  6] },
+    }[sk] || { count: 7, maxH: 16, minH: 5, spread: 8, wRange: [3, 6] };
+    const buildCol  = dead ? 0x2a1a10 : 0x909090;
+    const emissCol  = dead ? 0x000000 : 0x080808;
+    const accentCol = dead ? 0x4a1a08 : 0xc0c0c0;
+    for (let i = 0; i < cfg.count; i++) {
+      const angle = (i / cfg.count) * Math.PI * 2 + pseudo(i) * 0.8;
+      const dist  = pseudo(i + 10) * cfg.spread;
+      const bx    = wx + Math.cos(angle) * dist;
+      const bz    = wz + Math.sin(angle) * dist;
+      const bh    = cfg.minH + pseudo(i + 20) * (cfg.maxH - cfg.minH);
+      const bw    = cfg.wRange[0] + pseudo(i + 30) * (cfg.wRange[1] - cfg.wRange[0]);
+      const bd    = cfg.wRange[0] + pseudo(i + 40) * (cfg.wRange[1] - cfg.wRange[0]);
+      const bMesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), new THREE.MeshLambertMaterial({ color: buildCol, emissive: emissCol }));
+      bMesh.position.set(bx, bh / 2, bz);
+      group.add(bMesh);
+      if (bh > cfg.maxH * 0.65) {
+        const stripeMesh = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.4, 1.2, bd + 0.4), new THREE.MeshBasicMaterial({ color: accentCol }));
+        stripeMesh.position.set(bx, bh * 0.75, bz);
+        group.add(stripeMesh);
+      }
     }
   }
 
-  // City glow — warm amber point light rising above the buildings
+  // City glow — light blue point light (red if dead/burning)
   const cityGlowIntensity = sk === 'L' ? 180 : sk === 'M' ? 100 : 55;
   const cityGlowDist      = sk === 'L' ? 160 : sk === 'M' ? 110 : 70;
-  const cityLight = new THREE.PointLight(dead ? 0xff4400 : 0xff9933, cityGlowIntensity, cityGlowDist);
-  cityLight.position.set(wx, platH + (sk === 'L' ? 20 : sk === 'M' ? 12 : 7), wz);
+  const cityLight = new THREE.PointLight(dead ? 0xff4400 : 0x44aaff, cityGlowIntensity, cityGlowDist);
+  cityLight.position.set(wx, sk === 'L' ? 22 : sk === 'M' ? 14 : 8, wz);
   group.add(cityLight);
 }
 
-// Station dropsite — vertical disc-on-spine design (saucer + column + lower ring + base globe)
+// Station dropsite
 function _add3dStation(group, wx, wz, sk, dead) {
-  const wy = _3D_LAYER_Y.orbit;
-  const sc = sk === 'L' ? 0.22 : sk === 'M' ? 0.15 : 0.10;
-  const B  = 18 * sc; // base unit
+  const wy     = _3D_LAYER_Y.orbit;
+  const glowCol = dead ? 0xff3300 : 0x60c8ff;
 
-  const bodyCol   = dead ? 0x3a2820 : 0x8090a0;
-  const darkCol   = dead ? 0x1a1008 : 0x2a3038;
-  const accentCol = dead ? 0x6a3820 : 0xc0d8e8;
-  const glowCol   = dead ? 0xff3300 : 0x60c8ff;
-  const bodyMat   = () => new THREE.MeshLambertMaterial({ color: bodyCol });
-  const darkMat   = () => new THREE.MeshLambertMaterial({ color: darkCol });
-  const accentMat = () => new THREE.MeshLambertMaterial({ color: accentCol });
-
-  // ── Main saucer disc ────────────────────────────────────────────────────────
-  const discR = B * 2.6, discH = B * 0.32;
-  group.add(new THREE.Mesh(new THREE.CylinderGeometry(discR, discR * 1.08, discH, 32), bodyMat())
-    .translateX(wx).translateY(wy).translateZ(wz));
-  // Raised inner platform on top of disc
-  const platR = discR * 0.52, platH = discH * 1.7;
-  group.add(new THREE.Mesh(new THREE.CylinderGeometry(platR, platR * 1.05, platH, 20), darkMat())
-    .translateX(wx).translateY(wy + (discH + platH) * 0.5).translateZ(wz));
-  // Weapon ring around disc rim
-  const wRingGeo = new THREE.TorusGeometry(discR * 0.94, B * 0.11, 4, 32);
-  wRingGeo.rotateX(Math.PI / 2);
-  group.add(new THREE.Mesh(wRingGeo, darkMat()).translateX(wx).translateY(wy).translateZ(wz));
-
-  // ── Dome on top of platform ─────────────────────────────────────────────────
-  const domeR = B * 0.62;
-  const domeGeo = new THREE.SphereGeometry(domeR, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-  group.add(new THREE.Mesh(domeGeo, accentMat())
-    .translateX(wx).translateY(wy + discH * 0.5 + platH).translateZ(wz));
-
-  // ── Auxiliary station modules (2 for M, 4 for L) at disc rim ─────────────
-  const auxCount = sk === 'L' ? 4 : sk === 'M' ? 2 : 0;
-  const auxR = discR * 0.28, auxH = discH * 0.7;
-  const armLen = discR * 1.25; // centre-to-centre distance from main disc
-  for (let i = 0; i < auxCount; i++) {
-    const ang = (i / auxCount) * Math.PI * 2;
-    const ax = wx + Math.cos(ang) * armLen;
-    const az = wz + Math.sin(ang) * armLen;
-    // Connecting arm
-    const armMesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(B * 0.09, B * 0.09, armLen - discR * 0.9, 5),
-      darkMat()
-    );
-    armMesh.rotation.z = Math.PI / 2;
-    armMesh.rotation.y = ang;
-    armMesh.position.set(
-      wx + Math.cos(ang) * (discR * 0.85 + (armLen - discR * 0.9) * 0.5),
-      wy,
-      wz + Math.sin(ang) * (discR * 0.85 + (armLen - discR * 0.9) * 0.5)
-    );
-    group.add(armMesh);
-    // Mini disc
-    group.add(new THREE.Mesh(new THREE.CylinderGeometry(auxR, auxR * 1.06, auxH, 20), bodyMat())
-      .translateX(ax).translateY(wy).translateZ(az));
-    // Mini weapon ring
-    const auxRingGeo = new THREE.TorusGeometry(auxR * 0.92, B * 0.07, 4, 20);
-    auxRingGeo.rotateX(Math.PI / 2);
-    group.add(new THREE.Mesh(auxRingGeo, darkMat()).translateX(ax).translateY(wy).translateZ(az));
-    // Mini dome
-    const auxDomeGeo = new THREE.SphereGeometry(B * 0.18, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-    group.add(new THREE.Mesh(auxDomeGeo, accentMat())
-      .translateX(ax).translateY(wy + auxH * 0.5).translateZ(az));
+  if (_glbStation) {
+    // Scale factors relative to the normalised L template (L=1.0, M=0.68, S=0.45)
+    const scaleF = sk === 'L' ? 1.0 : sk === 'M' ? 0.68 : 0.45;
+    const clone  = _glbStation.clone(true);
+    clone.scale.multiplyScalar(scaleF);
+    clone.position.multiplyScalar(scaleF);
+    _tintGlbScenery(clone, dead);
+    // Lower so the disc body intersects the orbital plane rather than floating above it.
+    const locator = new THREE.Group();
+    locator.position.set(wx, wy - _3D_STATION_Y_DROP * scaleF, wz);
+    locator.add(clone);
+    group.add(locator);
+  } else {
+    // Procedural fallback — saucer + spine + aux modules
+    const sc = sk === 'L' ? 0.22 : sk === 'M' ? 0.15 : 0.10;
+    const B  = 18 * sc;
+    const bodyCol   = dead ? 0x3a2820 : 0x8090a0;
+    const darkCol   = dead ? 0x1a1008 : 0x2a3038;
+    const accentCol = dead ? 0x6a3820 : 0xc0d8e8;
+    const bodyMat   = () => new THREE.MeshLambertMaterial({ color: bodyCol });
+    const darkMat   = () => new THREE.MeshLambertMaterial({ color: darkCol });
+    const accentMat = () => new THREE.MeshLambertMaterial({ color: accentCol });
+    const discR = B * 2.6, discH = B * 0.32;
+    group.add(new THREE.Mesh(new THREE.CylinderGeometry(discR, discR * 1.08, discH, 32), bodyMat())
+      .translateX(wx).translateY(wy).translateZ(wz));
+    const platR = discR * 0.52, platH = discH * 1.7;
+    group.add(new THREE.Mesh(new THREE.CylinderGeometry(platR, platR * 1.05, platH, 20), darkMat())
+      .translateX(wx).translateY(wy + (discH + platH) * 0.5).translateZ(wz));
+    const wRingGeo = new THREE.TorusGeometry(discR * 0.94, B * 0.11, 4, 32);
+    wRingGeo.rotateX(Math.PI / 2);
+    group.add(new THREE.Mesh(wRingGeo, darkMat()).translateX(wx).translateY(wy).translateZ(wz));
+    const domeGeo = new THREE.SphereGeometry(B * 0.62, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    group.add(new THREE.Mesh(domeGeo, accentMat())
+      .translateX(wx).translateY(wy + discH * 0.5 + platH).translateZ(wz));
+    const auxCount = sk === 'L' ? 4 : sk === 'M' ? 2 : 0;
+    const auxR = discR * 0.28, auxH = discH * 0.7, armLen = discR * 1.25;
+    for (let i = 0; i < auxCount; i++) {
+      const ang = (i / auxCount) * Math.PI * 2;
+      const ax = wx + Math.cos(ang) * armLen, az = wz + Math.sin(ang) * armLen;
+      const armMesh = new THREE.Mesh(new THREE.CylinderGeometry(B * 0.09, B * 0.09, armLen - discR * 0.9, 5), darkMat());
+      armMesh.rotation.z = Math.PI / 2; armMesh.rotation.y = ang;
+      armMesh.position.set(wx + Math.cos(ang) * (discR * 0.85 + (armLen - discR * 0.9) * 0.5), wy,
+                           wz + Math.sin(ang) * (discR * 0.85 + (armLen - discR * 0.9) * 0.5));
+      group.add(armMesh);
+      group.add(new THREE.Mesh(new THREE.CylinderGeometry(auxR, auxR * 1.06, auxH, 20), bodyMat())
+        .translateX(ax).translateY(wy).translateZ(az));
+      const auxRingGeo = new THREE.TorusGeometry(auxR * 0.92, B * 0.07, 4, 20);
+      auxRingGeo.rotateX(Math.PI / 2);
+      group.add(new THREE.Mesh(auxRingGeo, darkMat()).translateX(ax).translateY(wy).translateZ(az));
+      group.add(new THREE.Mesh(new THREE.SphereGeometry(B * 0.18, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), accentMat())
+        .translateX(ax).translateY(wy + auxH * 0.5).translateZ(az));
+    }
+    const spineR = B * 0.45, spineH = B * 6;
+    group.add(new THREE.Mesh(new THREE.CylinderGeometry(spineR * 0.75, spineR, spineH, 8), darkMat())
+      .translateX(wx).translateY(wy - spineH * 0.5).translateZ(wz));
+    const nSegs = sk === 'L' ? 4 : 3;
+    for (let i = 0; i < nSegs; i++) {
+      group.add(new THREE.Mesh(new THREE.CylinderGeometry(spineR * 1.8, spineR * 1.8, B * 0.10, 8), accentMat())
+        .translateX(wx).translateY(wy - (i + 0.8) * (spineH / (nSegs + 1))).translateZ(wz));
+    }
+    const lrY = wy - spineH * 0.52, lrR = discR * 0.48;
+    group.add(new THREE.Mesh(new THREE.CylinderGeometry(lrR * 0.88, lrR, B * 0.20, 20), bodyMat())
+      .translateX(wx).translateY(lrY).translateZ(wz));
+    const lrTorusGeo = new THREE.TorusGeometry(lrR * 0.84, B * 0.07, 4, 20);
+    lrTorusGeo.rotateX(Math.PI / 2);
+    group.add(new THREE.Mesh(lrTorusGeo, darkMat()).translateX(wx).translateY(lrY).translateZ(wz));
+    group.add(new THREE.Mesh(new THREE.SphereGeometry(B * 0.42, 10, 8), bodyMat())
+      .translateX(wx).translateY(wy - spineH + B * 0.42).translateZ(wz));
   }
 
-  // ── Central spine column (extends down toward board) ───────────────────────
-  const spineR = B * 0.45, spineH = B * 6;
-  group.add(new THREE.Mesh(new THREE.CylinderGeometry(spineR * 0.75, spineR, spineH, 8), darkMat())
-    .translateX(wx).translateY(wy - spineH * 0.5).translateZ(wz));
-
-  // Column segment rings spaced along the spine
-  const nSegs = sk === 'L' ? 4 : 3;
-  for (let i = 0; i < nSegs; i++) {
-    const sy = wy - (i + 0.8) * (spineH / (nSegs + 1));
-    const segGeo = new THREE.CylinderGeometry(spineR * 1.8, spineR * 1.8, B * 0.10, 8);
-    group.add(new THREE.Mesh(segGeo, accentMat()).translateX(wx).translateY(sy).translateZ(wz));
-  }
-
-  // ── Lower secondary ring section ────────────────────────────────────────────
-  const lrY = wy - spineH * 0.52;
-  const lrR = discR * 0.48;
-  const lrGeo = new THREE.CylinderGeometry(lrR * 0.88, lrR, B * 0.20, 20);
-  group.add(new THREE.Mesh(lrGeo, bodyMat()).translateX(wx).translateY(lrY).translateZ(wz));
-  const lrTorusGeo = new THREE.TorusGeometry(lrR * 0.84, B * 0.07, 4, 20);
-  lrTorusGeo.rotateX(Math.PI / 2);
-  group.add(new THREE.Mesh(lrTorusGeo, darkMat()).translateX(wx).translateY(lrY).translateZ(wz));
-
-  // ── Base globe at bottom of spine ──────────────────────────────────────────
-  const baseY = wy - spineH + B * 0.42;
-  group.add(new THREE.Mesh(new THREE.SphereGeometry(B * 0.42, 10, 8), bodyMat())
-    .translateX(wx).translateY(baseY).translateZ(wz));
-
-  // Running light
   const light = new THREE.PointLight(glowCol, sk === 'L' ? 120 : sk === 'M' ? 70 : 40,
                                               sk === 'L' ? 140 : sk === 'M' ? 90 : 55);
   light.position.set(wx, wy, wz);
@@ -6803,6 +7877,7 @@ function _3dDimColor(hex, f) {
 }
 
 function _sync3dShips(group) {
+  _3dShipMeshes = []; // reset selectable mesh list
   // Build a lookup of all deployed ship positions for targeting lines
   const shipPos = {};
   Object.entries(state.groups || {}).forEach(([gid, grp]) => {
@@ -6832,9 +7907,12 @@ function _sync3dShips(group) {
       const shipCol = damageFrac > 0 ? _3dDimColor(baseCol, damageFrac > 0.5 ? 0.45 : 0.7) : baseCol;
 
       // Ship mesh (oriented along -Z = forward)
-      const mesh = isWing ? _buildWingMesh3d(def, shipCol, faction) : _buildShipMesh3d(tonnage, shipCol, faction);
+      const mesh = isWing ? _buildWingMesh3d(def, shipCol, faction) : _buildShipMesh3d(tonnage, shipCol, faction, def.role);
       mesh.position.set(wx, wy, wz);
       mesh.rotation.y = rotY;
+      mesh.userData = { type: 'ship', gid, si: String(si) };
+      mesh.traverse(c => { if (c !== mesh) c.userData = { type: 'ship', gid, si: String(si) }; });
+      _3dShipMeshes.push({ mesh, gid, si });
       group.add(mesh);
 
       // Selection: flat torus ring on the layer plane around the ship
@@ -6872,22 +7950,17 @@ function _sync3dShips(group) {
       Object.values(ship.weaponTargets || {}).forEach(tgt => {
         const redMat = new THREE.LineBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.65 });
         if (tgt.dsId) {
-          // Bombardment: line from ship down to dropsite on the board
+          // Targeting line from ship to dropsite — drawn at the dropsite's actual layer height
           const ds = state.scenarioData && state.scenarioData.dropsites &&
                      state.scenarioData.dropsites.find(d => d.id === tgt.dsId);
           if (!ds) return;
           const dsx = ds.x * INCH - 288, dsz = ds.y * INCH - 288;
+          const dsy = DROPSITE_BASE[ds.type]?.category === 'station' ? _3D_LAYER_Y.orbit - _3D_STATION_Y_DROP : 0;
           group.add(new THREE.Line(
             new THREE.BufferGeometry().setFromPoints([
-              new THREE.Vector3(wx, wy, wz), new THREE.Vector3(dsx, 0, dsz)
+              new THREE.Vector3(wx, wy, wz), new THREE.Vector3(dsx, dsy, dsz)
             ]), redMat
           ));
-          // Ring marker at the dropsite
-          const rg = new THREE.TorusGeometry(11, 0.7, 3, 20);
-          rg.rotateX(Math.PI / 2);
-          const rm = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.8 }));
-          rm.position.set(dsx, 0.5, dsz);
-          group.add(rm);
         } else {
           // Ship-to-ship
           const tp = shipPos[`${tgt.gid}:${tgt.si}`];
@@ -6901,6 +7974,146 @@ function _sync3dShips(group) {
       });
     });
   });
+
+  // ── Movement cone + hover ghost for selected ship ──────────────────────────
+  const selGid = state.selectedGroupId;
+  const selSi  = state.selectedShipIdx;
+  if (selGid !== null && selSi !== null) {
+    const selGrp = state.groups[selGid];
+    const selDef = getDef(selGid);
+    if (selGrp && selDef) {
+      const selShip = selGrp.ships[selSi];
+      const ordKey  = effectiveOrder(selDef, selGrp, selSi);
+      const canMove = selShip && !selShip.destroyed && !selShip.offTable
+        && ordKey && ORDERS[ordKey] && ORDERS[ordKey].moveMax > 0
+        && !selShip.movedThisRound && !selGrp.activated;
+      if (canMove) {
+        const wy      = _3D_LAYER_Y[selShip.layer] ?? 120;
+        const o       = ORDERS[ordKey];
+        const lm      = layerMove(effectiveMaxMovePx(selDef, selShip, ordKey), selShip, state.layerToggle);
+        const maxR    = lm.maxPx;
+        let   minR    = o.moveMin * selDef.thrust * INCH;
+        if (minR > maxR) minR = 0;
+        const turnDeg = o.turnLimit || 0;
+
+        if (maxR > 0) {
+          const headRad   = selShip.heading * Math.PI / 180;
+          const halfAngle = turnDeg > 0 ? turnDeg * Math.PI / 180 : 0.04;
+          const startA    = headRad - halfAngle;
+          const endA      = headRad + halfAngle;
+          const steps     = Math.max(8, Math.ceil(Math.abs(endA - startA) * 20));
+          const coneCol   = selDef.side === 'player1' ? 0x4488ff : 0xff8844;
+          const swx = selShip.x - 288, swz = selShip.y - 288;
+
+          // Filled wedge
+          const shape = new THREE.Shape();
+          shape.moveTo(Math.cos(startA) * maxR, Math.sin(startA) * maxR);
+          for (let i = 1; i <= steps; i++) {
+            const a = startA + (endA - startA) * i / steps;
+            shape.lineTo(Math.cos(a) * maxR, Math.sin(a) * maxR);
+          }
+          for (let i = steps; i >= 0; i--) {
+            const a = startA + (endA - startA) * i / steps;
+            shape.lineTo(Math.cos(a) * minR, Math.sin(a) * minR);
+          }
+          shape.closePath();
+          const coneGeo = new THREE.ShapeGeometry(shape, steps);
+          coneGeo.rotateX(Math.PI / 2); // XY shape → flat in XZ
+          coneGeo.translate(swx, wy, swz);
+          group.add(new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
+            color: coneCol, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false
+          })));
+
+          // Outline loop
+          const outPts = [];
+          for (let i = 0; i <= steps; i++) {
+            const a = startA + (endA - startA) * i / steps;
+            outPts.push(new THREE.Vector3(swx + Math.cos(a) * maxR, wy, swz + Math.sin(a) * maxR));
+          }
+          for (let i = steps; i >= 0; i--) {
+            const a = startA + (endA - startA) * i / steps;
+            outPts.push(new THREE.Vector3(swx + Math.cos(a) * minR, wy, swz + Math.sin(a) * minR));
+          }
+          outPts.push(outPts[0].clone());
+          group.add(new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(outPts),
+            new THREE.LineBasicMaterial({ color: coneCol, transparent: true, opacity: 0.45 })
+          ));
+
+          // Hover ghost
+          if (state.hoverPoint) {
+            const dx = state.hoverPoint.x - selShip.x, dy = state.hoverPoint.y - selShip.y;
+            const dist = Math.hypot(dx, dy);
+            const fwd  = headingVec(selShip.heading);
+            const cosA = (fwd.x * dx + fwd.y * dy) / Math.max(0.0001, dist);
+            const angDeg = Math.acos(Math.max(-1, Math.min(1, cosA))) * 180 / Math.PI;
+            const inRange = dist >= minR - 1 && dist <= maxR + 1;
+            const inCone  = turnDeg === 0 ? angDeg <= 20 : angDeg <= turnDeg + 0.5;
+            const finalOk = inRange && inCone;
+            const travelH = Math.atan2(dy, dx) * 180 / Math.PI;
+            const gwx = state.hoverPoint.x - 288, gwz = state.hoverPoint.y - 288;
+            const okCol = finalOk ? coneCol : 0xff3030;
+
+            // Dashed line
+            const dashLine = new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(swx, wy, swz), new THREE.Vector3(gwx, wy, gwz)
+              ]),
+              new THREE.LineDashedMaterial({ color: okCol, transparent: true, opacity: 0.75, dashSize: 4, gapSize: 3 })
+            );
+            dashLine.computeLineDistances();
+            group.add(dashLine);
+
+            // Ghost ship mesh
+            const gFaction = selDef.faction || selDef.id.split(':')[1] || 'generic';
+            const ghostMesh = _buildShipMesh3d(selDef.tonnage || 'L', okCol, gFaction, selDef.role);
+            ghostMesh.position.set(gwx, wy, gwz);
+            ghostMesh.rotation.y = _3dShipRotY(finalOk ? travelH : selShip.heading);
+            ghostMesh.traverse(c => {
+              if (c.isMesh && c.material) {
+                const m = c.material.clone ? c.material.clone() : c.material;
+                m.transparent = true; m.opacity = 0.38; m.depthWrite = false;
+                c.material = m;
+              }
+            });
+            group.add(ghostMesh);
+          }
+        }
+      }
+    }
+  }
+
+  // Deploy / arrival hover ghost — preview of the next ship to be placed, follows cursor.
+  if ((state.phase === 'deploy' || state.phase === 'play') && state.hoverPoint && state.selectedGroupId && !state.aiming) {
+    const _dgDef = getDef(state.selectedGroupId);
+    const _dgGrp = state.groups[state.selectedGroupId];
+    const _dgIdx = _dgDef ? nextUndeployedShipIdx(state.selectedGroupId) : -1;
+    const _dgElig = state.phase === 'deploy'
+      ? (_dgDef && deploySideAllowed(_dgDef.side))
+      : (_dgGrp && !_dgGrp.activated && canActivateOffTable(_dgDef)?.eligible);
+    if (_dgDef && _dgIdx >= 0 && _dgElig) {
+      const dep = DEPLOYMENTS[state.scenario?.deployment];
+      const zoneName = state.deployZone?.[_dgDef.side] || (_dgDef.side === 'player1' ? 'south' : 'north');
+      const zone = dep?.zones?.[zoneName];
+      const xIn = state.hoverPoint.x / INCH, yIn = state.hoverPoint.y / INCH;
+      const inZone = !zone || isInZone(xIn, yIn, zone);
+      const col = inZone ? _3dSideColor(_dgDef.side) : 0xff3333;
+      const wy = _3D_LAYER_Y.orbit;
+      const gwx = state.hoverPoint.x - 288, gwz = state.hoverPoint.y - 288;
+      const gFac = _dgDef.faction || _dgDef.id.split(':')[1] || 'generic';
+      const gMesh = _buildShipMesh3d(_dgDef.tonnage || 'L', col, gFac, _dgDef.role);
+      gMesh.position.set(gwx, wy, gwz);
+      gMesh.rotation.y = _3dShipRotY(_dgDef.side === 'player1' ? -90 : 90);
+      gMesh.traverse(c => {
+        if (c.isMesh && c.material) {
+          const m = c.material.clone ? c.material.clone() : c.material;
+          m.transparent = true; m.opacity = inZone ? 0.45 : 0.25; m.depthWrite = false;
+          c.material = m;
+        }
+      });
+      group.add(gMesh);
+    }
+  }
 }
 
 function _sync3dAssets(group) {
@@ -6980,7 +8193,7 @@ function _sync3dAssets(group) {
     }
   });
 
-  // Ground launch lines — ship at orbit layer → dropsite on the ground
+  // Ground launch lines — ship at orbit/atmosphere layer → dropsite at its own layer
   (state.groundLaunchLines || []).forEach(gl => {
     const glGrp = state.groups[gl.fromGid];
     const glShip = glGrp && glGrp.ships[gl.fromSi];
@@ -6990,22 +8203,14 @@ function _sync3dAssets(group) {
     const col = _3dSideColor(gl.side);
     const shipY = _3D_LAYER_Y[glShip.layer] ?? 120;
     const dsx = glDs.x * INCH - 288, dsz = glDs.y * INCH - 288;
-    // Dashed-style: render as two segments with a gap — ship→midpoint, midpoint→ground
-    const mid = new THREE.Vector3((glShip.x - 288 + dsx) / 2, shipY / 2, (glShip.y - 288 + dsz) / 2);
+    const dsy = DROPSITE_BASE[glDs.type]?.category === 'station' ? _3D_LAYER_Y.orbit - _3D_STATION_Y_DROP : 0;
     group.add(new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(glShip.x - 288, shipY, glShip.y - 288),
-        mid,
-        new THREE.Vector3(dsx, 0, dsz)
+        new THREE.Vector3(dsx, dsy, dsz)
       ]),
       new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.55 })
     ));
-    // Ring marker at the dropsite on the ground
-    const ringGeo = new THREE.TorusGeometry(9, 0.6, 3, 20);
-    ringGeo.rotateX(Math.PI / 2);
-    const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.7 }));
-    ring.position.set(dsx, 0.5, dsz);
-    group.add(ring);
   });
 }
 
@@ -7040,13 +8245,23 @@ function _buildAssetWing3d(color, kind, side) {
   return obj;
 }
 
-function _buildShipMesh3d(tonnage, color, side) {
-  if (side === 'ucm')      return _buildUCMShipMesh3d(tonnage, color);
-  if (side === 'scourge')  return _buildScourgeShipMesh3d(tonnage, color);
-  if (side === 'shaltari') return _buildShaltariShipMesh3d(tonnage, color);
-  if (side === 'phr')      return _buildPHRShipMesh3d(tonnage, color);
-  if (side === 'bioficer')   return _buildBioficerShipMesh3d(tonnage, color);
-  if (side === 'resistance') return _buildResistanceShipMesh3d(tonnage, color);
+function _buildShipMesh3d(tonnage, color, faction, role) {
+  // Bioficer cells (role 'Cell' / 'Cells') get their own model
+  if (faction === 'bioficer' && role && /^cells?$/i.test(role)) {
+    if (_glbBioCell)           return _cloneGlbShip(_glbBioCell,        tonnage, color);
+  }
+  // L-tonnage ships use the frigate model
+  if (tonnage === 'L') {
+    if (_glbFrigates[faction]) return _cloneGlbShip(_glbFrigates[faction], tonnage, color);
+  }
+  // M / H / SH use the cruiser model; fall through to procedural while loading
+  if (_glbModels[faction])     return _cloneGlbShip(_glbModels[faction],  tonnage, color);
+  if (faction === 'ucm')       return _buildUCMShipMesh3d(tonnage, color);
+  if (faction === 'scourge')   return _buildScourgeShipMesh3d(tonnage, color);
+  if (faction === 'shaltari')  return _buildShaltariShipMesh3d(tonnage, color);
+  if (faction === 'phr')       return _buildPHRShipMesh3d(tonnage, color);
+  if (faction === 'bioficer')  return _buildBioficerShipMesh3d(tonnage, color);
+  if (faction === 'resistance') return _buildResistanceShipMesh3d(tonnage, color);
   return _buildGenericShipMesh3d(tonnage, color);
 }
 
@@ -7638,7 +8853,7 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('[data-weapon-unlock]')) {
     const [gid, si, wi] = e.target.dataset.weaponUnlock.split('|');
     dispatch({ type: 'unlockWeapon', gid, si: parseInt(si), wi: parseInt(wi) });
-    renderAll(); return;
+    return;
   }
   // Anti-Wing: toggle the wing-targeting mode.
   if (e.target.matches('[data-antiwing]') || (e.target.closest && e.target.closest('[data-antiwing]'))) {
@@ -7717,13 +8932,13 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('[data-lead]')) {
     const [gid, si] = e.target.dataset.lead.split('|');
     dispatch({ type: 'nominateLead', gid, si: parseInt(si) });
-    renderAll(); return;
+    return;
   }
   // Clear lead nomination (click the highlighted ✦ on the current lead ship).
   if (e.target.matches('[data-lead-clear]')) {
     const gid = e.target.dataset.leadClear;
     dispatch({ type: 'nominateLead', gid, si: null });
-    renderAll(); return;
+    return;
   }
   // Order buttons
   if (e.target.matches('[data-order]')) {
@@ -7838,7 +9053,7 @@ document.addEventListener('click', (e) => {
       if (!ok) return;
     }
     dispatch({ type: 'finishActivation', gid });
-    renderAll(); return;
+    return;
   }
   // End round
   if (e.target.matches('#pass-activation')) {
@@ -7896,7 +9111,7 @@ document.addEventListener('click', (e) => {
     const ds2 = state.scenarioData.dropsites.find(d => d.id === dsId);
     const f2 = ds2 && FEATURES[ds2.features[parseInt(fi)]];
     flashLaunchMsg(`${f2 ? f2.name + ': ' : ''}click an enemy ship in range`, true);
-    renderAll(); return;
+    renderAll(true); return;  // local UI only — no relay
   }
   if (e.target.closest && e.target.closest('[data-da-launch]')) {
     const [dsId, fi, type] = e.target.closest('[data-da-launch]').dataset.daLaunch.split('|');
@@ -7911,7 +9126,7 @@ document.addEventListener('click', (e) => {
       x: inchToPx(ds.x), y: inchToPx(ds.y), fighters: 0, bombers: 0, fireships: 0,
       assetCount: (type === 'torpedo' || type === 'mine') ? ((lentry && lentry.n) || 1) : undefined
     };
-    renderAll(); return;
+    renderAll(true); return;  // local UI only — no relay
   }
   // Dropsite launch counter adjust.
   if (e.target.matches('[data-da-fb]')) {
@@ -7925,27 +9140,27 @@ document.addEventListener('click', (e) => {
         if (!(next > 0 && (state.launching[other]||0) > 0)) state.launching[which] = next;
       }
     }
-    renderAll(); return;
+    renderAll(true); return;  // local UI only
   }
   if (e.target.matches('#da-launch-cancel')) {
     state.launching = null;
-    renderAll(); return;
+    renderAll(true); return;  // local UI only
   }
   // Dropsite Activation: finish this dropsite, return to picking.
   if (e.target.matches('#da-finish-ds')) {
     const dsId = state.dropsiteActivation && state.dropsiteActivation.dsId;
     dispatch({ type: 'daFinishDropsite', dsId });
-    renderAll(); return;
+    return;
   }
   // Dropsite Activation: alternate to the other side.
   if (e.target.matches('#da-next-side')) {
     dispatch({ type: 'daSwitchSide' });
-    renderAll(); return;
+    return;
   }
   // Dropsite Activation: done — proceed to the Asset Phase.
   if (e.target.matches('#da-done')) {
     dispatch({ type: 'daEnd' });
-    renderAll(); return;
+    return;
   }
   // Asset Phase: START guided Battalion Combat.
   if (e.target.matches('#asset-start-battalions')) {
@@ -8060,7 +9275,7 @@ document.addEventListener('click', (e) => {
       return;
     }
     dispatch({ type: 'advanceRound' });
-    renderAll(); return;
+    return;
   }
   if (e.target.matches('#back-to-setup')) {
     if (confirm('Return to scenario setup? Ship positions will be reset.')) {
@@ -8169,15 +9384,12 @@ function resolveLaunchClick(e) {
       else if (L.type === 'torpedo' || L.type === 'mine') { count = L.assetCount || 1; kind = L.type; kindLabel = L.type === 'torpedo' ? 'Torpedo' : 'Mine'; }
       else { const f=L.fighters||0, b=L.bombers||0; count=f>0?f:b; kind=f>0?'fighter':(b>0?'bomber':null); kindLabel=kind==='fighter'?'Fighter':'Bomber'; }
       if (!kind || count <= 0) { flashLaunchMsg('Set Fighters or Bombers first'); return false; }
-      state.launchedAssets.push({ id:'a'+(state._assetId=(state._assetId||0)+1), kind, count, side: L.side, x: pt.x, y: pt.y, moved:false });
-      logEvent(`Dropsite launched ${count} ${kindLabel}${count>1?'s':''}`);
       flashLaunchMsg(`Dropsite launched ${count} ${kindLabel}${count>1?'s':''}`, true);
-      state.launching = null;
-      renderAll();
+      dispatch({ type: 'launchDropsiteAsset', kind, count, x: pt.x, y: pt.y, fromDropsite: L.fromDropsite });
       return true;
     }
     // (Other dropsite launch types could be added here.)
-    state.launching = null; renderAll(); return true;
+    state.launching = null; return true;
   }
   const grp = state.groups[L.gid];
   const def = getDef(L.gid);
@@ -8624,9 +9836,7 @@ board.addEventListener('click', (e) => {
     const sigBonusIn = isCA ? 0 : ((ts.sigSilent ? 0 : (getDef(hit.gid).sig || 0)) + ((state.groups[hit.gid].spikes||0)+(ts.spikes||0)) * 3);
     const reach = scanPx + sigBonusIn * INCH;
     if (Math.hypot(ts.x - dsx, ts.y - dsy) > reach) { flashLaunchMsg('Target out of range'); return; }
-    openFeatureAttackModal(ds, fa.fi, hit.gid, hit.si, fa.side);
-    ds.firedFeatures = ds.firedFeatures || [];
-    if (!ds.firedFeatures.includes(fa.fi)) ds.firedFeatures.push(fa.fi);
+    dispatch({ type: 'fireFeatureWeapon', dsId: ds.id, fi: fa.fi, targetGid: hit.gid, targetSi: hit.si });
     state.featureAttack = null;
     return;
   }
@@ -8894,7 +10104,6 @@ board.addEventListener('click', (e) => {
     dispatch({ type: 'lockWeaponTarget', gid: t.gid, si: t.si, wi: t.wi, targetGid: hit.gid, targetSi: hit.si });
     state.targeting = null;
     flashLaunchMsg(`${w.name} → ${hit.def.name}`, true);
-    renderAll();
     return;
   }
 
@@ -8931,6 +10140,7 @@ board.addEventListener('click', (e) => {
         const heading = headingToward(finalX, finalY, pt0.x, pt0.y);
         state.aiming = null;
         state.hoverPoint = null;
+        state.redeployingShip = null;
         if (state.phase === 'deploy') {
           // Reset to unplaced so isLegal's ship.x===undefined check passes,
           // then dispatch atomically. deployShipMutator sets offTable=false.
@@ -9038,6 +10248,19 @@ board.addEventListener('click', (e) => {
       state.layerToggle = false;
       state.launching = null;
       state.extracting = null;
+      // Deploy phase: clicking an already-placed ship marks it for repositioning.
+      if (state.phase === 'deploy') {
+        const _rdDef = getDef(gid);
+        const _rdGrp = state.groups[gid];
+        const _rdShip = _rdGrp && _rdGrp.ships[parseInt(si)];
+        if (_rdShip && !_rdShip.offTable && _rdDef && deploySideAllowed(_rdDef.side)) {
+          state.redeployingShip = { gid, si: parseInt(si) };
+        } else {
+          state.redeployingShip = null;
+        }
+      } else {
+        state.redeployingShip = null;
+      }
       renderAll(true);
       netSendPeerView();
       return;
@@ -9063,9 +10286,18 @@ board.addEventListener('click', (e) => {
         }
         state.extracting = null;
       }
+      // During Dropsite Activation picking phase: clicking a controlled dropsite activates it
+      const _da2 = state.dropsiteActivation;
+      if (_da2 && !_da2.dsId && dropsiteController(state.scenarioData.dropsites.find(d=>d.id===did)) === _da2.side
+          && !_da2.done.includes(did) && (!_netSide || _gs() === _da2.side)) {
+        _da2.dsId = did;
+        state.selectedDropsiteId = did;
+        state.selectedGroupId = null; state.selectedShipIdx = null;
+        renderAll(true); return;  // local UI only — game events use their own dsId in intents
+      }
       // During Dropsite Activation, clicking the activated dropsite keeps it selected
       // (re-shows its detail panel) rather than toggling the selection off.
-      const isActivating = state.dropsiteActivation && state.dropsiteActivation.dsId === did;
+      const isActivating = _da2 && _da2.dsId === did;
       state.selectedDropsiteId = (state.selectedDropsiteId === did && !isActivating) ? null : did;
       // Deselect any ship so the right panel shows the dropsite
       state.selectedGroupId = null;
@@ -9124,6 +10356,22 @@ board.addEventListener('click', (e) => {
     // Snap to the deployment line only when placed in the base zone — NOT in the
     // Vanguard halo (Vanguard ships sit wherever clicked, X" into the board).
     const snapPlace = inBaseZone ? (snapToEdgeLineTangent(zone, pt, def) || pt) : pt;
+
+    // Redeployment: user clicked a specific placed ship to pick it up and move it.
+    const rdp = state.redeployingShip;
+    if (rdp && rdp.gid === state.selectedGroupId) {
+      state.redeployingShip = null;
+      const rdpShip = grp.ships[rdp.si];
+      if (rdpShip && !rdpShip.destroyed && !rdpShip.offTable) {
+        state.selectedShipIdx = rdp.si;
+        rdpShip.x = snapPlace.x;
+        rdpShip.y = snapPlace.y;
+        rdpShip.heading = def.side === 'player1' ? -90 : 90;
+        state.aiming = { gid: state.selectedGroupId, si: rdp.si, mode: 'deploy' };
+        renderAll(true);
+        return;
+      }
+    }
 
     if (undeployedIdx >= 0) {
       // Place this ship at the click point, then enter free-aim to set facing.
@@ -9369,7 +10617,9 @@ function netAfterRender() {
   if (_netWs.readyState !== WebSocket.OPEN) return;
   // Strip ephemeral pointer state before sending — hoverPoint changes every
   // mousemove and must not trigger a flood of state broadcasts.
-  const { hoverPoint: _hp, selectedGroupId: _sg, selectedShipIdx: _ss, selectedDropsiteId: _sd, layerToggle: _lt, peerView: _pv, targeting: _tgt, antiWing: _aw, detector: _det, extracting: _ext, pendingGroundLaunch: _pgl, ...stateToSend } = state;
+  const { hoverPoint: _hp, selectedGroupId: _sg, selectedShipIdx: _ss, selectedDropsiteId: _sd, layerToggle: _lt, peerView: _pv, targeting: _tgt, antiWing: _aw, detector: _det, extracting: _ext, pendingGroundLaunch: _pgl, featureAttack: _fa, launching: _lch, ...stateToSend } = state;
+  // Re-include launching only for ship-based launches (not dropsite — those commit via intent)
+  if (_lch && !_lch.fromDropsite) stateToSend.launching = _lch;
   stateToSend.peerView = { gid: _sg, si: _ss, layerToggle: _lt };
   console.log('%c[relay:legacy]', 'color:#ff4444;font-weight:bold', state.phase);
   try { _netWs.send(JSON.stringify({ type: 'state', state: stateToSend })); }
@@ -9391,11 +10641,24 @@ function _netApplyRemote(remoteState) {
     antiWing:          state.antiWing,              // local-only anti-wing targeting cursor
     detector:          state.detector,              // local-only detector targeting cursor
     extracting:        state.extracting,            // local-only extract targeting cursor
+    featureAttack:     state.featureAttack,          // local-only dropsite weapon targeting
+    // Preserve fromDropsite launches — committed via intent, must survive relay responses
+    launching:         (state.launching && state.launching.fromDropsite) ? state.launching : (remoteState.launching || null),
+    // Preserve the locally-selected dsId inside dropsiteActivation — it's UI-only
+    _daDsId:           state.dropsiteActivation && state.dropsiteActivation.dsId,
+    _daDaSide:         state.dropsiteActivation && state.dropsiteActivation.side,
   };
   // Replace the contents of the shared state object in-place so all existing
   // references (imports, closures) still point to the same object.
   Object.keys(state).forEach(k => { if (!(k in remoteState)) delete state[k]; });
   Object.assign(state, remoteState, localView);
+  // Restore the locally-selected dsId only if it hasn't been finished (added to done[])
+  if (state.dropsiteActivation && localView._daDsId
+      && !(state.dropsiteActivation.done || []).includes(localView._daDsId)
+      && state.dropsiteActivation.side === localView._daDaSide) {
+    state.dropsiteActivation.dsId = localView._daDsId;
+  }
+  delete localView._daDsId; delete localView._daDaSide;
   // Keep _netReceiving true through the renderAll() so netAfterRender() does
   // not echo the received state back to the server (which would cause a loop).
   // try/catch ensures _netReceiving is always reset — if renderAll() throws,
@@ -9565,6 +10828,11 @@ function maybeAutoFinish(gid) {
 function _intentSide(intent) {
   if (intent && intent.gid) { const d = getDef(intent.gid); if (d) return d.side; }
   if (intent && intent.type === 'deployDone') return intent.side;
+  if (intent && intent.type === 'resolveBombardCollateral') {
+    const M = state.attackModal;
+    const q = M && M.bombardCollateralQueue && M.bombardCollateralQueue[0];
+    if (q) return q.side; // the defender removes their own battalions
+  }
   if (intent && intent.assetId) {
     const a = (state.launchedAssets || []).find(x => x.id === intent.assetId);
     if (a) return a.side;
