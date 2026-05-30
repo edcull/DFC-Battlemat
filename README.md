@@ -155,10 +155,10 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 
 ## Known limitations
 
-- **Named / Famous Admiral abilities** are not implemented (generic Admiral Level + Command Ship-X are).
-- **Custom fleet import** — New Recruit list import is supported via ⊕ IMPORT LIST in the setup overlay. Famous admirals, multiple non-famous admirals, secondary objectives, and modular weapon options (Drive Refit, Laser Refit, etc.) are parsed automatically.
+- **Admiral faction abilities** (Mass Driver Volley, Dedicated Survey Teams, etc.) are shown in the AP modal for reference but are adjudicated manually — the engine does not enforce their effects.
 - **Online play** requires running the Node server. Most actions are server-authoritative; remaining relay items: asset board movement, DA feature attack opening, undo deploy, scenery placement, pre-game setup.
-- **Single-player AI** is not implemented. A rules-bot + LLM-commander design is documented (`DFC_AI_Opponent_Plan.md`).
+- **Wrong-side online clicks** silently no-op + resync rather than having buttons visually disabled.
+- **No AI opponent.**
 - A few §12 Dropsite interactions (Collateral Damage, attack-damage → feature removal) are partially implemented and worth confirming in play.
 
 ---
@@ -169,24 +169,22 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 package.json                    — Node project + deps (express, ws, fast-json-patch); npm start / npm run dev
 server.js                       — Node server: Express static + REST API + WebSocket upgrade
 client/
-  index.html                    — Module-based client (imports src/engine/; hotseat + online, networking inline)
+  index.html                    — Module-based client (imports src/engine/ and src/fleet/; hotseat + online)
   local.js                      — Hotseat glue: shared state + localRng
 src/
   api.js                        — REST routes + WebSocket message handler
   rooms.js                      — In-memory room lifecycle (slots, spectators, broadcast, TTL)
   engine/
-    constants.js                — All fleet defs, ORDERS, LAYOUTS, ASSET_PROFILES, etc.
+    constants.js                — All fleet defs, ORDERS, LAYOUTS, ASSET_PROFILES, SECONDARY_OBJECTIVES, etc.
     rng.js                      — Seeded PRNG + Math.random wrapper for local play
     state.js                    — createState() factory, buildSideFleet(), rebuildFleets()
-    mutators.js                 — All state-mutating functions (movement, combat, scoring…)
+    mutators.js                 — All state-mutating functions (movement, combat, scoring, AP…)
     gating.js                   — Intent legality: isLegal() + legalActions()
   fleet/
-    db.js                       — Full ship/weapon DB for all factions (New Recruit format)
-plans/
-  DFC_Foundation_Architecture_Plan.md  — Engine extraction + server + online client (Phases 1–3 done)
-  DFC_Fleet_Import_Plan.md             — New Recruit custom fleet import design
-  DFC_Relay_Audit.md                   — Intent migration tracker (eliminating client-to-client relay)
-  DFC_AI_Opponent_Plan.md              — Rules bot + LLM commander design
+    db.js                       — Full ship/weapon DB + admiral ability data for all 6 factions
+    parser.js                   — New Recruit list parser: parseNewRecruit(text)
+reference/
+  *.pdf                         — Faction fleet stat sheets and rulebook (source of truth for rules/data)
 ```
 
 ---
