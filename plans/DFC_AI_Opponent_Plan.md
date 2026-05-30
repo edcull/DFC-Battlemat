@@ -607,11 +607,10 @@ Returns:
   admiralLevel: 2,
   admiralGroupIdx: 3,                               // which group carries the admiral
   totalPts:     1498,
-  dropPct:      0.27,                               // fraction of pts with drop capability
   tactics:      [                                   // see Tactics Generation below
-    "Heavy battlecruiser presence — open aggressively from Vanguard range",
-    "Two troopships — prioritise early dropsite control over engagements",
-    "Low fighter count — vulnerable to bomber attack; keep ships spread"
+    "Heavy battlecruiser present — protect it; it is the prime focus-fire target",
+    "Two troopships — prioritise landing battalions early",
+    "No fighter cover — vulnerable to bomber attack; keep groups spread"
   ]
 }
 ```
@@ -620,47 +619,88 @@ Returns:
 
 ### Fleet Construction Rules
 
-Extracted from the DFC core rules and modelled from `db.js` `special` / `launch` fields.
+**Source: Dropfleet Commander Rulebook v2.3.1, Section 4.2 (verified from PDF)**
 
 #### 1. Points budget
-- Total group pts (summed as `def.pts × def.groupSize × repetitions`) must be ≤ `targetPts`
-- Accept a fleet within ±3% of target (i.e. ≥97% used) — fleets slightly under budget are legal
+- Total group pts must be **≤ `targetPts`** — never over the player's total
+- Must be **≥ 97% of `targetPts`** — no more than 3% underspend allowed
+- Valid range: `0.97 × targetPts ≤ totalPts ≤ targetPts`
+- Points cost per group = `def.pts` as listed in db.js (already the full group cost)
 
-#### 2. Tonnage cap — H and C tonnage
-- **H (Heavy)**: max 1 H-tonnage group per 500 pts of fleet value, rounded down
-  - e.g. 1500 pt fleet → max 3 H groups; 999 pt fleet → max 1 H group
-- **C (Capital)**: max 1 C-tonnage group per fleet, regardless of points
-- Detected by `def.tonnage === 'H'` or `def.tonnage === 'C'` in db.js
+#### 2. Tonnage ratios — Heavy and Colossal (rulebook §4.2)
 
-#### 3. Rare groups
-- Max **1 group** of each ship whose `special` contains the word `Rare`
-- Parsed as: `/\bRare\b/i.test(def.special)`
-- A single ship name can only appear once in the fleet at Rare status
+The tonnage rules are **points-ratio based**, not group-count based:
 
-#### 4. Unique groups
-- Max **1 group** of each ship whose `special` contains `Unique`
-- Parsed as: `/\bUnique\b/i.test(def.special)`
-- e.g. `Geneva Command Cruiser`, `Las Vegas Command Carrier`
+| Tonnage | Restriction |
+|---|---|
+| **Light** (L) | Up to the combined pts of all Medium + Heavy ships |
+| **Medium** (M) | No explicit limit — the fleet backbone |
+| **Heavy** (H) | No more pts of Heavy ships than Medium ships |
+| **Colossal** (C) | Skirmish: 0 groups · Clash: 1 group · Battle: 2 groups · Reconquest: 3 groups |
 
-#### 5. Famous Admiral
-- If `admiralLevel > 0` and a Famous Admiral ship exists for the faction, the builder may
-  substitute one group for the Famous Admiral entry (name matches `/Famous Admiral/i`)
-- The Famous Admiral group counts as both a ship group AND the admiral assignment
-- Its `pts` is the full ship+admiral cost as listed in db.js
-- Can only take a Famous Admiral whose level matches or is below `admiralLevel`
+> ⚠️ The rulebook calls the highest tier **Colossal**, not "Capital". In `db.js` this is
+> `tonnage: 'C'` (e.g. London Dreadnought, Washington Supercarrier). Heavy is `tonnage: 'H'`.
 
-#### 6. Drop requirement — 20–40% of total points
-- Drop-capable groups: `def.launch` contains an entry with `type === 'dropship'` or
-  `type === 'bulk_lander'`
-- `dropPts = sum(pts of all drop-capable groups in fleet)`
-- **Constraint**: `0.20 × totalPts ≤ dropPts ≤ 0.40 × totalPts`
-- If a faction has no drop-capable ships (e.g. pure Shaltari Gateship list), the constraint
-  is relaxed and a warning is emitted; Shaltari use Gateships for ground combat instead
+Detection: `def.tonnage === 'H'` (Heavy) or `def.tonnage === 'C'` (Colossal)
+
+Game size reference:
+- Skirmish: 501–1000 pts
+- Clash: 1001–2000 pts
+- Battle: 2001–3000 pts
+- Reconquest: 3001+ pts
+
+#### 3. Rare groups (rulebook §14.1.14)
+
+> *"You may only take one Group of this Ship in a Skirmish-sized game, two in a Clash,
+> three in a Battle, and four in a Reconquest."*
+
+Per-ship-name cap, scaling with game size:
+- Skirmish: max 1 group per Rare ship name
+- Clash: max 2 groups per Rare ship name
+- Battle: max 3 groups per Rare ship name
+- Reconquest: max 4 groups per Rare ship name
+
+Detection: `/\bRare\b/i.test(def.special)`
+
+#### 4. Unique groups (rulebook §14.1.18)
+
+> *"You may only take one Group of this Ship."*
+
+Max 1 group of each Unique ship globally, regardless of game size.
+
+Detection: `/\bUnique\b/i.test(def.special)`
+
+#### 5. Admiral rules (rulebook §4.2.1)
+
+| Admiral Level | Points cost | Minimum game size |
+|---|---|---|
+| 2 | 20 pts | Any (Skirmish+) |
+| 3 | 40 pts | Clash+ |
+| 4 | 60 pts | Battle+ |
+| 5 (Famous only) | Ship cost | Battle+ (counts as Lv4 for size restriction) |
+
+AP generation per round: **1 + admiral level** (§6.1).
+
+- Any number of generic admirals may be taken; only the highest level counts for rules
+- Faction / Famous Admirals: max **1** of either type per fleet
+- Famous Admiral ships match `/Famous Admiral/i` in `special`; they must be assigned to
+  the specific Ship in their profile
+- Level 5 Famous Admirals count as Level 4 for game-size restriction purposes
+
+#### 6. Drop assets — no minimum requirement in rulebook
+
+> ⚠️ The "20–40% drop requirement" **does not exist** in rulebook v2.3.1. There is no
+> mandatory drop-asset percentage rule. The builder should instead include drop-capable
+> groups as a **soft preference** driven by scenario objectives, not a hard constraint.
+
+Drop-capable groups (for tactics analysis only): `def.launch` contains `type === 'dropship'`
+or `type === 'bulk_lander'`. The builder tracks `dropPct` for informational purposes and
+the tactics generator uses it to advise the AI, but it does not gate fleet validity.
 
 #### 7. Group size
-- Each "group" in the fleet is one unit of `def.groupSize` ships
-- Points cost per group = `def.pts × def.groupSize` (or just `def.pts` if groupSize = 1)
-- Multiple identical groups are allowed unless the ship is Rare or Unique
+- Each "group" is the fixed unit defined by `def.groupSize` ships
+- `def.pts` in db.js is already the full group cost (not per-ship)
+- Multiple identical groups are allowed unless limited by Rare/Unique rules
 
 ---
 
@@ -669,31 +709,43 @@ Extracted from the DFC core rules and modelled from `db.js` `special` / `launch`
 The builder uses a **constraint-guided random selection** loop:
 
 ```
-1. SEED required drop groups
-   — Randomly select drop-capable groups until dropPts ≥ 0.20 × targetPts
-   — Respect Rare/Unique limits
-   — Budget: targetPts × 0.40 (cap drop spend to stay under 40%)
+Determine game size from targetPts (Skirmish/Clash/Battle/Reconquest)
+Derive: colossal_limit, rare_limit, heavy_pts_cap = mediumPts (computed iteratively)
 
-2. SEED heavy group (if points allow)
-   — If personality is aggressive/opportunist: prefer H-tonnage
-   — Check H-tonnage cap; add 0–1 H group at random
+1. SEED medium backbone
+   — Bias by personality (aggressive → high att weapons; positional → carriers/troopships)
+   — Add 2–4 M-tonnage groups to establish the Medium pts pool
 
-3. FILL remaining budget with M and L groups
-   — Build a candidate pool: all non-Rare, non-Unique M and L ships for the faction
-   — Bias pool by personality weight (aggressive → high att weapons; positional → more carriers)
-   — Randomly draw from pool, checking: points fit, Rare/Unique limits, drop% ceiling
-   — Stop when budget is within 3% tolerance or no group fits
+2. OPTIONALLY add Heavy group
+   — If personality is aggressive/opportunist and game is Clash+: consider 1 H group
+   — Check Heavy constraint: heavy pts ≤ medium pts after addition
+   — Check Colossal limit: 0 for Skirmish, else consider 1 C group for Battle+
 
-4. ASSIGN admiral
-   — If admiralLevel > 0 and Famous Admiral available: optionally substitute one group
-   — Else: assign admiral to the highest-tonnage, non-Rare group
-   — Set admiralGroupIdx
+3. ADD drop-capable groups (soft preference, not required)
+   — If personality is positional: aim for ~30% drop-capable pts
+   — Respect Rare limits per game size
 
-5. VALIDATE all constraints
+4. FILL remaining budget with L and M groups
+   — Candidate pool: all non-Unique ships for the faction
+   — Check per-name Rare limit (1/2/3/4 by game size)
+   — Check Heavy pts ratio after each H addition
+   — Stop when budget within 3% or no group fits
+
+5. ASSIGN admiral
+   — If admiralLevel = 0: skip
+   — If admiralLevel ≥ 2 and game allows: add admiral pts cost to total
+   — If Famous Admiral available at correct level: optionally substitute one group
+   — Set admiralGroupIdx to highest-tonnage, non-Rare group
+
+6. VALIDATE all constraints
+   — Heavy pts ≤ Medium pts
+   — Colossal groups ≤ game-size limit
+   — Each Rare name count ≤ game-size limit
+   — Each Unique name count ≤ 1
+   — Total pts within [0.97 × targetPts, targetPts] — never over, max 3% under
    — If any constraint fails: discard and restart (max 20 retries)
-   — On persistent failure: relax the drop ceiling to 0.50 and retry
 
-6. EMIT tactics summary (see below)
+7. EMIT tactics summary (see below)
 ```
 
 ---
@@ -709,9 +761,9 @@ prompt when the LLM is used, giving it fleet-specific strategic context.
 | Category | Detection | Tactic string |
 |---|---|---|
 | **Vanguard presence** | Any group has `def.vanguard` set | `"Vanguard ships available — consider early board presence and applying pressure before the opponent settles"` |
-| **Heavy/Capital flagship** | H or C tonnage group present | `"Heavy flagship — protect it; its points value makes it a prime focus-fire target"` |
+| **Heavy/Colossal flagship** | H or C tonnage group present | `"Heavy/Colossal flagship — protect it; its points value makes it the prime focus-fire target"` |
 | **High drop count** | dropPct > 0.35 | `"Drop-heavy roster — prioritise landing battalions early; fleet is built around ground control"` |
-| **Low drop count** | dropPct < 0.25 | `"Limited drop capacity — choose dropsites carefully; cannot afford to contest all objectives"` |
+| **Low drop count** | dropPct < 0.20 | `"Limited drop capacity — choose dropsites carefully; cannot afford to contest all objectives"` |
 | **Fighter/bomber wings** | `launch.type === 'fighter_bomber'` present | `"Fighter/bomber wings available — use them to screen against incoming bombers and to threaten crippled targets"` |
 | **Silent Running synergy** | Multiple L-tonnage groups with low sig | `"Low-signature light elements — Silent Running can effectively neutralise targeting; use approach lanes"` |
 | **Command ship present** | `special` contains `Command Ship` | `"Command Ship in fleet — maintain AP generation; prioritise its survival above most other groups"` |
@@ -719,7 +771,7 @@ prompt when the LLM is used, giving it fleet-specific strategic context.
 | **Bombardment weapons** | `special` of a weapon contains `Bombardment` | `"Bombardment capable — engage dropsites from distance; deny enemy battalion build-up without close approach"` |
 | **Close Action focus** | Majority of weapons have `Close Action` | `"Close-Action-heavy weapons — close range is essential; plan approaches that survive the initial long-range exchange"` |
 | **Torpedo complement** | `launch.type === 'torpedo'` present | `"Torpedo complement — use them to threaten or finish off crippled heavy targets"` |
-| **Aegis coverage** | `special` contains `Aegis` | `"Aegis ships present — cluster near carriers and Capitals to provide anti-wing screening"` |
+| **Aegis coverage** | `special` contains `Aegis` | `"Aegis ships present — cluster near carriers and Capital Ships to provide anti-wing screening"` |
 
 Tactics are de-duplicated and the most relevant 3–6 are selected. If the LLM is enabled,
 the tactics list is included in the planning-phase prompt as `Fleet Tactics Guidance:`.
