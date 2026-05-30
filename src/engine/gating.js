@@ -13,7 +13,7 @@
 
 import { ORDERS, INCH } from './constants.js';
 import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed } from './mutators.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, transportValue } from './mutators.js';
 
 const INTENT_TYPES = ['pass', 'endRound', 'commitScenario'];
 
@@ -71,6 +71,25 @@ export function isLegal(state, intent, side) {
       if (!ship.offTable && !ship.justArrived) return false;
       // Group must not have acted
       if (grp.ships.some(s => s.movedThisRound || s.firedThisActivation || (s.launchedThisRound > 0) || s.detectorUsed)) return false;
+      return true;
+    }
+    case 'useDetector': {
+      const { gid, si, wi, targetGid, targetSi } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable || ship.firedThisActivation || ship.detectorUsed) return false;
+      const w = def.weapons && def.weapons[wi];
+      if (!w || (w.arc !== 'LoS' && !/^Detector$/i.test(w.name))) return false;
+      const targetGrp = state.groups[targetGid];
+      if (!targetGrp) return false;
+      const targetDef = getDef(state, targetGid);
+      if (!targetDef || targetDef.side === side) return false;
+      const targetShip = targetGrp.ships[targetSi];
+      if (!targetShip || targetShip.destroyed || targetShip.offTable) return false;
       return true;
     }
     case 'pass': {
@@ -374,7 +393,22 @@ export function isLegal(state, intent, side) {
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
-    case 'extractRecon':
+    case 'extractRecon': {
+      if (state.phase !== 'play') return false;
+      const { gid: exGid, si: exSi, dsId: exDsId } = intent;
+      const exGrp = state.groups[exGid];
+      if (!exGrp || exGrp.activated) return false;
+      const exDef = getDef(state, exGid);
+      if (!exDef || exDef.side !== side) return false;
+      const exShip = exGrp.ships[exSi];
+      if (!exShip || exShip.destroyed || exShip.offTable) return false;
+      if (exShip.firedThisActivation || (exShip.launchedThisRound > 0)) return false;
+      if (transportValue(exDef) <= 0) return false;
+      const exDs = state.scenarioData?.dropsites?.find(d => d.id === exDsId);
+      if (!exDs || !(exDs.reconOps > 0)) return false;
+      if (Math.hypot(exShip.x - exDs.x * INCH, exShip.y - exDs.y * INCH) > 6 * INCH) return false;
+      return true;
+    }
     case 'startAssetMove':
     case 'assetT2T':
     case 'assetLockTarget':

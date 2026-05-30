@@ -3069,6 +3069,21 @@ export function arriveShip(state, gid, si, x, y, heading) {
   return state;
 }
 
+export function useDetector(state, rng, gid, si, wi, targetGid, targetSi) {
+  const grp = state.groups[gid];
+  const def = getDef(state, gid);
+  const ship = grp && grp.ships[si];
+  const targetGrp = state.groups[targetGid];
+  const targetDef = getDef(state, targetGid);
+  if (!grp || !def || !ship || !targetGrp || !targetDef) return state;
+  addGroupSpikes(targetGrp, targetDef, 2);
+  addGroupSpikes(grp, def, 1);
+  ship.detectorUsed = true;
+  ship.firedThisActivation = true;
+  logEvent(state, `${def.name} used Detector on ${targetDef.name} (+2 Spikes · +1 self)`);
+  return state;
+}
+
 function applyLaunchGroundAsset(state, intent) {
   const { gid, si, li, dsId, count, locationKey, targetGid, targetSi, gateSel } = intent;
   const grp = state.groups[gid];
@@ -3347,6 +3362,7 @@ export function apply(state, intent, rng) {
     case 'undoMove':          return undoMove(state, intent.gid, intent.si);
     case 'deployShip':        return deployShip(state, intent.gid, intent.si, intent.x, intent.y, intent.heading);
     case 'arriveShip':        return arriveShip(state, intent.gid, intent.si, intent.x, intent.y, intent.heading);
+    case 'useDetector':       return useDetector(state, rng, intent.gid, intent.si, intent.wi, intent.targetGid, intent.targetSi);
     case 'pass':         return passActivation(state);
     case 'endRound':     return beginEndRound(state);
     case 'applyOrder':   return applyOrder(state, rng, intent.gid, intent.order);
@@ -3373,12 +3389,29 @@ export function apply(state, intent, rng) {
     case 'daEnd':                  return applyDaEnd(state);
     case 'launchDropsiteAsset':    return applyLaunchDropsiteAsset(state, intent);
     case 'fireFeatureWeapon':      return applyFireFeatureWeapon(state, intent);
+    case 'extractRecon': {
+      const { gid: exGid, si: exSi, dsId: exDsId } = intent;
+      const exGrp = state.groups[exGid];
+      const exDef = getDef(state, exGid);
+      const exShip = exGrp && exGrp.ships[exSi];
+      const exDs = exDsId && state.scenarioData && state.scenarioData.dropsites &&
+                   state.scenarioData.dropsites.find(d => d.id === exDsId);
+      if (!exGrp || !exDef || !exShip || !exDs || !(exDs.reconOps > 0)) return state;
+      const exTake = Math.min(transportValue(exDef), exDs.reconOps);
+      if (exTake <= 0) return state;
+      exDs.reconOps -= exTake;
+      state.shipReconOps = state.shipReconOps || {};
+      const exKey = exDef.id + '#' + exSi;
+      state.shipReconOps[exKey] = (state.shipReconOps[exKey] || 0) + exTake;
+      exShip.launchedThisRound = (exShip.launchedThisRound || 0) + exTake; // blocks re-use this activation
+      logEvent(state, `${exDef.name} extracted ${exTake} Operative${exTake > 1 ? 's' : ''} from ${exDs.base.name}`);
+      return state;
+    }
     case 'holdPosition':
     case 'applyShipOrder':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
-    case 'extractRecon':
     case 'startBattalionCombat':
       state.battalionCombat = { stage: 'pick', dsId: null, done: [], log: [] };
       return state;
@@ -3462,7 +3495,6 @@ export function apply(state, intent, rng) {
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
-    case 'extractRecon':
       return state; // client handles these mutations; intent authorises the relay
     default: throw new Error(`apply: unknown intent type "${intent && intent.type}"`);
   }

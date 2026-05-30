@@ -4034,9 +4034,20 @@ function renderAttackModal() {
       const ocWeapons = [];
       M.shots.forEach(s => { const sp = parseWeaponSpecials(s.w); if (sp.overcharge && !ocWeapons.find(x=>x.wi===s.wi)) ocWeapons.push({ wi: s.wi, name: s.w.name }); });
       if (ocWeapons.length) {
+        // Overcharge requires a spare weapon slot: ship must be firing fewer weapons
+        // than its order allows. Also only the attacker may toggle it.
+        const _ocGrp = state.groups[M.attackerGid];
+        const _ocEo  = effectiveOrder(aDef, _ocGrp, M.attackerSi);
+        const _ocLim  = fireLimit(_ocEo, aDef);
+        const _ocUsed = lockedWeaponCost(aDef, aShip, _ocEo);
+        const _ocAtMax = _ocUsed >= _ocLim;
+        const _ocEnabled = isAttacker && !_ocAtMax;
+        const ocDis = _ocEnabled ? '' : ' disabled';
+        const ocOp  = _ocEnabled ? '' : ' style="opacity:0.5;"';
+        const ocHint = !isAttacker ? ' (defender cannot toggle)' : _ocAtMax ? ' (all weapon slots in use)' : '';
         body += `<div class="am-line" style="margin-top:8px;"><b>Overcharge:</b></div>`;
         ocWeapons.forEach(o => {
-          body += `<label class="am-toggle"><input type="checkbox" data-overcharge="${o.wi}" ${M.overcharge&&M.overcharge[o.wi]?'checked':''}/> Overcharge ${o.name} (×2 Dmg; 6s self-damage)</label>`;
+          body += `<label class="am-toggle"${ocOp}><input type="checkbox" data-overcharge="${o.wi}" ${M.overcharge&&M.overcharge[o.wi]?'checked':''}${ocDis}/> Overcharge ${o.name} (×2 Dmg; 6s self-damage)${ocHint}</label>`;
         });
       }
     }
@@ -6520,10 +6531,61 @@ function _3dHitShip(e, filterFn) {
   return { gid, si, ship, grp, def: getDef(gid) };
 }
 
+// Find the nearest dropsite to a 3D click, checking both orbit (station) and
+// ground (city) planes. Returns { ds, pt } where pt is board-pixel coords, or null.
+function _3dNearestDropsite(e, hitRadiusPx) {
+  const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
+  if (!dss.length) return null;
+  const rad = hitRadiusPx ?? (4 * INCH);
+  let best = null, bestD = Infinity;
+  const check = (pt, ds) => {
+    if (!pt) return;
+    const d = Math.hypot(inchToPx(ds.x) - pt.x, inchToPx(ds.y) - pt.y);
+    if (d < rad && d < bestD) { bestD = d; best = { ds, pt: { x: inchToPx(ds.x), y: inchToPx(ds.y) } }; }
+  };
+  const ptOrbit  = _3dProjectToPlane(e, _3D_LAYER_Y.orbit);
+  const ptGround = _3dProjectToPlane(e, 0);
+  dss.forEach(ds => {
+    const isStation = DROPSITE_BASE[ds.type]?.category === 'station';
+    check(isStation ? ptOrbit : ptGround, ds);
+  });
+  return best;
+}
+
 // ─── 3D CLICK HANDLER ────────────────────────────────────────────────────────
 
 function _handle3dClick(e) {
   if (state.phase === 'setup') return;
+
+  // Scenery placement — two-click flow: first click sets position, second sets angle.
+  if (state.phase === 'scenery' && state.sceneryPlace) {
+    const _sp = state.sceneryPlace;
+    const _scY = (_3D_LAYER_Y.orbit + _3D_LAYER_Y.atmosphere) / 2; // cloud mid-layer Y=90
+    const _scPt = _3dProjectToPlane(e, _scY);
+    if (!_scPt) return;
+    if (!_sp.pending) {
+      // First click: validate position and lock it in.
+      const _scValid = sceneryValid(_sp.type, _scPt.x / INCH, _scPt.y / INCH);
+      if (!_scValid.ok) { flashLaunchMsg(_scValid.reason || 'Invalid placement'); return; }
+      _sp.pending = { x: _scPt.x, y: _scPt.y };
+      _sp.angle = 0;
+      state.hoverPoint = null;
+      renderAll(true);
+    } else {
+      // Second click: commit with the current aimed angle.
+      const _scAngle = headingToward(_sp.pending.x, _sp.pending.y, _scPt.x, _scPt.y);
+      state.scenarioData.placedScenery = state.scenarioData.placedScenery || [];
+      state.scenarioData.placedScenery.push({ type: _sp.type, x: _sp.pending.x / INCH, y: _sp.pending.y / INCH, angle: _scAngle });
+      _sp.pending = null; _sp.angle = 0; state.hoverPoint = null;
+      // Switch type if quota for this type is filled.
+      const _scPlaced = state.scenarioData.placedScenery.filter(s => s.type === _sp.type).length;
+      if (_scPlaced >= ((state.scenarioData.sceneryTargets || {})[_sp.type] || 0))
+        _sp.type = _sp.type === 'micrometeor' ? 'dense' : 'micrometeor';
+      if (state.sceneryTurn) state.sceneryTurn = state.sceneryTurn === 'player1' ? 'player2' : 'player1';
+      renderAll();
+    }
+    return;
+  }
 
   // Browse-only when it is not our turn
   if (!netIsMyTurn()) {
@@ -6615,6 +6677,60 @@ function _handle3dClick(e) {
     return;
   }
 
+  // Asset launch from dropsite origin — click a target dropsite model or anywhere within aura.
+  // Must be checked before dropsite-selection so the click reaches the launch handler.
+  if (state.launching && state.launching.fromDropsite) {
+    const _fdL = state.launching;
+    const _fdMeta = launchMeta(_fdL.type);
+    if (_fdMeta && _fdMeta.target === 'point') {
+      // Prefer snapping to a clicked dropsite; fall back to plane projection.
+      const _fdSnap = _3dNearestDropsite(e);
+      const _fdSrcDs = state.scenarioData?.dropsites?.find(d => d.id === _fdL.fromDropsite);
+      const _fdSrcStation = _fdSrcDs && DROPSITE_BASE[_fdSrcDs.type]?.category === 'station';
+      const _fdPlane = _3dProjectToPlane(e, _fdSrcStation ? _3D_LAYER_Y.orbit : 0);
+      const _fdPt = _fdSnap ? _fdSnap.pt : _fdPlane;
+      if (!_fdPt) return;
+      if (Math.hypot(_fdPt.x - _fdL.x, _fdPt.y - _fdL.y) > _fdL.auraIn * INCH + 2) { flashLaunchMsg('Out of range'); return; }
+      let _fdCount, _fdKind, _fdLabel;
+      if (_fdL.type === 'fireship') {
+        _fdCount = _fdL.fireships || 0; _fdKind = 'fireship'; _fdLabel = 'Fire Ship';
+        if (_fdCount <= 0) { flashLaunchMsg('Set Fire Ships first'); return; }
+      } else if (_fdL.type === 'torpedo' || _fdL.type === 'mine') {
+        _fdCount = _fdL.assetCount || 1; _fdKind = _fdL.type; _fdLabel = _fdL.type === 'torpedo' ? 'Torpedo' : 'Mine';
+      } else {
+        const _f = _fdL.fighters || 0, _b = _fdL.bombers || 0;
+        _fdCount = _f > 0 ? _f : _b; _fdKind = _f > 0 ? 'fighter' : (_b > 0 ? 'bomber' : null);
+        _fdLabel = _fdKind === 'fighter' ? 'Fighter' : 'Bomber';
+        if (!_fdKind || _fdCount <= 0) { flashLaunchMsg('Set Fighters or Bombers first'); return; }
+      }
+      flashLaunchMsg(`Dropsite launched ${_fdCount} ${_fdLabel}${_fdCount > 1 ? 's' : ''}`, true);
+      dispatch({ type: 'launchDropsiteAsset', kind: _fdKind, count: _fdCount, x: _fdPt.x, y: _fdPt.y, fromDropsite: _fdL.fromDropsite });
+      return;
+    }
+    // Non-point dropsite launches (gate-dropship etc.) fall through to panel UI.
+  }
+
+  // Extract Recon Operatives — click a dropsite within 6" of the extracting ship.
+  if (state.extracting) {
+    const _exSnap = _3dNearestDropsite(e, 4 * INCH);
+    if (!_exSnap) { flashLaunchMsg('Click a Dropsite to extract from'); return; }
+    const _exDs  = _exSnap.ds;
+    const _exGrp = state.groups[state.extracting.gid];
+    const _exShip = _exGrp && _exGrp.ships[state.extracting.si];
+    const _exDef = getDef(state.extracting.gid);
+    if (!_exShip) { state.extracting = null; return; }
+    if (!(_exDs.reconOps > 0)) { flashLaunchMsg('No Recon Operatives at that Dropsite'); return; }
+    if (Math.hypot(_exShip.x - inchToPx(_exDs.x), _exShip.y - inchToPx(_exDs.y)) > 6 * INCH) {
+      flashLaunchMsg('Dropsite out of range (6")'); return;
+    }
+    const _exTake = Math.min(transportValue(_exDef), _exDs.reconOps);
+    const { gid: _exGid, si: _exSi } = state.extracting;
+    state.extracting = null;
+    dispatch({ type: 'extractRecon', gid: _exGid, si: _exSi, dsId: _exDs.id });
+    flashLaunchMsg(`${_exDef.name} extracted ${_exTake} Operative${_exTake > 1 ? 's' : ''}`, true);
+    return;
+  }
+
   // Asset launch — point-target types (fighters/bombers/torpedoes/mines/fireshops).
   // Complex gate-dropship launches fall back to panel UI.
   if (state.launching && !state.launching.fromDropsite) {
@@ -6644,8 +6760,30 @@ function _handle3dClick(e) {
     }
   }
 
+  // Detector: use Detector ability when clicking an enemy ship in LoS
+  if (state.detector) {
+    const _dd = state.detector;
+    const _ddMyDef = getDef(_dd.gid), _ddMyShip = state.groups[_dd.gid] && state.groups[_dd.gid].ships[_dd.si];
+    if (!_ddMyDef || !_ddMyShip) { state.detector = null; renderAll(); return; }
+    const _ddHit = _3dHitShip(e, m => getDef(m.gid) && getDef(m.gid).side !== _ddMyDef.side);
+    if (!_ddHit) { flashLaunchMsg('Click an enemy ship'); return; }
+    const _ddTs = state.groups[_ddHit.gid].ships[_ddHit.si];
+    const _ddEff = sceneryAttackEffects(_ddMyShip.x, _ddMyShip.y, _ddTs.x, _ddTs.y, _ddMyShip, _ddTs);
+    if (_ddEff.blocked) { flashLaunchMsg('No Line of Sight (blocked by scenery)'); return; }
+    flashLaunchMsg(`Detector: +2 Spikes on ${getDef(_ddHit.gid).name}, +1 on ${_ddMyDef.name}`, true);
+    state.detector = null;
+    dispatch({ type: 'useDetector', gid: _dd.gid, si: _dd.si, wi: _dd.wi, targetGid: _ddHit.gid, targetSi: _ddHit.si });
+    return;
+  }
+
+  // When a moveable ship is already selected in play phase, clicks should reach
+  // the board movement handler — skip ship mesh and dropsite hit-testing.
+  const _mvGrp  = state.selectedGroupId && state.groups[state.selectedGroupId];
+  const _mvShip = _mvGrp && state.selectedShipIdx !== null && _mvGrp.ships[state.selectedShipIdx];
+  const _inMoveMode = state.phase === 'play' && _mvShip && !_mvShip.destroyed && !_mvShip.offTable && !_mvGrp.activated;
+
   // Ship selection
-  const hit = _3dHitShip(e);
+  const hit = _inMoveMode ? null : _3dHitShip(e);
   if (hit) {
     if (!_netSide) {
       if (state.phase === 'deploy' && !deploySideAllowed(hit.def.side)) {
@@ -6681,7 +6819,7 @@ function _handle3dClick(e) {
   }
 
   // Dropsite selection — project onto orbit (station) or ground (city) plane and pick nearest
-  if (state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
+  if (!_inMoveMode && state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
     const dss = state.scenarioData.dropsites;
     let bestDs = null, bestDist = Infinity;
     const HIT_PX = 4 * INCH; // generous click radius
@@ -6810,6 +6948,22 @@ function _handle3dClick(e) {
 // ─── 3D MOUSEMOVE HANDLER ────────────────────────────────────────────────────
 
 function _handle3dMousemove(e) {
+  // Scenery placement hover and live angle update
+  if (state.phase === 'scenery' && state.sceneryPlace) {
+    const _sp = state.sceneryPlace;
+    const _scY = (_3D_LAYER_Y.orbit + _3D_LAYER_Y.atmosphere) / 2;
+    const _scPt = _3dProjectToPlane(e, _scY);
+    if (_sp.pending) {
+      // Second-click mode: rotate the piece toward cursor in real-time.
+      if (_scPt) { _sp.angle = headingToward(_sp.pending.x, _sp.pending.y, _scPt.x, _scPt.y); sync3d(); }
+    } else {
+      // First-click mode: ghost follows cursor.
+      if (_scPt) { state.hoverPoint = _scPt; sync3d(); }
+      else if (state.hoverPoint) { state.hoverPoint = null; sync3d(); }
+    }
+    return;
+  }
+
   // Aiming: rotate selected ship to face cursor live
   if (state.aiming) {
     const a = state.aiming;
@@ -6874,6 +7028,14 @@ function init3d() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setClearColor(0x050a0d);
   renderer.localClippingEnabled = true;
+  // Clip all 3D geometry to the table footprint (576×576, centred at origin → ±288).
+  // A Plane(normal, d) retains fragments where dot(normal, pos) + d ≥ 0.
+  renderer.clippingPlanes = [
+    new THREE.Plane(new THREE.Vector3( 1, 0, 0), 288),  // discard x < -288
+    new THREE.Plane(new THREE.Vector3(-1, 0, 0), 288),  // discard x >  288
+    new THREE.Plane(new THREE.Vector3( 0, 0, 1), 288),  // discard z < -288
+    new THREE.Plane(new THREE.Vector3( 0, 0,-1), 288),  // discard z >  288
+  ];
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.1;
 
@@ -6975,6 +7137,14 @@ function init3d() {
   canvas.addEventListener('pointermove', _handle3dMousemove);
   canvas.addEventListener('pointerleave', () => {
     if (state.hoverPoint) { state.hoverPoint = null; sync3d(); }
+  });
+  canvas.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (state.phase === 'scenery' && state.sceneryPlace) {
+      const sp = state.sceneryPlace;
+      if (sp.pending) { sp.pending = null; sp.angle = 0; state.hoverPoint = null; renderAll(true); }
+      else { state.sceneryPlace = null; state.hoverPoint = null; renderAll(true); }
+    }
   });
 
   _loadGlbModels();
@@ -7560,6 +7730,30 @@ function _sync3dOverlays(group) {
       }
     }
   }
+
+  // Dropsite-launch aura: dashed ring around the source dropsite while player picks target.
+  if (state.launching && state.launching.fromDropsite) {
+    const _laDs = state.scenarioData?.dropsites?.find(d => d.id === state.launching.fromDropsite);
+    if (_laDs) {
+      const _laIsStation = DROPSITE_BASE[_laDs.type]?.category === 'station';
+      const _laY  = _laIsStation ? _3D_LAYER_Y.orbit : 0;
+      const _laCx = _laDs.x * INCH - 288, _laCz = _laDs.y * INCH - 288;
+      const _laR  = state.launching.auraIn * INCH;
+      const _laCol = state.launching.side === 'player1' ? 0x4488ff : 0xff8844;
+      group.add(_3dDashedCircle(_laCx, _laCz, _laR, _laY, _laCol, 0.70, 8, 5));
+      group.add(_3dDashedCircle(_laCx, _laCz, _laR * 0.05, _laY, _laCol, 0.20, 1, 0)); // centre dot
+    }
+  }
+
+  // Extract aura: 6" dashed ring around the ship in extract-targeting mode.
+  if (state.extracting) {
+    const _exGrp  = state.groups[state.extracting.gid];
+    const _exShip = _exGrp && _exGrp.ships[state.extracting.si];
+    if (_exShip && !_exShip.destroyed && !_exShip.offTable) {
+      const _exWy = _3D_LAYER_Y[_exShip.layer] ?? _3D_LAYER_Y.orbit;
+      group.add(_3dDashedCircle(_exShip.x - 288, _exShip.y - 288, 6 * INCH, _exWy, 0xb59ad6, 0.70, 5, 3));
+    }
+  }
 }
 
 function sync3d() {
@@ -7723,6 +7917,53 @@ function _sync3dScenery(group) {
       group.add(mesh);
     }
   });
+
+  // Scenery placement ghost — pending position (with live angle) and hover preview.
+  if (state.phase === 'scenery' && state.sceneryPlace) {
+    const _gsp = state.sceneryPlace;
+    const _gdense = _gsp.type === 'dense';
+    const _gcount = _gdense ? 5 : 7;
+    const _gspread = _gdense ? 14 : 22;
+
+    const _addGhostCloud = (wx, wz, angleRad, opacity, col) => {
+      for (let i = 0; i < _gcount; i++) {
+        const r = _gdense ? 7 + i * 3 : 5 + i * 4;
+        const ang = (i / _gcount) * Math.PI * 2 + angleRad;
+        const yOff = ((i / _gcount) - 0.5) * 24;
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(r, 6, 4),
+          new THREE.MeshLambertMaterial({ color: col, transparent: true, opacity, depthWrite: false })
+        );
+        mesh.renderOrder = 2;
+        mesh.position.set(wx + Math.cos(ang) * _gspread, _CLOUD_Y + yOff, wz + Math.sin(ang) * _gspread);
+        group.add(mesh);
+      }
+    };
+
+    if (_gsp.pending) {
+      // Piece is placed — show solid ghost + dashed direction line while aiming.
+      const wx = _gsp.pending.x - 288, wz = _gsp.pending.y - 288;
+      const baseCol = _gdense ? 0x4a3a1a : 0x1a2a4a;
+      _addGhostCloud(wx, wz, (_gsp.angle || 0) * Math.PI / 180, 0.85, baseCol);
+      const aRad = (_gsp.angle || 0) * Math.PI / 180;
+      const lineLen = _gspread + 18;
+      const aimLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(wx, _CLOUD_Y, wz),
+          new THREE.Vector3(wx + Math.sin(aRad) * lineLen, _CLOUD_Y, wz + Math.cos(aRad) * lineLen),
+        ]),
+        new THREE.LineDashedMaterial({ color: 0x4ad6ff, transparent: true, opacity: 0.75, dashSize: 5, gapSize: 3 })
+      );
+      aimLine.computeLineDistances();
+      group.add(aimLine);
+    } else if (state.hoverPoint) {
+      // Hovering — show transparent ghost coloured by validity.
+      const xIn = state.hoverPoint.x / INCH, yIn = state.hoverPoint.y / INCH;
+      const valid = sceneryValid(_gsp.type, xIn, yIn);
+      const col = valid.ok ? (_gdense ? 0x4a3a1a : 0x1a2a4a) : 0x6b1a1a;
+      _addGhostCloud(state.hoverPoint.x - 288, state.hoverPoint.y - 288, 0, 0.38, col);
+    }
+  }
 }
 
 // City dropsite
@@ -9806,16 +10047,10 @@ board.addEventListener('click', (e) => {
     // Line of Sight: blocked only by Large Objects (same scenery LoS rule as weapons).
     const eff = sceneryAttackEffects(myShip.x, myShip.y, ts.x, ts.y, myShip, ts);
     if (eff.blocked) { flashLaunchMsg('No Line of Sight (blocked by scenery)'); return; }
-    // Place 2 Spikes on the enemy Group; the Detector's own Group gains 1 Spike.
-    const eg = state.groups[hit.gid];
-    addGroupSpikes(eg, getDef(hit.gid), 2);
-    addGroupSpikes(state.groups[d.gid], myDef, 1);
-    myShip.detectorUsed = true;          // forgoes this weapon for the activation
-    myShip.firedThisActivation = true;   // using Detector counts as the ship's attack
-    logEvent(`${myDef.name} used Detector on ${getDef(hit.gid).name} (+2 Spikes · +1 self)`);
     flashLaunchMsg(`Detector: +2 Spikes on ${getDef(hit.gid).name}, +1 on ${myDef.name}`, true);
     state.detector = null;
-    renderAll(); return;
+    dispatch({ type: 'useDetector', gid: d.gid, si: d.si, wi: d.wi, targetGid: hit.gid, targetSi: hit.si });
+    return;
   }
 
   if (state.featureAttack) {
