@@ -1,4 +1,4 @@
-# DFC Battlemat
+# DFC Fleet Ops
 
 A browser-based tactical assistant for **Dropfleet Commander**. The client (`client/index.html`) requires a small static server to load ES modules; an optional Node.js server adds online two-player rooms.
 
@@ -185,7 +185,7 @@ src/
 plans/
   DFC_Foundation_Architecture_Plan.md  — Engine extraction + server + online client (Phases 1–3 done)
   DFC_Fleet_Import_Plan.md             — New Recruit custom fleet import design
-  DFC_Multiplayer_Plan.md              — WebSocket two-player design
+  DFC_Relay_Audit.md                   — Intent migration tracker (eliminating client-to-client relay)
   DFC_AI_Opponent_Plan.md              — Rules bot + LLM commander design
 ```
 

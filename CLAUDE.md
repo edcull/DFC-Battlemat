@@ -4,184 +4,158 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DFC-Battlemat is a browser-based virtual battlemat for the **Dropfleet Commander** tabletop miniature wargame. The game UI is pure browser code (SVG/CSS/ES modules, no build step). An optional Node.js server adds online two-player rooms and shares the same engine as the browser.
+DFC Fleet Ops is a browser-based command interface for the **Dropfleet Commander** tabletop miniature wargame. The game UI is pure browser code (SVG/CSS/ES modules, no build step). An optional Node.js server adds online two-player rooms and shares the same engine as the browser.
 
-There are three entry points:
-- **`web/index.html`** — the legacy standalone file (~11,400 lines, everything inline). Zero dependencies, deployed to GitHub Pages. Open directly in any browser.
+Two entry points:
 - **`client/index.html`** — the module-based client. Imports the engine from `src/engine/` and supports both local hotseat and online play. Requires an HTTP server (ES module CORS rules) — use the Node server below, or any static server (e.g. `python -m http.server`) for hotseat-only.
 - **`server.js`** — the Node.js server (Express + WebSocket). Serves the client and hosts online relay rooms. Run with `npm start`.
 
 ## Running & Deployment
 
-- **Legacy (simplest):** Open `web/index.html` directly in Chrome, Firefox, or Edge — no server, no install
-- **Module client (hotseat):** Serve the repo root with any static server, then open `client/index.html`
-- **Node server (online play):** `npm install`, then `npm start` (or `npm run dev` for `node --watch` auto-restart). Serves the client at `http://localhost:3000/client/index.html` and exposes the room REST API + `/ws` WebSocket
-- **Deploy:** Push to `main` → GitHub Actions (`.github/workflows/static.yml`) auto-deploys the `web/` directory to GitHub Pages. Only the static legacy file is deployed; the Node server is not hosted by Pages
-- **No build step, no lint, no test suite.** Runtime deps (Express, ws, fast-json-patch) are needed only by the Node server; both browser clients have none
+- **Hotseat:** Serve the repo root with any static server, then open `client/index.html`
+- **Online play:** `npm install`, then `npm start` (or `npm run dev` for `node --watch` auto-restart). Serves the client at `http://localhost:3000/client/index.html` and exposes the room REST API + `/ws` WebSocket
+- **No build step, no lint, no test suite.** Runtime deps (Express, ws, fast-json-patch) are needed only by the Node server; the browser client has none
 
 ## Architecture
 
 ### Engine modules (`src/engine/`)
 
-The pure game logic has been extracted from the monolith into ES modules. The engine has zero DOM dependencies and runs identically in the browser and on the server:
+The pure game logic lives in ES modules. The engine has zero DOM dependencies and runs identically in the browser and on the server:
 
 | File | Contents |
 |---|---|
-| `src/engine/constants.js` | All fleet defs (6 factions), `FACTIONS`, `ORDERS`, `LAYOUTS`, `DEPLOYMENTS`, `ASSET_PROFILES`, etc. |
+| `src/engine/constants.js` | All fleet defs (6 factions), `FACTIONS`, `ORDERS`, `LAYOUTS`, `DEPLOYMENTS`, `ASSET_PROFILES`, `SECONDARY_OBJECTIVES`, `OBJECTIVES`, etc. |
 | `src/engine/rng.js` | Seeded PRNG (`makeRng(seed)`) + `localRng` (Math.random wrapper for browser play) |
 | `src/engine/state.js` | `createState()` factory, `buildSideFleet()`, `rebuildFleets()` |
-| `src/engine/mutators.js` | All state-mutating functions (combat, scoring, asset resolution…), the shared crippling/explosion resolvers (`makeCrippleRoll`, `rollCrippleEffect`, `makeExplosionRoll`, `rollExplosionEffect`, `applyExplosionEffect`), plus `apply(state, intent, rng)`, the intent dispatcher. |
+| `src/engine/mutators.js` | All state-mutating functions (combat, scoring, asset resolution…), crippling/explosion resolvers, plus `apply(state, intent, rng)`, the intent dispatcher. |
 | `src/engine/gating.js` | Intent legality: `isLegal(state, intent, side)` + `legalActions(state, side)`. Covers all migrated intent families; un-migrated families fall through to `default: return false`. |
 
 All engine functions take `state` (and `rng` where randomness is needed) as explicit parameters — no globals, safe for concurrent server use.
 
-**Intent layer:** an "intent" is a small serialisable action `{ type, ...payload }`. `gating.js#isLegal` is the single legality gate (run by the server before applying, and by the client before mutating in hotseat); `mutators.js#apply` dispatches an intent to its mutator. Every intent type `apply()` handles must have a matching `isLegal` case. This is the mechanism by which the server becomes authoritative — see Planned Features for the migration status.
+**Intent layer:** an "intent" is a small serialisable action `{ type, ...payload }`. `gating.js#isLegal` is the single legality gate (run by the server before applying, and by the client before mutating in hotseat); `mutators.js#apply` dispatches an intent to its mutator. Every intent type `apply()` handles must have a matching `isLegal` case.
 
 ### Server (`server.js`, `src/api.js`, `src/rooms.js`)
 
-The Node.js server (Phase 2 of the refactor — complete) hosts online two-player rooms. It is **optional**: the browser clients work without it for hotseat play.
+The Node.js server hosts online two-player rooms. It is **optional**: the browser client works without it for hotseat play.
 
 | File | Contents |
 |---|---|
-| `server.js` | Express + WebSocket entry point. Serves the repo root as static files (so the browser can load `client/` and `src/`), mounts the `/api` router, and upgrades `/ws` requests to WebSocket. Listens on `PORT` (default 3000). |
+| `server.js` | Express + WebSocket entry point. Serves the repo root as static files, mounts the `/api` router, and upgrades `/ws` requests to WebSocket. Listens on `PORT` (default 3000). |
 | `src/api.js` | REST routes (`POST /api/rooms`, `GET /api/rooms/:id`) and the WebSocket connection/message handler. |
-| `src/rooms.js` | In-memory room lifecycle: create/join/leave, side slots (`ucm`/`shal`) + spectators, broadcast/send helpers, and a 4-hour inactivity TTL. No persistence. |
+| `src/rooms.js` | In-memory room lifecycle: create/join/leave, side slots + spectators, broadcast/send helpers, and a 4-hour inactivity TTL. No persistence. |
 
-Each room holds the authoritative `state` and a seeded `rng` (from `makeRng`). The server is **migrating from trusted relay to server-authoritative**, and currently runs both paths:
-- **Intent path (authoritative):** `{type:'intent', intent}` → `isLegal(room.state, intent, side)` (reject + resync if illegal) → `apply(room.state, intent, room.rng)` → broadcast `{type:'full'}` to everyone. Migrated action families use this; the client does **not** mutate locally for these.
-- **Relay path (legacy, trusted):** `{type:'state'}` → store as authoritative → rebroadcast `{type:'full'}` to the others. Used by every action family not yet migrated to an intent.
-
-As more families move to intents, the relay path shrinks toward removal.
+Each room holds the authoritative `state` and a seeded `rng`. The server runs two paths:
+- **Intent path (authoritative):** `{type:'intent', intent}` → `isLegal` → `apply` → broadcast `{type:'full'}`. The client does **not** mutate locally for these.
+- **Relay path (legacy):** `{type:'state'}` → store as authoritative → rebroadcast. Used by the few remaining un-migrated action families.
 
 ### Fleet database (`src/fleet/`)
 
 | File | Contents |
 |---|---|
-| `src/fleet/db.js` | Full ship and weapon DB for all factions (UCM, PHR, Shaltari, Scourge, Resistance, Bioficer) in the New Recruit export format. Used by the custom fleet import system. |
+| `src/fleet/db.js` | Full ship/weapon DB for all 6 factions, keyed by ship name. Exports `findShipDef`, `applyHardpointOptions`, `FLEET_DB`, `ADMIRAL_FACTION_ABILITIES`, `FAMOUS_ADMIRAL_ABILITIES`, `FACTION_ADMIRAL_TITLES`, `FACTION_ADMIRAL_PERSONAL`, `SHIP_SPECIAL_RULES`. |
+| `src/fleet/parser.js` | `parseNewRecruit(text)` — parses New Recruit army builder export format. Returns `{ faction, admiralLevel, admirals, groups, secondaries, valid }`. Handles famous admirals, multiple non-famous admirals with abilities, hardpoint options (Drive Refit, Laser Refit, etc.), and secondary objectives. |
 
-The DB entries use `{ role, pts, tonnage, thrust, scan, sig, hull, es, ks, bs, weapons, launch, special }` shape, keyed by ship name string. Weapon entries use a helper `W(name, arc, att, lock, dmg, type, special)` and launch entries use `L(name, n, type)`.
+DB entries use `{ role, pts, tonnage, thrust, scan, sig, hull, es, ks, bs, weapons, launch, special }`. `W(name, arc, att, lock, dmg, type, special)` and `L(name, n, type)` are helpers. The `special` field lists rule tags; named unique rules (e.g. `'Stressful Manoeuvre'`, `'UCMF Battlenet'`) are mapped to descriptions in `SHIP_SPECIAL_RULES`.
+
+Admiral data exports:
+- `ADMIRAL_FACTION_ABILITIES` — per-faction pool of abilities famous/faction admirals pick from (6 per faction)
+- `FAMOUS_ADMIRAL_ABILITIES` — per-famous-admiral personal abilities (keyed by admiral name)
+- `FACTION_ADMIRAL_TITLES` — title keywords identifying named faction admirals (e.g. `'captain'`, `'rear admiral'`)
+- `FACTION_ADMIRAL_PERSONAL` — personal abilities for each named faction admiral type
 
 ### Module-based client (`client/`)
 
 | File | Contents |
 |---|---|
-| `client/index.html` | HTML/CSS + `<script type="module">`. Imports engine modules; defines all render functions, shims, event handlers, **and the inline networking + mode-selector code** (mode screen offers local hotseat, online host, online join). |
+| `client/index.html` | HTML/CSS + `<script type="module">`. Imports engine modules and fleet modules; defines all render functions, shims, event handlers, networking, and mode-selector code. |
 | `client/local.js` | Hotseat glue: creates the shared `state` and exports `localRng`. |
 
-**Shim pattern:** `client/index.html` exports state-bound wrapper functions (e.g. `function moveShip(...args) { return _moveShip(state, rng, ...args); }`) so the render/handler code can call engine functions without passing `state` explicitly. The shims live in a block immediately after the import block.
+**Shim pattern:** `client/index.html` exports state-bound wrapper functions (e.g. `function moveShip(...args) { return _moveShip(state, rng, ...args); }`) so render/handler code can call engine functions without passing `state` explicitly.
 
-**Online mode:** the originally-planned separate `client/net.js` and `client/render.js` were never created — networking and rendering live inline in `client/index.html` (same pragmatic choice as the shims). In online mode the client opens a WebSocket to `/ws?room=…&side=…` and re-renders on each incoming state. UI gating blocks the non-active side from acting on the opponent's groups.
+**Online mode:** networking lives inline in `client/index.html`. The client opens a WebSocket to `/ws?room=…&side=…` and re-renders on each incoming state. UI gating blocks the non-active side from acting on the opponent's groups.
 
-**`dispatch(intent)`** is the migration seam toward server authority. Handlers that have been migrated call `dispatch(intent)` instead of mutating directly: in hotseat it validates with `isLegal` then applies locally and re-renders; online it emits `{type:'intent'}` and waits for the server's authoritative broadcast (no local mutation). Un-migrated handlers still mutate `state` directly and rely on `netAfterRender()` pushing the full state via the relay path.
-
-### Legacy monolith (`web/index.html`)
-
-The original single-file app, kept intact and frozen. It continues to be deployed to GitHub Pages and does not receive new features. The internal structure:
-
-| Approximate lines | Section |
-|---|---|
-| 1–955 | HTML head + CSS |
-| 964–1303 | Fleet constants |
-| 1450–2015 | Game constants (`ORDERS`, `LAYOUTS`, etc.) |
-| ~1894–1953 | Global `state` object |
-| ~2017–8704 | ~50+ render functions + `renderAll()` |
-| ~9178+ | Event handlers |
+**`dispatch(intent)`** is the migration seam toward server authority. Migrated handlers call `dispatch(intent)` instead of mutating directly: in hotseat it validates with `isLegal` then applies locally; online it emits `{type:'intent'}` and waits for the server's authoritative broadcast. Un-migrated handlers still mutate `state` directly and rely on `netAfterRender()` pushing the full state via the relay path.
 
 ### State & Rendering Pattern
 
-**Single global `state` object** is the sole source of truth in both the legacy and module client. Every user interaction:
+**Single global `state` object** is the sole source of truth. Every user interaction:
 
 1. Event handler validates legality (gating via `state.phase`, `state.activeSide`, etc.)
 2. Calls a mutator (engine function via shim) to update `state`
 3. Calls `renderAll()` — re-renders the entire UI from scratch
 
-`renderAll()` calls ~20 specialized render functions, all pure reads from `state`.
+`renderAll()` calls ~20 specialised render functions, all pure reads from `state`.
 
 ## Fleet & Faction Data
 
-Each faction fleet is a constant array of ship class definitions in `src/engine/constants.js`:
-```javascript
-const UCM_FLEET = [{ id, name, role, pts, tonnage, thrust, scan, sig, hull,
-                      es, ks, bs, weapons, launch, special }, ...]
-```
+Six factions: UCM, Scourge, PHR, Shaltari, Resistance, Bioficer. Each has a quickplay roster in `src/engine/constants.js` and a complete ship/weapon DB in `src/fleet/db.js`.
 
-Ships are cloned with side-prefixed IDs (`'ucm:u1'`, `'shal:s1'`) into `state.groups` at game start, preventing ID collisions in mirror matches.
+Quickplay ships are cloned with side-prefixed IDs (`'ucm:u1'`, `'shal:s1'`) into `state.groups` at game start. Imported fleet ships use `'imp0'`, `'imp1'`, etc. as base IDs.
 
-A more complete ship/weapon DB lives in `src/fleet/db.js`, keyed by ship name, used by the custom fleet import parser.
+Custom fleet import (`⊕ IMPORT LIST` in setup overlay): `parseNewRecruit` parses the New Recruit export text into groups + admiral entries; `buildSideFleet` then uses `findShipDef` to look up each ship from `db.js`, applying hardpoint options via `applyHardpointOptions`.
 
 ## Client UI
 
+### Setup overlay
+- Faction/colour pickers start unassigned; auto-set to faction defaults when a quickplay fleet is chosen or a list is imported.
+- `⊕ IMPORT LIST` opens a fleet import modal; parsed fleet is stored in `state.importedFleets[slot]`.
+- `SETUP / VIEW FLEET` (shown when an imported fleet or Bioficer quickplay is selected) opens `openFleetView(slot)` — a table showing ADMIRALS, PAYLOADS (Bioficer), GROUPS / SHIPS, and SECONDARY OBJECTIVES sections.
+- Admiral assignments: famous admirals are auto-slotted; non-famous (faction) admirals show a flagship dropdown + faction ability dropdown (only for named faction types like Captain, Rear Admiral). `state.importedFleets[slot].admiralAssignments` holds `[{ level, groupIdx, shipIdx, isFamous, admiralIdx, abilities }]`.
+- `fleetAssignmentsReady(slot)` checks Bioficer payload links and admiral assignments before allowing game start.
+
 ### Topbar
-- **`renderBrand()`** — replaces the old static brand element. In play phase renders a clickable button showing `{FACTION1} {P1vp} {P1name} VS {P2name} {P2vp} {FACTION2}` (opens VP breakdown modal). In other phases shows plain faction names.
+- **`renderBrand()`** — in play phase renders a clickable button showing `{FACTION1} {P1vp} {P1name} VS {P2name} {P2vp} {FACTION2}` (opens VP breakdown modal). In other phases shows plain faction names.
 - Phase breadcrumb nav is always visible.
 - Play-phase controls (round counter, END ROUND) remain in `topbar-controls`.
 
 ### Fleet panels (left)
-- **`makeGroupCard()`** — group cards are simplified: no stat row (T/SC/SIG/HP removed), no points shown, tonnage label only. Groups sorted heaviest-first (C→H→M→L). Admiral flagship gets a ⭐ prefix (detected from `importedFleets[slot].admiralGroupIdx` matching `def.baseId`).
+- **`makeGroupCard()`** — group cards show name, role, tonnage. Admiral flagship marked with ⭐. Deployment/reserve/activation badges as appropriate.
 - Clicking the player name title opens a fleet view modal: `openFleetViewForSide(side)` handles both imported and pre-generated fleets.
+- AP chip at top of each fleet during play — click to open AP adjuster modal. In online mode, only own side's chip is interactive.
 
-### Right panel
-- **`renderEventLog()`** — always visible (dock shown in all phases). Pre-play shows just the header; play phase shows the expandable log.
-- When online (`_netRoom` set), the event log header shows the room ID and a colour-coded connection status dot. `_netUpdateBadge()` updates these elements in-place; there is no longer a separate topbar badge.
-- **`renderDropsiteDetail(ds)`** — includes an **Objectives** section when any secondary nominations (`secondaryNominations[side][key].dsId === ds.id`) or protect nominations (`protectNom[side] === ds.id`) target the dropsite. Each entry shows the objective icon, player name in faction colour, and objective name.
+### AP adjuster modal
+- Shows current AP with +/− controls (own side only in online mode; opponent side is view-only).
+- AP changes dispatch `adjustAP` intent — server-authoritative in online play, logged in event log.
+- Shows ability reference: Core 4 always (AP Re-roll, Brace, Contain, TTT), then famous admiral personal abilities, faction admiral personal abilities (for named faction types), and chosen faction pool ability.
+- AP formula: `1 (base) + max(level_i + CommandShip-X_of_flagship_i) for each alive admiral`. An admiral's contribution drops to zero if their specific assigned ship is destroyed.
+
+### Ship detail panel
+- Selected ship shows stat grid (Thrust/Scan/Sig/Hull/ES/KS/BS), then a **SPECIAL RULES** section for any named/unique rules in `def.special` that have descriptions in `SHIP_SPECIAL_RULES`. Standard stat-tags (Aegis-X, Vanguard-X, etc.) are shown without descriptions; unique rules (Jink, UCMF Battlenet, Energy Siphon, etc.) show full rule text.
 
 ### Deploy phase
-- **Two-click + confirm flow:** first click places the ship locally (sets position + enters aiming mode); second click (aim confirm) sets the final heading locally and stores `_pendingDeploy = {gid, si, x, y, heading}` — **no dispatch yet**. `renderDeployHint()` shows **CONFIRM PLACEMENT** and **CANCEL** buttons. Only CONFIRM dispatches `deployShip`.
-- `_pendingDeploy` is a client-local variable (never in server state). It is cleared by `_netApplyRemote` on any server broadcast.
-- Board click handlers (both 3D canvas and SVG) guard against `_pendingDeploy` being set — clicking the board while a ship is pending confirmation flashes a message rather than starting a new placement. This enables correct multi-ship group deployment.
-- **`sideNeedsDeployPhase(state, side)`** — new export in `mutators.js`; imported by `gating.js`. True if a side has vanguard ships or a `directly_deploy` approach. Used to:
-  - Allow player2 to deploy without waiting for player1 when player1 has nothing to deploy (`deploySideAllowed`).
-  - Advance to play as soon as every side that actually needs deployment has signalled `deployDone` (rather than requiring both unconditionally).
-  - Gate the `deployDone` legality check in `gating.js` (player2 only waits for player1 if player1 genuinely has ships).
+- **Two-click + confirm flow:** first click places the ship locally; second click sets the heading and stores `_pendingDeploy`. `renderDeployHint()` shows **CONFIRM PLACEMENT** and **CANCEL**. Only CONFIRM dispatches `deployShip`.
+- **`sideNeedsDeployPhase(state, side)`** — export in `mutators.js`. Determines whether a side has anything to deploy (vanguard ships or directly-deploy approach).
 
 ### 3D view
-- **Auto-switch:** `renderAll()` tracks `_prevPhase` and `_prevProtectNomPhase`. When the scenery phase ends or the protect nomination phase completes (`protectNomPhase` flips false), `toggle3d()` is called automatically if 3D is not already active.
+- **Auto-switch:** `renderAll()` auto-calls `toggle3d()` when the scenery phase ends or the protect nomination phase completes.
 
-## Planned Features
+## Intent Migration Status
 
-Architecture plans live in `plans/`. The Foundation plan's section 8 holds the authoritative phase-by-phase status table.
+**Fully server-authoritative (all dispatched via `dispatch(intent)`):**
+- Turn flow: `pass`, `endRound`, `finishActivation`, `adjustAP`
+- Orders: `applyOrder`, `applyShipOrder`
+- Movement: `moveShip`, `aimShip`, `vectoredMove`, `holdPosition`, `undoMove`, `nominateLead`
+- Deploy: `deployShip`, `deployDone`, `beginPlay`, `advanceFromScenery`
+- Weapons: `fireWeapons`, `lockWeaponTarget`, `unlockWeapon`
+- Combat modal: `attackStep`, `attackReroll`, `attackFighterReroll`, `finishAttack`, `attackDeclare`
+- Launches: `launchAsset`, `cancelLaunch`
+- Scoring / round: `advanceRound`
+- Activation extras: `surveySite`, `extractRecon`, `breakthroughFlyoff`, `objectivesFlyoff`
+- Asset phase: `resolveBoarding`, `startAssetMove`, `assetT2T`, `assetLockTarget`, `assetUntarget`, `assetResetMove`
+- Battalion combat: `startBattalionCombat`, `bcPickDropsite`, `bcAssignGround`, `bcSkipAssign`, `bcToDestroy`, `bcFinish`, `daDestroyFeature`
+- DA transitions: `daFinishDropsite`, `daSwitchSide`, `daEnd`
 
-**Done:**
-- **Foundation Phase 1** (`DFC_Foundation_Architecture_Plan.md`) — engine extraction (`constants`, `rng`, `state`, `mutators`).
-- **Foundation Phase 2** — Node server + WebSocket rooms (`server.js`, `src/api.js`, `src/rooms.js`).
-- **Foundation Phase 3** — online client: mode selector (hotseat / host / join), WebSocket networking, and UI side-gating in `client/index.html`.
-
-**In progress — Phase 1d / server authority (intent migration):**
-- `src/engine/gating.js` (`isLegal`/`legalActions`) and `mutators.js#apply` exist; the server's intent path validates and applies authoritatively.
-- **Migrated (complete families):**
-  - Turn flow: `pass`, `endRound`, `finishActivation`
-  - Orders: `applyOrder`, `applyShipOrder`
-  - Movement: `moveShip` (full geometric cone validation), `aimShip`, `vectoredMove`, `holdPosition`, `undoMove`, `nominateLead`
-  - Deploy: `deployShip`, `deployDone` (server-enforced side check + smart single-side advancement via `sideNeedsDeployPhase`), `beginPlay` (rolls initiative server-side), `advanceFromScenery` (scenery→deploy or play; rolls initiative when no deploy phase)
-  - Weapons: `fireWeapons`, `lockWeaponTarget`, `unlockWeapon`
-  - Combat modal: `attackStep`, `attackReroll`, `attackFighterReroll`, `finishAttack`, `attackDeclare` (shields/overcharge/escort/brace/contain/impel). Every die rolls server-side; attacker and defender each drive only their own decisions.
-  - Launches: `launchAsset`, `cancelLaunch`
-  - Scoring / round: `advanceRound` (runs `runScoring` + `rollInitiative` with seeded rng)
-  - Activation extras: `surveySite`, `extractRecon`, `breakthroughFlyoff`, `objectivesFlyoff`
-  - Asset phase: `resolveBoarding`, `startAssetMove`, `assetT2T`, `assetLockTarget`, `assetUntarget`, `assetResetMove`
-  - Battalion combat: `startBattalionCombat`, `bcPickDropsite`, `bcAssignGround`, `bcSkipAssign`, `bcToDestroy`, `bcFinish`, `daDestroyFeature`
-  - DA transitions: `daFinishDropsite`, `daSwitchSide`, `daEnd`
-- **Still on relay (remaining work):**
-  - Asset board movement (board click during asset step) — complex split/dogfight/scenery logic; asset stage-advance buttons (`#asset-finish-stage`, `#asset-move-done`)
-  - DA feature attack modal opening (`openFeatureAttackModal` sets `state.attackModal` client-side; subsequent modal steps are already server-authoritative)
-  - Undo deploy (`data-undo-deploy`)
-  - Scenery placement board click
-  - Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes) — acceptable relay for pre-game config
-- **UX gap (no-op instead of disabled):** wrong-side online clicks silently no-op + resync rather than having their buttons visually disabled.
-
-**In progress — Custom Fleet Import:**
-- `src/fleet/db.js` — complete: full ship and weapon DB for all six factions, keyed by New Recruit ship name.
-- Parser and setup-overlay integration still pending (`DFC_Fleet_Import_Plan.md`).
-
-**Pending (later phases):**
-- **AI Opponent** (`DFC_AI_Opponent_Plan.md`) — `src/ai/` rules-based heuristics + optional LLM commander; consumes `legalActions`/`apply`.
-- **Production deploy** (`DFC_Multiplayer_Plan.md`) — nginx/TLS/systemd hosting for live online play.
+**Still on relay (remaining work):**
+- Asset board movement (board click during asset step); asset stage-advance buttons
+- DA feature attack modal opening
+- Undo deploy
+- Scenery placement board click
+- Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes)
 
 ## Known Limitations
 
-- Named admirals not implemented (uses generic admiral stats)
-- Custom fleet import DB (`src/fleet/db.js`) exists but the New Recruit parser and setup integration are not yet wired up — only built-in faction rosters are selectable in the setup overlay
-- No AI opponent yet
-- Online multiplayer is **mostly server-authoritative**: the vast majority of play actions (movement, combat, scoring, asset phase, battalion combat, deploy) route through server-validated intents. Remaining relay items: asset board movement, DA feature attack opening, undo deploy, scenery placement, pre-game setup.
-- Wrong-side online clicks silently no-op + resync rather than having their buttons visually disabled
-- Online play requires running the Node server (the GitHub Pages deploy is hotseat-only)
+- Online play requires running the Node server.
+- Wrong-side online clicks silently no-op + resync rather than having buttons visually disabled.
+- Asset board movement, undo deploy, scenery placement, and pre-game config still relay full state rather than using server-validated intents.
+- No AI opponent.
+- Faction admiral personal abilities and famous admiral abilities are defined in `db.js` and shown in the AP modal, but are informational only — the abilities themselves (e.g. Mass Driver Volley, Dedicated Survey Teams) must be adjudicated manually by players.

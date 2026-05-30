@@ -1,4 +1,4 @@
-# DFC Battlemat — AI Opponent Plan
+# DFC Fleet Ops — AI Opponent Plan
 
 > **Status (May 2026): PLANNED — not yet implemented.**
 > `legalActions(state, side)` and the full intent/apply pipeline exist. The engine runs

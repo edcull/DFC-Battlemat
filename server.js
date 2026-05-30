@@ -1,4 +1,4 @@
-// DFC Battlemat — server entry point.
+// DFC Fleet Ops — server entry point.
 // Serves static files, REST API, and WebSocket rooms.
 //
 // Usage:
@@ -61,7 +61,7 @@ wss.on('connection', handleConnection);
 // ---------------------------------------------------------------------------
 
 server.listen(PORT, () => {
-  console.log(`DFC Battlemat server listening on http://localhost:${PORT}`);
+  console.log(`DFC Fleet Ops server listening on http://localhost:${PORT}`);
   console.log(`  Module client : http://localhost:${PORT}/client/index.html`);
   console.log(`  Legacy client : http://localhost:${PORT}/web/index.html`);
   console.log(`  API           : http://localhost:${PORT}/api/rooms`);

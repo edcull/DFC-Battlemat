@@ -482,24 +482,142 @@ export function findShipDef(factionKey, name) {
   return null;
 }
 
-// ── Faction admiral ability lists ────────────────────────────────────────────
+// ── Faction admiral titles ────────────────────────────────────────────────────
+// The exact title substrings that identify a named faction admiral (vs generic).
+// Used to determine whether to show the faction ability picker in the fleet view.
+// Keys are lower-case and matched case-insensitively against the parsed title.
+export const FACTION_ADMIRAL_TITLES = {
+  ucm:        ['captain', 'rear admiral'],
+  scourge:    ['fleet thrall', 'fleet champion'],
+  phr:        ['vizier', 'vice director'],
+  shaltari:   ['skychief', 'starchief'],
+  resistance: ['engineer', 'artificer'],
+  bioficer:   ['ardent', 'accumulator'],
+};
+
+// ── Faction admiral personal abilities ───────────────────────────────────────
+// Abilities that faction admirals (not famous) always have — separate from pool picks.
+// Keyed by faction, then by lower-cased title keyword.
+export const FACTION_ADMIRAL_PERSONAL = {
+  ucm: {
+    'captain':      [{ cost: 2, name: 'Dedicated Survey Teams',  desc: 'When you activate a Group of a single Ship, that Ship may Survey a Dropsite and also attack with a single weapon this round.' }],
+    'rear admiral': [{ cost: 2, name: 'Overcharge Lasers',       desc: 'Pick one Laser weapon in an attacking Group. That weapon gains Fusillade-2 for that attack.' },
+                     { cost: 2, name: 'Push Engines to Max',     desc: 'At start of a friendly Group\'s activation, each Ship in it suffers 1 damage and improves Thrust by 2" until end of activation.' }],
+  },
+  scourge: {
+    'fleet thrall':   [{ cost: 1, name: 'Dissipate Energy', desc: 'At end of any Group\'s activation, target a friendly Group and remove 1 Spike.' },
+                       { cost: 2, name: 'Silent Launch',    desc: 'When a friendly Group takes Silent Running, it may also launch Assets this round (Signature still 0").' }],
+    'fleet champion': [{ cost: 1, name: 'Reaving Gaze', desc: 'Pick an Oculus weapon in an attacking Group. Replace its Scald-X with Reave-X (same value) for that attack. Costs 2AP if the Group has 2+ Ships.' }],
+  },
+  phr: {
+    'vizier':        [{ cost: 1, name: 'Re-route Systems', desc: 'At start of a friendly Group\'s activation, remove one Crippling Effect token (of any type) from that Group.' },
+                      { cost: 3, name: 'Ranked Fire',      desc: 'Pick a Broadside Volley-X weapon when assigning targets. That weapon does not need to alternate arcs for its Volley attacks — it may target the same arc with each Volley.' }],
+    'vice director': [{ cost: 1, name: 'Akira Manoeuvre',  desc: 'When you activate a single-Ship Group, that Ship may make a Vectored move in addition to its normal movement.' }],
+  },
+  shaltari: {
+    'skychief':  [{ cost: 2, name: 'Cunning Positioning', desc: 'When you move a Group of M Tonnage, that Group gains Vectored for that movement.' }],
+    'starchief': [],
+  },
+  resistance: {
+    'engineer':  [{ cost: 2, name: 'Artillery Strike',      desc: 'When assigning targets for an Artillery weapon, its damage type becomes Core for those attacks. Costs 3AP if the ship is H or C tonnage.' }],
+    'artificer': [{ cost: 1, name: 'Manic Repairs',          desc: 'When you activate a Group, all Ships in it gain Regenerate-2 until end of round.' },
+                  { cost: 2, name: 'Resistance Elite Force', desc: 'At end of the round, remove 2D3 enemy Battalions from a friendly Ship.' }],
+  },
+  bioficer: {
+    'accumulator': [{ cost: 2, name: 'Backpedal', desc: 'At start of a friendly Group\'s activation, you may move each Ship in that Group up to 3" directly backwards.' }],
+    'ardent':      [{ cost: 2, name: 'Gravitic Manoeuvring',   desc: 'When a friendly Group is given Max Thrust, it may turn as if on General Quarters.' },
+                    { cost: 1, name: 'Kinetic Deconstruction', desc: 'When a friendly Group attacks with any Decon weapon, those weapons change their damage type to Kinetic for that activation.' }],
+  },
+};
+
+// ── Faction ability pool ──────────────────────────────────────────────────────
+// Abilities that famous and faction admirals may pick from when building lists.
 // Each entry: { key, name, cost (AP), desc }
-// Fill in from faction PDFs for factions marked TODO.
 export const ADMIRAL_FACTION_ABILITIES = {
   ucm: [
-    { key: 'mass_driver_volley',   name: 'Mass Driver Volley',      cost: 2, desc: 'Ships in scan range fire a bonus Mass Driver attack at a chosen target.' },
-    { key: 'atmospheric_bombing',  name: 'Atmospheric Bombing Run', cost: 2, desc: 'A ship in scan range launches 1 Bombing token at a Dropsite Feature.' },
+    { key: 'colonial_legions',    cost: 2, name: 'Colonial Legions',           desc: 'After Battalion Combat, target a Dropsite/Feature. If any enemy Battalions removed friendly Battalions from it, place 1 friendly Battalion there.' },
+    { key: 'intensify_pd',        cost: 1, name: 'Intensify Point-Defence',    desc: 'At end of Planning Phase, pick a friendly Group. All Ships in it improve Aegis-X by 2, or gain Aegis-1 if they don\'t have it.' },
+    { key: 'infiltrate_sabotage', cost: 2, name: 'Infiltrate and Sabotage',    desc: 'At end of Planning Phase, pick a Dropsite within 6" of a friendly Group. It takes D3+1 Core hits.' },
+    { key: 'mass_driver_volley',  cost: 2, name: 'Mass Driver Volley',         desc: 'When assigning weapons to a target, all attacking Mass Driver weapons improve their Lock by 1 for that attack.' },
+    { key: 'atmospheric_bombing', cost: 1, name: 'Atmospheric Bombing Run',    desc: 'At start of Asset Phase, target a friendly Bomber Wing. That Wing gains Bombardment until end of round.' },
+    { key: 'next_gen_armour',     cost: 2, name: 'Next-Gen Armour Plating',    desc: 'At end of Planning Phase, target a friendly Group. That Group may re-roll failed Energy Saves until end of round.' },
   ],
-  scourge:    [], // TODO
-  phr:        [], // TODO
-  shaltari:   [], // TODO
-  resistance: [], // TODO
-  bioficer:   [], // TODO
+  scourge: [
+    { key: 'for_the_species',       cost: 1, name: 'For the Species',        desc: 'At end of a friendly Group\'s activation, pick a Crippled ship in it. Roll 1 die per remaining Hull; a ship within 3" takes 1 damage per 3+. That Crippled ship is then destroyed (no explosion).' },
+    { key: 'augmentations',         cost: 3, name: 'Augmentations',          desc: 'At start of a friendly Carrier\'s activation, if it has 2+ Bulk Landers, replace all with a single Orbital Defence Gun Feature until end of round. Once per round.' },
+    { key: 'abandon_all_hope',      cost: 2, name: 'Abandon all Hope',       desc: 'At end of Planning Phase, target an opponent. That opponent discards D3 Ability Points.' },
+    { key: 'assimilated_bioforms',  cost: 1, name: 'Assimilated Bioforms',   desc: 'At start of Battalion Combat, pick a City with friendly Battalions. Deploy D3 Assimilated Battalions there; remove any remaining at end of Battalion Combat.' },
+    { key: 'high_speed_launch',     cost: 2, name: 'High Speed Launch',      desc: 'At end of Planning Phase, pick a friendly Group. It gains Rapid Drop and may launch Assets at end of activation while on Max Thrust until end of round.' },
+    { key: 'expert_defence_crews',  cost: 1, name: 'Expert Defence Crews',   desc: 'At start of Asset Phase, pick a friendly Group. It gains Marines-2D3 until end of round.' },
+  ],
+  phr: [
+    { key: 'countermeasures_hack', cost: 1, name: 'Countermeasures Hack',   desc: 'At start of a friendly Group\'s activation, target an enemy Group in LOS of a friendly Admiral. Until end of that activation it cannot use Backup Save, Aegis, or fighter Close Protection. Costs 2AP if targeting H or C tonnage.' },
+    { key: 'weapons_hack',         cost: 2, name: 'Weapons Hack',           desc: 'Once per round, at start of an enemy Group\'s activation, choose one of its weapons. Until end of its activation, each attack die result of 1 causes the attacking Ship to lose Hull equal to that weapon\'s unmodified Damage.' },
+    { key: 'ship_of_the_line',     cost: 1, name: 'Ship of the Line',       desc: 'When assigning targets, Broadside Fusillade weapons may always apply their Fusillade bonus regardless of the Group\'s order. On Weapons Free, double the Fusillade value instead.' },
+    { key: 'drive_hack',           cost: 2, name: 'Drive Hack',             desc: 'Once per round, at end of Planning Phase, target an enemy Group in LOS. At start of its activation that Group rolls a Backup save; if it fails (or has none), it cannot use Course Change or Max Thrust this round.' },
+    { key: 'repair_drones',        cost: 1, name: 'Repair Drone Squadron',  desc: 'At end of Repair step of End Phase, target a friendly Ship. It recovers D3 lost Hull Points.' },
+    { key: 'elite_ground_forces',  cost: 2, name: 'Elite Ground Forces',    desc: 'At start of Battalion Combat, choose a Feature with friendly Battalions. Until end of that step, those Battalions remove 2 enemy Battalions instead of 1 and may target anywhere on the Dropsite in the 3rd step.' },
+  ],
+  shaltari: [
+    { key: 'impel_mines',          cost: 1, name: 'Impel Mines',            desc: 'When a friendly H/C Carrier launches assets, it may also launch a single Impel Mine.' },
+    { key: 'advanced_picket',      cost: 1, name: 'Advanced Picket Ships',  desc: 'When a Group uses its Shield-X special rule, roll a die. On a 4+, do not gain a Spike from that use.' },
+    { key: 'misdirection',         cost: 1, name: 'Misdirection',           desc: 'At start of Asset Phase, pick a Dropsite. Redistribute all friendly Assets at that Dropsite and its Features.' },
+    { key: 'nav_mastery',          cost: 1, name: 'Navigational Mastery',   desc: 'At start of a friendly Group\'s activation, that Group increases its Thrust by D3" until end of activation.' },
+    { key: 'power_to_weapons',     cost: 2, name: 'Power to the Weapons',   desc: 'At start of a friendly Group\'s activation, it may fire any weapons on General Quarters but may not use Shield Saves until end of round.' },
+    { key: 'lives_of_experience',  cost: -1, name: 'Lives of Experience',   desc: 'At start of each round, pick one Ability from any other Admiral on the table. This Ability becomes a copy of that Ability until end of round. Costs the same AP as the copied Ability.' },
+  ],
+  resistance: [
+    { key: 'expert_repair_crews',  cost: 2, name: 'Expert Repair Crews',    desc: 'At start of Repair step of End Phase, remove all Crippling effects from a friendly Group.' },
+    { key: 'duct_tape',            cost: 2, name: 'Duct Tape and Bubblegum', desc: 'When a friendly M/H/C Ship is destroyed by an opponent\'s attack, it remains in play until start of End Phase, then rolls for explosion and is removed. It counts as destroyed.' },
+    { key: 'redundant_systems',    cost: 1, name: 'Redundant Ship Systems', desc: 'When rolling for Crippling Effects on a friendly Ship, roll 1D6 instead of 2D6. Count a result of 1 as 2.' },
+    { key: 'final_mission',        cost: 1, name: 'Final Mission',          desc: 'When attacking with Fire Ships, one attacking Wing gains Corruptor-2 for that attack.' },
+    { key: 'never_tell_odds',      cost: 1, name: 'Never Tell Me the Odds', desc: 'When a friendly Group or Wing moves through Scenery, ignore that Scenery piece\'s effects on movement.' },
+    { key: 'sabotage',             cost: 2, name: 'Sabotage',               desc: 'At end of Activation Phase, before activating Dropsites, pick an enemy-controlled Dropsite within 6" of a friendly Group. It takes D3+1 Core Hits. Spend 1 extra AP to re-roll the D3.' },
+  ],
+  bioficer: [
+    { key: 'good_fight',           cost: 1, name: 'Good Fight, We Should Do It More Often', desc: 'If a friendly Group\'s attack would completely remove an enemy Group, that friendly Group may immediately turn up to 45 degrees.' },
+    { key: 'maddening_communique', cost: 3, name: 'Maddening Communiqué',   desc: 'At start of Activation Phase, pick an opponent. That opponent\'s Abilities cost 1 additional AP until end of round.' },
+    { key: 'forcing_unfair_fight', cost: 2, name: 'Forcing an Unfair Fight', desc: 'At start of Activation Phase, pick a contested Dropsite. Add a friendly Battalion to each Feature on it. At start of End Phase Cleanup, remove a friendly Battalion from each Feature there.' },
+    { key: 'precision_strike',     cost: 2, name: 'Precision Strike',       desc: 'When assigning a Group\'s weapons to targets, pick one weapon. Improve its Lock by 1 for that attack.' },
+    { key: 'prismatic_surprise',   cost: 1, name: 'Prismatic Surprise',     desc: 'At end of Planning Phase, swap the attached Payloads of two Porter Ships with the same Porter value.' },
+    { key: 'unsportsmanlike',      cost: 3, name: 'Unsportsmanlike Behaviour', desc: 'During this round\'s End Phase Cleanup, all players retain any unspent AP into the next round. Next round, only players who used this Ability can generate AP from Admirals.' },
+  ],
 };
 
 // Famous admiral abilities — keyed by admiral name exactly as in FLEET_DB.
-// Each entry: { key, name, cost (AP), desc }  — fill from faction PDFs.
-export const FAMOUS_ADMIRAL_ABILITIES = {};
+// Each entry: { key, name, cost (AP), desc }
+export const FAMOUS_ADMIRAL_ABILITIES = {
+  // UCM
+  'Tayne':               [{ cost: 2, name: 'Close Quarter Battle',  desc: 'When a friendly Group moves, each Ship in it suffers 1 damage and gains Vectored until end of round.' }],
+  'Weaver':              [{ cost: 2, name: 'Laser Bombardment',      desc: 'When assigning targets to an FN Laser weapon, that weapon gains Bombardment for that attack.' }],
+  'Havelock':            [{ cost: 2, name: 'Ballistic Prediction',   desc: 'When assigning a Group\'s weapons to a target, pick one Mass Driver weapon. It improves its Lock by 1 for that attack.' }],
+  '"Granite" Halsey':    [{ cost: 4, name: 'Master Tactician',       desc: 'At end of this Group\'s activation, discard a Pass Token and target another friendly L or M Group. If you do, that Group may turn up to 45°, move up to ¼ Thrust, and each Ship may attack with one weapon.' }],
+  // Scourge
+  'Overlord of Flies':   [{ cost: 2, name: 'Infernal Maw',           desc: 'After rolling to hit with a Furnace weapon, re-roll any of its attack dice (both hits and misses).' }],
+  'Enslaver':            [{ cost: 2, name: 'Close in and Personal',   desc: 'When a friendly Group takes Max Thrust, each Ship in it may fire a single Close Action weapon during that activation.' }],
+  'Flayer':              [{ cost: 1, name: 'Death Dispenser',         desc: 'When launching Dropships or Bulk Landers at a Dropsite, place an additional D3 Battalion tokens there.' }],
+  'Baba Yaga':           [{ cost: 1, name: 'Limitless Pestilence',    desc: 'When a friendly Fighter or Bomber Wing is completely removed by an opponent\'s Fighters, immediately launch a single Fighter or Bomber from this Admiral\'s Ship.' }],
+  // PHR
+  'Javelin':             [{ cost: 2, name: 'Experimental Munitions',  desc: 'When assigning weapon targets, select one Calibre-X weapon. It gains the benefits of its Calibre-X rule regardless of target tonnage for that attack.' }],
+  'Helena of Asgard':    [{ cost: 2, name: 'High-G Manoeuvre',        desc: 'When a friendly Group is given Max Thrust, it may turn as if on General Quarters.' }],
+  'Claudia Rhee':        [{ cost: 2, name: 'Backup Systems Engaged',  desc: 'When a friendly Ship would roll for Crippling Damage, roll a die. On a 4+, that Ship does not roll on the Crippling table but is still Crippled.' }],
+  'Gaius Chau':          [],
+  // Shaltari
+  'Twins of Aaru':       [],
+  'Seth':                [{ cost: 2, name: 'Cunning Positioning',     desc: 'When you move a Group of M Tonnage, that Group gains Vectored for that movement.' }],
+  'Mergen the Learned':  [],
+  'Quetzalcoatl':        [],
+  // Resistance
+  'Typhoon Vasquez':     [{ cost: 2, name: 'Artillery Strike',        desc: 'When assigning targets for an Artillery weapon, its damage type becomes Core. Costs 3AP if the firing ship is H or C tonnage.' }],
+  'Hagen':               [],
+  'Nguen':               [],
+  'Magellan':            [],
+  // Bioficer
+  'Atlas':               [{ cost: 1, name: 'One Upsmanship',          desc: 'If this Admiral is your highest-level Admiral, whenever your opponent uses an Ability, roll a die. On a 4+, gain 1AP.' }],
+  'Atom':                [],
+  'Agency':              [],
+  'Ascendant':           [],
+};
 
 // ── Ship special rule descriptions ───────────────────────────────────────────
 // Only rules that need explanation — stat-tagged rules (Aegis-X, Vanguard-X, etc.)

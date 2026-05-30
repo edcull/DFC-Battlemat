@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0a0e0d">
-<title>DFC BATTLEMAT</title>
+<title>DFC FLEET OPS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&family=Oswald:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -1030,7 +1030,7 @@ import {
 
 import { localRng as _rng, rollD6 as _rollD6, rollDie as _rollDie } from '../src/engine/rng.js';
 import { parseNewRecruit } from '../src/fleet/parser.js';
-import { findShipDef, ADMIRAL_FACTION_ABILITIES, FAMOUS_ADMIRAL_ABILITIES, SHIP_SPECIAL_RULES } from '../src/fleet/db.js';
+import { findShipDef, ADMIRAL_FACTION_ABILITIES, FAMOUS_ADMIRAL_ABILITIES, FACTION_ADMIRAL_TITLES, FACTION_ADMIRAL_PERSONAL, SHIP_SPECIAL_RULES } from '../src/fleet/db.js';
 
 import {
   createState,
@@ -5705,6 +5705,13 @@ function openFleetImport(slot) {
   });
 }
 
+/* True if the admiral title string matches a known faction-named admiral (not a generic "Admiral"). */
+function isFactionAdmiral(faction, title) {
+  const titles = (FACTION_ADMIRAL_TITLES && FACTION_ADMIRAL_TITLES[faction]) || [];
+  const t = (title || '').toLowerCase();
+  return titles.some(k => t.includes(k));
+}
+
 /* Parse a def.special string into an array of { tag, prefix, param, desc } objects.
    Entries with no description in SHIP_SPECIAL_RULES are still returned (desc = null). */
 function parseSpecialRules(specialStr) {
@@ -5841,15 +5848,16 @@ function openFleetView(slot) {
     const sel = opts
       ? `<select class="nfa-flagship-sel" data-admiral-idx="${admiralIdx}" ${selAttrs} style="font-size:10px;background:var(--bg-card,#111);color:inherit;border:1px solid rgba(255,255,255,0.2);padding:2px 6px;border-radius:3px;max-width:200px;">${opts}</select>`
       : `<span style="color:var(--text-mute);font-size:9px;">No capital ships</span>`;
-    // Ability picker
-    const factionAbs = (ADMIRAL_FACTION_ABILITIES && ADMIRAL_FACTION_ABILITIES[imported.faction]) || [];
+    // Ability picker — only for named faction admirals (Captain, Rear Admiral, etc.), not generic titles.
+    const isFactionAdm = isFactionAdmiral(imported.faction, adm.title);
+    const factionAbs = isFactionAdm ? ((ADMIRAL_FACTION_ABILITIES && ADMIRAL_FACTION_ABILITIES[imported.faction]) || []) : [];
     const chosenAbs = (asn && asn.abilities) || [];
     const abSel = factionAbs.length
       ? `<select class="nfa-ability-sel" data-admiral-idx="${admiralIdx}" ${selAttrs} style="font-size:10px;background:var(--bg-card,#111);color:inherit;border:1px solid rgba(255,255,255,0.2);padding:2px 6px;border-radius:3px;max-width:200px;margin-top:3px;">
           <option value="">— faction ability —</option>
           ${factionAbs.map(ab => `<option value="${ab.key}" ${chosenAbs.includes(ab.key)?'selected':''}>${ab.name} (${ab.cost} AP)</option>`).join('')}
         </select>`
-      : (chosenAbs.length ? `<div style="font-size:9px;color:var(--text-mute);margin-top:3px;">${chosenAbs.join(', ')}</div>` : '');
+      : (isFactionAdm && chosenAbs.length ? `<div style="font-size:9px;color:var(--text-mute);margin-top:3px;">${chosenAbs.join(', ')}</div>` : '');
     admiralRows.push(`<tr style="background:rgba(255,181,71,0.07);">
       ${tdS(`<div style="font-weight:600;">${adm.title}</div><div style="font-size:9px;color:var(--text-mute);">Lv ${adm.level} · Non-famous Admiral</div>`,'min-width:160px;')}
       ${tdS('<span style="color:var(--hull-warn);font-size:9px;">Admiral</span>','')}
@@ -6457,19 +6465,31 @@ function renderApEditModal() {
       faAbs.forEach(ab => { extraRows += abilityRow(ab); });
     }
   });
-  // Non-famous admiral chosen faction abilities
+  // Non-famous admiral abilities (personal + chosen faction pick)
   asns.filter(a => !a.isFamous).forEach(a => {
+    const admEntry = imp && imp.admirals && imp.admirals[a.admiralIdx];
+    const title = admEntry ? admEntry.title : '';
+    // Personal abilities for named faction admirals (Captain, Rear Admiral, etc.)
+    const factionPersonal = FACTION_ADMIRAL_PERSONAL && FACTION_ADMIRAL_PERSONAL[imp && imp.faction] || {};
+    const titleKey = Object.keys(factionPersonal).find(k => (title || '').toLowerCase().includes(k));
+    if (titleKey) {
+      const personal = factionPersonal[titleKey] || [];
+      if (personal.length) {
+        extraRows += sectionHdr(`${title.toUpperCase()} ABILITIES`);
+        personal.forEach(ab => { extraRows += abilityRow({ cost: `${ab.cost} AP`, name: ab.name, desc: ab.desc }); });
+      }
+    }
+    // Chosen faction pool ability
     const abs = a.abilities || [];
-    if (!abs.length) return;
     const factionAbs = (ADMIRAL_FACTION_ABILITIES && ADMIRAL_FACTION_ABILITIES[imp && imp.faction]) || [];
     abs.forEach(key => {
       const ab = factionAbs.find(x => x.key === key);
+      const header = 'FACTION POOL ABILITY';
       if (ab) {
-        if (!extraRows.includes('FACTION ABILITIES')) extraRows += sectionHdr('FACTION ABILITIES');
-        extraRows += abilityRow(ab);
-      } else {
-        // Ability from import text not yet in data — show raw name
-        if (!extraRows.includes('FACTION ABILITIES')) extraRows += sectionHdr('FACTION ABILITIES');
+        if (!extraRows.includes(header)) extraRows += sectionHdr(header);
+        extraRows += abilityRow({ cost: `${ab.cost} AP`, name: ab.name, desc: ab.desc });
+      } else if (key) {
+        if (!extraRows.includes(header)) extraRows += sectionHdr(header);
         extraRows += abilityRow({ cost: '—', name: key, desc: '(see faction rules)' });
       }
     });
@@ -7540,7 +7560,7 @@ function renderBrand() {
   const brandEl = document.querySelector('.brand');
   if (!brandEl) return;
   if (state.phase === 'setup') {
-    brandEl.innerHTML = `<span id="brand-red">DFC</span><span class="vs">VS</span><span class="shal-name" id="brand-blue">BATTLEMAT</span>`;
+    brandEl.innerHTML = `<span id="brand-red">DFC</span><span class="vs">VS</span><span class="shal-name" id="brand-blue">FLEET OPS</span>`;
     return;
   }
   if (state.phase === 'play' && state.score) {
@@ -12708,6 +12728,10 @@ function _netConnect() {
         state.peerView = msg.peerView;
         renderAll(true);
         break;
+      case 'endRoundVotes':
+        _endRoundVotes = new Set(msg.votes || []);
+        renderAll(true);
+        break;
       case 'error':
         console.warn('[net] Server:', msg.reason);
         break;
@@ -12845,7 +12869,7 @@ function showModeSelector() {
     let html = '';
     if (view === 'main') {
       html = `<div class="setup-card" style="max-width:360px;text-align:center;">
-        <div class="setup-header"><h2 class="setup-title">DFC BATTLEMAT</h2></div>
+        <div class="setup-header"><h2 class="setup-title">DFC FLEET OPS</h2></div>
         <div class="setup-body" style="display:flex;flex-direction:column;gap:12px;padding:24px;">
           <button class="btn-primary" id="ms-hotseat" style="padding:14px 10px;font-size:13px;">
             ⚔ HOTSEAT

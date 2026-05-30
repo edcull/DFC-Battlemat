@@ -632,19 +632,26 @@ export function rollInitiative(state, rng) {
   // max(contributions) + (n-1 extras) replaces the single-admiral formula.
   const calcAdmiralContrib = (side) => {
     const asns = state.admiralAssignments && state.admiralAssignments[side];
-    if (!admiralAlive(state, side)) return { eff: 0, extras: 0 };
     if (!asns || !asns.length) {
-      // Fallback: single admiral level + global command ship bonus.
+      // Fallback (no per-admiral assignments): use global admiral level if any ship alive.
+      if (!admiralAlive(state, side)) return { eff: 0, extras: 0 };
       return { eff: baseLvl[side] || 0, extras: 0 };
     }
     const fleet = fleetForSide(state, side);
-    const contribs = asns.map(a => {
+    // Only count admirals whose specific assigned ship is still alive on table.
+    const aliveContribs = asns.map(a => {
       const def = fleet.find(d => d.baseId === a.baseId);
-      const m = def && def.special && def.special.match(/Command Ship-(\d+)/i);
+      if (!def) return null;
+      const grp = state.groups[def.id];
+      if (!grp) return null;
+      const ship = grp.ships[a.shipIdx || 0];
+      if (!ship || ship.destroyed || ship.offTable) return null;
+      const m = def.special && def.special.match(/Command Ship-(\d+)/i);
       const cmd = m ? +m[1] : 0;
       return (a.level || 0) + cmd;
-    });
-    return { eff: Math.max(0, ...contribs), extras: Math.max(0, asns.length - 1) };
+    }).filter(c => c !== null);
+    if (!aliveContribs.length) return { eff: 0, extras: 0 };
+    return { eff: Math.max(0, ...aliveContribs), extras: Math.max(0, aliveContribs.length - 1) };
   };
   const ac = { player1: calcAdmiralContrib('player1'), player2: calcAdmiralContrib('player2') };
   const effectiveAdmiral = { player1: ac.player1.eff, player2: ac.player2.eff };
