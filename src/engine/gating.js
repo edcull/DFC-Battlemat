@@ -13,7 +13,7 @@
 
 import { ORDERS, INCH } from './constants.js';
 import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, transportValue } from './mutators.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, sideNeedsDeployPhase, transportValue } from './mutators.js';
 
 const INTENT_TYPES = ['pass', 'endRound', 'commitScenario'];
 
@@ -26,8 +26,13 @@ function playTurnOk(state, side) {
 export function isLegal(state, intent, side) {
   if (!intent || typeof intent !== 'object') return false;
   switch (intent.type) {
-    case 'commitScenery':
-      return state.phase === 'scenery';
+    case 'commitScenery': {
+      if (state.phase !== 'scenery') return false;
+      if (side && intent.side && intent.side !== side) return false;
+      const commitSide = intent.side || side;
+      if (commitSide && (state.sceneryReady || {})[commitSide]) return false;
+      return true;
+    }
     case 'beginPlay':
       return state.phase === 'deploy';
     case 'giveInitiative': {
@@ -46,6 +51,22 @@ export function isLegal(state, intent, side) {
       if (missing) return false;
       return true;
     }
+    case 'readySetup': {
+      if (state.phase !== 'setup') return false;
+      if (!intent.side || intent.side !== side) return false;
+      if (state.setupReady && state.setupReady[side]) return false;
+      if (!state.scenario) return false;
+      if (!state.fleetChoices || !state.fleetChoices.f1 || !state.fleetChoices.f2) return false;
+      const _rsMissing = ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k]);
+      if (_rsMissing) return false;
+      return true;
+    }
+    case 'unreadySetup': {
+      if (state.phase !== 'setup') return false;
+      if (!intent.side || intent.side !== side) return false;
+      if (!state.setupReady || !state.setupReady[side]) return false;
+      return true;
+    }
     case 'deployShip': {
       const { gid, si } = intent;
       if (state.phase !== 'deploy') return false;
@@ -57,6 +78,16 @@ export function isLegal(state, intent, side) {
       const ship = grp.ships[si];
       if (!ship || ship.destroyed) return false;
       return true;
+    }
+    case 'undoDeploy': {
+      if (state.phase !== 'deploy' && state.phase !== 'play') return false;
+      const grp = state.groups[intent.gid];
+      if (!grp) return false;
+      const def = getDef(state, intent.gid);
+      if (!def || def.side !== side) return false;
+      if (state.phase === 'deploy' && !deploySideAllowed(state, side)) return false;
+      if (state.phase === 'play' && grp.activated) return false;
+      return grp.ships.some(s => !s.destroyed && !s.offTable && !s.movedThisRound);
     }
     case 'arriveShip': {
       const { gid, si } = intent;
@@ -131,7 +162,12 @@ export function isLegal(state, intent, side) {
       // (group has nothing to activate — auto-skip case).
       const started = grp.order || grp.ships.some(s => s.movedThisRound || s.firedThisActivation || (s.launchedThisRound > 0) || s.detectorUsed);
       const allOffTable = grp.ships.every(s => s.destroyed || s.offTable);
-      return !!(started || allOffTable);
+      if (!(started || allOffTable)) return false;
+      // Block if a payload cell deployed by this activation hasn't acted yet.
+      const cellPending = Object.values(state.groups).some(cgrp =>
+        cgrp.ships.some(cs => cs.deployedByGid === gid && !cs.destroyed && !cs.movedThisRound && !cs.firedThisActivation && !(cs.launchedThisRound > 0))
+      );
+      return !cellPending;
     }
     case 'applyOrder': {
       const { gid, order } = intent;
@@ -388,6 +424,30 @@ export function isLegal(state, intent, side) {
       return true;
     }
 
+    case 'setNomination': {
+      const { side: nomSide, key: nomKey } = intent;
+      if (!nomSide || !nomKey) return false;
+      if (nomSide !== side) return false;
+      if (state.phase !== 'nominations') return false;
+      return true;
+    }
+    case 'confirmNominations': {
+      if (state.phase !== 'nominations') return false;
+      if (side && intent.side && intent.side !== side) return false;
+      const confirmSide = intent.side || side;
+      if (confirmSide && (state.nominationsReady || {})[confirmSide]) return false;
+      return true;
+    }
+    case 'setProtectNom':
+      return state.protectNomPhase === true && (!intent.side || intent.side === side);
+    case 'confirmProtectNom': {
+      if (!state.protectNomPhase) return false;
+      if (side && intent.side && intent.side !== side) return false;
+      const protectSide = intent.side || side;
+      if (protectSide && (state.protectNomReady || {})[protectSide]) return false;
+      return true;
+    }
+
     case 'holdPosition':
     case 'applyShipOrder':
     case 'surveySite':
@@ -427,7 +487,17 @@ export function isLegal(state, intent, side) {
       if (state.phase !== 'deploy') return false;
       if (!intent.side || intent.side !== side) return false;
       if (state.deployDone && state.deployDone[side]) return false;
-      if (side === 'player2' && !(state.deployDone && state.deployDone.player1)) return false;
+      // player2 must wait for player1 only if player1 actually has ships to deploy.
+      if (side === 'player2' && sideNeedsDeployPhase(state, 'player1') && !(state.deployDone && state.deployDone.player1)) return false;
+      return true;
+    }
+
+    case 'adjustAP': {
+      if (!state.planning) return false;
+      const { side: tSide, delta } = intent;
+      if (!['player1','player2'].includes(tSide)) return false;
+      if (typeof delta !== 'number' || !Number.isInteger(delta)) return false;
+      if (side && tSide !== side) return false; // online: only own side can adjust their AP
       return true;
     }
 

@@ -31,7 +31,7 @@ export const UCM_FLEET = [
     special:'—'
   },
   {
-    id:'u4', name:'Toulon', role:'Frigates', pts:60, tonnage:'L', side:'ucm', groupSize:2,
+    id:'u4', name:'Toulon', role:'Frigate', pts:60, tonnage:'L', side:'ucm', groupSize:2,
     thrust:10, scan:6, sig:3, hull:4, es:'4+', ks:'3+', bs:'—',
     weapons:[
       {name:'UF-2200 Mass Driver Turret Triad', arc:'F/S', att:3, lock:'4+', dmg:1, type:'K', special:'Fusillade-2'}
@@ -39,7 +39,7 @@ export const UCM_FLEET = [
     special:'—'
   },
   {
-    id:'u5', name:'New Orleans', role:'Strike Carriers', pts:90, tonnage:'L', side:'ucm', groupSize:2,
+    id:'u5', name:'New Orleans', role:'Strike Carrier', pts:90, tonnage:'L', side:'ucm', groupSize:2,
     thrust:10, scan:6, sig:3, hull:4, es:'4+', ks:'3+', bs:'—',
     weapons:[
       {name:'UF-2200 Mass Driver Turret', arc:'F/S', att:1, lock:'4+', dmg:1, type:'K', special:'—'}
@@ -48,7 +48,7 @@ export const UCM_FLEET = [
     special:'Descent'
   },
   {
-    id:'u6', name:'Lima', role:'Detector Frigates', pts:80, tonnage:'L', side:'ucm', groupSize:2,
+    id:'u6', name:'Lima', role:'Detector Frigate', pts:80, tonnage:'L', side:'ucm', groupSize:2,
     thrust:10, scan:6, sig:3, hull:4, es:'4+', ks:'3+', bs:'—',
     weapons:[
       {name:'UF-2200 Mass Driver Turret', arc:'F/S', att:1, lock:'4+', dmg:1, type:'K', special:'—'},
@@ -88,7 +88,7 @@ export const SHAL_FLEET = [
     special:'Mothership, Shield-5+'
   },
   {
-    id:'s4', name:'Topaz', role:'Frigates', pts:86, tonnage:'L', side:'shal', groupSize:2,
+    id:'s4', name:'Topaz', role:'Frigate', pts:86, tonnage:'L', side:'shal', groupSize:2,
     thrust:12, scan:10, sig:4, hull:4, es:'5+', ks:'4+', bs:'—',
     weapons:[
       {name:'Disintegrator Bank', arc:'F', att:3, lock:'3+', dmg:1, type:'E', special:'Reave-1'}
@@ -96,7 +96,7 @@ export const SHAL_FLEET = [
     special:'Shield-5+, Vanguard-4"'
   },
   {
-    id:'s5', name:'Opal', role:'Shielding Frigates', pts:90, tonnage:'L', side:'shal', groupSize:2,
+    id:'s5', name:'Opal', role:'Shielding Frigate', pts:90, tonnage:'L', side:'shal', groupSize:2,
     thrust:12, scan:10, sig:4, hull:4, es:'5+', ks:'4+', bs:'—',
     weapons:[
       {name:'Harpoon Strike', arc:'F/S/R', att:2, lock:'4+', dmg:1, type:'K', special:'Close Action'}
@@ -144,7 +144,7 @@ export const PHR_FLEET = [
     special:'—'
   },
   {
-    id:'p4', name:'Pandora', role:'Frigates', pts:42, tonnage:'L', groupSize:2,
+    id:'p4', name:'Pandora', role:'Frigate', pts:42, tonnage:'L', groupSize:2,
     thrust:10, scan:8, sig:3, hull:5, es:'3+', ks:'4+', bs:'—',
     weapons:[
       {name:'Supernova Laser', arc:'FN', att:3, lock:'3+', dmg:1, type:'E', special:'Burnthrough-1, Flash-1, Focused'}
@@ -152,7 +152,7 @@ export const PHR_FLEET = [
     special:'—'
   },
   {
-    id:'p5', name:'Medea', role:'Strike Carriers', pts:50, tonnage:'L', groupSize:2,
+    id:'p5', name:'Medea', role:'Strike Carrier', pts:50, tonnage:'L', groupSize:2,
     thrust:10, scan:8, sig:3, hull:5, es:'3+', ks:'4+', bs:'—',
     weapons:[
       {name:'Bombardment Turret', arc:'F/S', att:3, lock:'5+', dmg:1, type:'K', special:'Bombardment'}
@@ -198,7 +198,7 @@ export const RESISTANCE_FLEET = [
     special:'Drive Refit (+3" Thrust)'
   },
   {
-    id:'r4', name:'Strike Carriers', role:'Strike Carriers', pts:40, tonnage:'L', groupSize:2,
+    id:'r4', name:'Strike Carriers', role:'Strike Carrier', pts:40, tonnage:'L', groupSize:2,
     thrust:11, scan:4, sig:2, hull:4, es:'5+', ks:'5+', bs:'—',
     weapons:[
       {name:'N-31 Hybrid Gun Turret', arc:'F/S', att:2, lock:'3+', dmg:1, type:'K', special:'Fusillade-1'}
@@ -207,7 +207,7 @@ export const RESISTANCE_FLEET = [
     special:'Descent'
   },
   {
-    id:'r5', name:'Heavy Frigates', role:'Heavy Frigates', pts:42, tonnage:'L', groupSize:2,
+    id:'r5', name:'Heavy Frigates', role:'Heavy Frigate', pts:42, tonnage:'L', groupSize:2,
     thrust:9, scan:4, sig:2, hull:5, es:'4+', ks:'5+', bs:'—',
     weapons:[
       {name:'NC-16 Missile Turret', arc:'F/S/R', att:6, lock:'3+', dmg:1, type:'K', special:'Close Action'},
@@ -251,7 +251,7 @@ export const SCOURGE_FLEET = [
     special:'—'
   },
   {
-    id:'sc4', name:'Gargoyle', role:'Strike Carriers', pts:40, tonnage:'L', groupSize:2,
+    id:'sc4', name:'Gargoyle', role:'Strike Carrier', pts:40, tonnage:'L', groupSize:2,
     thrust:12, scan:6, sig:3, hull:4, es:'5+', ks:'5+', bs:'—',
     weapons:[
       {name:'Oculus Rays', arc:'F', att:2, lock:'3+', dmg:1, type:'E', special:'Scald-1'}
@@ -260,7 +260,7 @@ export const SCOURGE_FLEET = [
     special:'Descent'
   },
   {
-    id:'sc5', name:'Harpy', role:'Frigates', pts:40, tonnage:'L', groupSize:2,
+    id:'sc5', name:'Harpy', role:'Frigate', pts:40, tonnage:'L', groupSize:2,
     thrust:12, scan:6, sig:3, hull:4, es:'5+', ks:'5+', bs:'—',
     weapons:[
       {name:'Oculus Beams', arc:'F/S', att:2, lock:'3+', dmg:2, type:'E', special:'Scald-1'}
@@ -307,7 +307,7 @@ export const BIOFICER_FLEET = [
     special:'Aegis-1, Payload S-1, Vectored'
   },
   {
-    id:'bf5', name:'Fulcrum', role:'Frigates', pts:37, tonnage:'L', groupSize:2,
+    id:'bf5', name:'Fulcrum', role:'Frigate', pts:37, tonnage:'L', groupSize:2,
     thrust:14, scan:10, sig:1, hull:3, es:'5+', ks:'5+', bs:'—',
     weapons:[
       {name:'Barb Spiker', arc:'FN', att:1, lock:'2+', dmg:2, type:'K', special:'Reave-2'}
@@ -315,7 +315,7 @@ export const BIOFICER_FLEET = [
     special:'—'
   },
   {
-    id:'bf6', name:'Foray', porter:{size:'S',cap:1}, role:'Frigates', pts:25, tonnage:'L', groupSize:2,
+    id:'bf6', name:'Foray', porter:{size:'S',cap:1}, role:'Frigate', pts:25, tonnage:'L', groupSize:2,
     thrust:14, scan:8, sig:1, hull:3, es:'5+', ks:'5+', bs:'—',
     weapons:[
       {name:'Decon Burst', arc:'F/S/R', att:1, lock:'4+', dmg:1, type:'E', special:'—'}
@@ -323,7 +323,7 @@ export const BIOFICER_FLEET = [
     special:'Porter S-1'
   },
   {
-    id:'bf7', name:'Invasion Cells', payload:{size:'S'}, role:'Cells', pts:15, tonnage:'L', groupSize:2,
+    id:'bf7', name:'Invasion Cells', payload:{size:'S'}, role:'Cell', pts:15, tonnage:'L', groupSize:2,
     thrust:2, scan:8, sig:1, hull:2, es:'4+', ks:'4+', bs:'6+',
     weapons:[
       {name:'Bombardment', arc:'F/S/R', att:3, lock:'5+', dmg:2, type:'E', special:'Alt-1, Bombardment'}
@@ -333,7 +333,7 @@ export const BIOFICER_FLEET = [
     special:'Payload S-1, Vectored'
   },
   {
-    id:'bf8', name:'Lander Cells', payload:{size:'S'}, role:'Cells', pts:15, tonnage:'L', groupSize:2,
+    id:'bf8', name:'Lander Cells', payload:{size:'S'}, role:'Cell', pts:15, tonnage:'L', groupSize:2,
     thrust:2, scan:8, sig:1, hull:2, es:'4+', ks:'4+', bs:'6+',
     weapons:[],
     launch:[{name:'Bulk Landers', n:2, type:'bulk_lander'}],

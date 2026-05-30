@@ -616,13 +616,46 @@ export function advanceActiveSide(state) {
 
 /* Roll initiative for the start of a round: a D6 per faction, reroll ties.
    Stores the result in state.initiative for the modal. */
+/* True if `side` has at least one ship alive and deployed — admiral is presumed
+   lost if the entire fleet is destroyed or off-table. */
+export function admiralAlive(state, side) {
+  return fleetForSide(state, side).some(def => {
+    const g = state.groups[def.id];
+    return g && g.ships.some(s => !s.destroyed && !s.offTable);
+  });
+}
+
 export function rollInitiative(state, rng) {
   const baseLvl = state.admiralLevel || { player1: 0, player2: 0 };
-  // Command Ship-X raises the assigned Admiral's effective Level by X (we model the
-  // Admiral as on the side's best on-table Command Ship).
+  // Per-admiral contribution: level + Command Ship-X of their flagship.
+  // When admiralAssignments is present (imported fleet), uses per-admiral calc.
+  // max(contributions) + (n-1 extras) replaces the single-admiral formula.
+  const calcAdmiralContrib = (side) => {
+    const asns = state.admiralAssignments && state.admiralAssignments[side];
+    if (!admiralAlive(state, side)) return { eff: 0, extras: 0 };
+    if (!asns || !asns.length) {
+      // Fallback: single admiral level + global command ship bonus.
+      return { eff: baseLvl[side] || 0, extras: 0 };
+    }
+    const fleet = fleetForSide(state, side);
+    const contribs = asns.map(a => {
+      const def = fleet.find(d => d.baseId === a.baseId);
+      const m = def && def.special && def.special.match(/Command Ship-(\d+)/i);
+      const cmd = m ? +m[1] : 0;
+      return (a.level || 0) + cmd;
+    });
+    return { eff: Math.max(0, ...contribs), extras: Math.max(0, asns.length - 1) };
+  };
+  const ac = { player1: calcAdmiralContrib('player1'), player2: calcAdmiralContrib('player2') };
+  const effectiveAdmiral = { player1: ac.player1.eff, player2: ac.player2.eff };
+  // Command ship bonus: 0 when per-admiral calc is used (cmd already included), global otherwise.
+  const cmdBonus = {
+    player1: (state.admiralAssignments && state.admiralAssignments.player1) ? 0 : commandShipBonus(state, 'player1'),
+    player2: (state.admiralAssignments && state.admiralAssignments.player2) ? 0 : commandShipBonus(state, 'player2'),
+  };
   const aLvl = {
-    player1: (baseLvl.player1 || 0) + commandShipBonus(state, 'player1'),
-    player2: (baseLvl.player2 || 0) + commandShipBonus(state, 'player2')
+    player1: effectiveAdmiral.player1 + cmdBonus.player1 + ac.player1.extras,
+    player2: effectiveAdmiral.player2 + cmdBonus.player2 + ac.player2.extras,
   };
   const redBonus = (aLvl.player1 >= aLvl.player2 && aLvl.player1 > 0) ? 1 : 0;
   const blueBonus = (aLvl.player2 >= aLvl.player1 && aLvl.player2 > 0) ? 1 : 0;
@@ -632,11 +665,15 @@ export function rollInitiative(state, rng) {
     bRaw = 1 + Math.floor(rng() * 6);
     red = rRaw + redBonus; blue = bRaw + blueBonus;
   } while (red === blue);
-  // AP generation: 1 + Admiral Level per side.
-  const ap = { player1: 1 + (aLvl.player1 || 0), player2: 1 + (aLvl.player2 || 0) };
-  // Comms Uplink: +1 AP if you Control a Dropsite with a working Comms Station.
-  if (sideHasCommsUplink(state, 'player1')) ap.player1 += 1;
-  if (sideHasCommsUplink(state, 'player2')) ap.player2 += 1;
+  // AP generation: 1 (base) + effective admiral level + command ship bonus + comms.
+  const comms = {
+    player1: sideHasCommsUplink(state, 'player1') ? 1 : 0,
+    player2: sideHasCommsUplink(state, 'player2') ? 1 : 0,
+  };
+  const ap = {
+    player1: 1 + aLvl.player1 + comms.player1,
+    player2: 1 + aLvl.player2 + comms.player2,
+  };
   // Pass Tokens: a side 2+ Groups fewer than the leader gets 1, +1 per further fewer.
   const groupCount = (side) => fleetForSide(state, side).filter(def => {
     const g = state.groups[def.id];
@@ -644,8 +681,13 @@ export function rollInitiative(state, rng) {
   }).length;
   const gc = { player1: groupCount('player1'), player2: groupCount('player2') };
   const most = Math.max(gc.player1, gc.player2);
-  const passTokens = { player1: Math.max(0, (most - gc.player1) - 1), player2: Math.max(0, (most - gc.player2) - 1) };
-  state.planning = { ap, passTokens, gc, aLvl };
+  const passTokens = { player1: Math.max(0, (gc.player2 - 1) - gc.player1), player2: Math.max(0, (gc.player1 - 1) - gc.player2) };
+  // Store breakdown for display in the planning overlay.
+  const apBreakdown = {
+    player1: { base: 1, admiral: effectiveAdmiral.player1, admiralChosen: Math.max(baseLvl.player1 || 0, effectiveAdmiral.player1), cmd: cmdBonus.player1, comms: comms.player1, extras: ac.player1.extras },
+    player2: { base: 1, admiral: effectiveAdmiral.player2, admiralChosen: Math.max(baseLvl.player2 || 0, effectiveAdmiral.player2), cmd: cmdBonus.player2, comms: comms.player2, extras: ac.player2.extras },
+  };
+  state.planning = { ap, passTokens, gc, aLvl, apBreakdown };
   state.initiative = {
     red, blue, rRaw, bRaw, redBonus, blueBonus,
     winner: red > blue ? 'player1' : 'player2',
@@ -1408,11 +1450,12 @@ export function undeployedDeployableCount(state, side) {
   }).length;
 }
 
-/* Is a side allowed to deploy right now? Red goes first. */
+/* Is a side allowed to deploy right now? Red goes first unless Red has nothing to deploy. */
 export function deploySideAllowed(state, side) {
   if (state.phase !== 'deploy') return true;
   if (state.deployDone[side]) return false;
   if (side === 'player1') return true;
+  if (!sideNeedsDeployPhase(state, 'player1')) return true;
   return state.deployDone.player1 === true;
 }
 
@@ -1425,6 +1468,13 @@ export function anyoneNeedsDeployPhase(state) {
   const _allDefs = allDefs(state);
   if (_allDefs.some(d => d.vanguard)) return true;
   return false;
+}
+
+/* Does this side have vanguard or direct-deploy ships that require the deploy phase? */
+export function sideNeedsDeployPhase(state, side) {
+  if (!state.scenario) return true;
+  if (approachFor(state, side) === 'directly_deploy') return true;
+  return fleetForSide(state, side).some(d => d.vanguard);
 }
 
 /* Mark every ship as off-table with a heading pointing toward the board centre. */
@@ -2469,6 +2519,7 @@ function advanceRoundInternal(state, rng) {
       s.firedThisActivation = false; s.weaponTargets = {}; s.dcRepaired = false;
       s.dcThisRound = false; s.detectorUsed = false; s.arrestedThisRound = false;
       s.usedVectoredSecondMove = false;
+      s.deployedByGid = null; // cleared each round — cell acts in cells group next turn
     });
     g.moveTrail = [];
   });
@@ -2901,6 +2952,17 @@ export function finishActivation(state, rng, gid) {
   if (dmgLog.length) logEvent(state, `End-of-activation: ${dmgLog.join(', ')}`);
 
   grp.activated = true;
+
+  // Any payload cell deployed by this activation acts as part of it.
+  // Mark the cell's own group as also activated so it can't act again this round,
+  // and clear the deployedByGid link (it will activate in the cells group next turn).
+  Object.values(state.groups).forEach(cgrp => {
+    if (cgrp.ships.some(cs => cs.deployedByGid === gid)) {
+      cgrp.activated = true;
+      cgrp.ships.forEach(cs => { if (cs.deployedByGid === gid) cs.deployedByGid = null; });
+    }
+  });
+
   state.selectedShipIdx = null;
   state.selectedGroupId = null;
   advanceActiveSide(state);
@@ -2947,6 +3009,23 @@ function applyCommitScenario(state, rng) {
     player1: (state.admiralChoice && state.admiralChoice.f1) || 0,
     player2: (state.admiralChoice && state.admiralChoice.f2) || 0,
   };
+  // Admiral assignments (from imported fleet) — map groupIdx → baseId for AP calc.
+  const buildAdmiralAsns = (slot) => {
+    const imp = state.importedFleets && state.importedFleets[slot];
+    if (!imp || !imp.admiralAssignments) return null;
+    return imp.admiralAssignments.map(a => ({
+      level: a.level || 0,
+      baseId: 'imp' + a.groupIdx,
+      isFamous: a.isFamous || false,
+    }));
+  };
+  const asn1 = buildAdmiralAsns('f1');
+  const asn2 = buildAdmiralAsns('f2');
+  if (asn1 || asn2) {
+    state.admiralAssignments = { player1: asn1 || [], player2: asn2 || [] };
+  } else {
+    state.admiralAssignments = null;
+  }
   state.secondaries = {
     player1: ((state.secondaryChoice && state.secondaryChoice.f1) || []).slice(),
     player2: ((state.secondaryChoice && state.secondaryChoice.f2) || []).slice(),
@@ -3004,24 +3083,49 @@ function applyCommitScenario(state, rng) {
   if ((t.micrometeor || 0) + (t.dense || 0) > 0) {
     state.phase = 'scenery';
     state.sceneryTurn = 'player1'; // player1 places first in multiplayer
-  } else if (!anyoneNeedsDeployPhase(state)) {
-    state.phase = 'play';
+    state.sceneryReady = { player1: false, player2: false };
+  } else if (needsNomination) {
+    state.phase = 'nominations';
+    state.nominationsReady = { player1: false, player2: false };
   } else {
-    state.deployDone = { player1: false, player2: false };
-    state.phase = 'deploy';
+    // No scenery, no nominations — open protect nom overlay if applicable.
+    if (state.scenario && state.scenario.objective === 'protect') {
+      state.protectNomPhase = true;
+      state.protectNomReady = { player1: false, player2: false };
+    }
+    if (!anyoneNeedsDeployPhase(state)) {
+      state.phase = 'play';
+      rollInitiative(state, rng);
+    } else {
+      state.deployDone = { player1: false, player2: false };
+      state.phase = 'deploy';
+    }
   }
   return state;
 }
 
-export function applyCommitScenery(state, rng) {
+export function applyCommitScenery(state, rng, side) {
+  state.sceneryReady = state.sceneryReady || { player1: false, player2: false };
+  if (side) state.sceneryReady[side] = true;
+  if (!state.sceneryReady.player1 || !state.sceneryReady.player2) return state;
+  // Both sides ready — advance.
   state.sceneryPlace = null;
   state.sceneryTurn = null;
-  if (anyoneNeedsDeployPhase(state)) {
-    state.deployDone = state.deployDone || { player1: false, player2: false };
-    state.phase = 'deploy';
+  if (state.nominationPhase) {
+    state.phase = 'nominations';
+    state.nominationsReady = { player1: false, player2: false };
   } else {
-    state.phase = 'play';
-    rollInitiative(state, rng);
+    if (state.scenario && state.scenario.objective === 'protect') {
+      state.protectNomPhase = true;
+      state.protectNomReady = { player1: false, player2: false };
+    }
+    if (anyoneNeedsDeployPhase(state)) {
+      state.deployDone = state.deployDone || { player1: false, player2: false };
+      state.phase = 'deploy';
+    } else {
+      state.phase = 'play';
+      rollInitiative(state, rng);
+    }
   }
   return state;
 }
@@ -3053,6 +3157,26 @@ export function deployShip(state, gid, si, x, y, heading) {
   ship.x = x; ship.y = y; ship.heading = heading;
   ship.offTable = false;
   ship.deployedRound = state.round;
+  return state;
+}
+
+export function applyUndoDeploy(state, gid) {
+  const grp = state.groups[gid];
+  const def = getDef(state, gid);
+  if (!grp || !def) return state;
+  let removed = 0;
+  grp.ships.forEach(ship => {
+    if (!ship.destroyed && !ship.offTable && !ship.movedThisRound) {
+      ship.offTable = true;
+      ship.x = undefined; ship.y = undefined; ship.heading = undefined;
+      ship.deployedRound = undefined; ship.justArrived = false;
+      removed++;
+    }
+  });
+  if (removed) {
+    grp.order = null;
+    logEvent(state, `${def.name} deployment undone (${removed} ship${removed !== 1 ? 's' : ''} returned off-table)`);
+  }
   return state;
 }
 
@@ -3205,6 +3329,9 @@ function applyDeployPayload(state, intent) {
   payShip.deployedRound = state.round;
   payShip.movedThisRound = false;
   payShip.order = 'GQ';
+  // Track which group's activation deployed this cell so finishActivation can
+  // block until the cell acts, and moveShip/fireWeapons can allow cross-group use.
+  payShip.deployedByGid = porterGid;
   return state;
 }
 
@@ -3353,14 +3480,26 @@ function applyFireFeatureWeapon(state, intent) {
 /* Dispatch an intent to its mutator. Mutates `state` in place; returns it. */
 export function apply(state, intent, rng) {
   switch (intent && intent.type) {
-    case 'commitScenery':     return applyCommitScenery(state, rng);
+    case 'commitScenery':     return applyCommitScenery(state, rng, intent.side);
     case 'beginPlay':         return applyBeginPlay(state, rng);
     case 'giveInitiative':    return applyGiveInitiative(state, intent.to);
     case 'beginActivation':   return applyBeginActivation(state);
     case 'commitScenario':    return applyCommitScenario(state, rng);
+    case 'readySetup': {
+      state.setupReady = state.setupReady || { player1: false, player2: false };
+      if (intent.side) state.setupReady[intent.side] = true;
+      if (state.setupReady.player1 && state.setupReady.player2) applyCommitScenario(state, rng);
+      return state;
+    }
+    case 'unreadySetup': {
+      state.setupReady = state.setupReady || { player1: false, player2: false };
+      if (intent.side) state.setupReady[intent.side] = false;
+      return state;
+    }
     case 'finishActivation':  return finishActivation(state, rng, intent.gid);
     case 'undoMove':          return undoMove(state, intent.gid, intent.si);
     case 'deployShip':        return deployShip(state, intent.gid, intent.si, intent.x, intent.y, intent.heading);
+    case 'undoDeploy':        return applyUndoDeploy(state, intent.gid);
     case 'arriveShip':        return arriveShip(state, intent.gid, intent.si, intent.x, intent.y, intent.heading);
     case 'useDetector':       return useDetector(state, rng, intent.gid, intent.si, intent.wi, intent.targetGid, intent.targetSi);
     case 'pass':         return passActivation(state);
@@ -3487,7 +3626,55 @@ export function apply(state, intent, rng) {
     case 'deployDone': {
       state.deployDone = state.deployDone || { player1: false, player2: false };
       if (intent.side) state.deployDone[intent.side] = true;
-      if (state.deployDone.player1 && state.deployDone.player2) applyBeginPlay(state, rng);
+      // Advance to play once every side that actually has ships to deploy is done.
+      const _p1Done = !sideNeedsDeployPhase(state, 'player1') || state.deployDone.player1;
+      const _p2Done = !sideNeedsDeployPhase(state, 'player2') || state.deployDone.player2;
+      if (_p1Done && _p2Done) applyBeginPlay(state, rng);
+      return state;
+    }
+    case 'setNomination': {
+      const { side: nomSide, key: nomKey, nom } = intent;
+      if (!state.secondaryNominations) state.secondaryNominations = { player1: {}, player2: {} };
+      if (!state.secondaryNominations[nomSide]) state.secondaryNominations[nomSide] = {};
+      state.secondaryNominations[nomSide][nomKey] = nom;
+      return state;
+    }
+    case 'confirmNominations': {
+      state.nominationsReady = state.nominationsReady || { player1: false, player2: false };
+      if (intent.side) state.nominationsReady[intent.side] = true;
+      if (!state.nominationsReady.player1 || !state.nominationsReady.player2) return state;
+      // Both sides confirmed — advance.
+      state.nominationPhase = false;
+      if (state.scenario && state.scenario.objective === 'protect') {
+        state.protectNomPhase = true;
+        state.protectNomReady = { player1: false, player2: false };
+      }
+      if (anyoneNeedsDeployPhase(state)) {
+        state.deployDone = state.deployDone || { player1: false, player2: false };
+        state.phase = 'deploy';
+      } else {
+        state.phase = 'play';
+        rollInitiative(state, rng);
+      }
+      return state;
+    }
+    case 'setProtectNom':
+      if (!state.protectNom) state.protectNom = { player1: null, player2: null };
+      if (intent.side && intent.dsId !== undefined) state.protectNom[intent.side] = intent.dsId;
+      return state;
+    case 'confirmProtectNom': {
+      state.protectNomReady = state.protectNomReady || { player1: false, player2: false };
+      if (intent.side) state.protectNomReady[intent.side] = true;
+      if (!state.protectNomReady.player1 || !state.protectNomReady.player2) return state;
+      state.protectNomPhase = false;
+      return state;
+    }
+    case 'adjustAP': {
+      const { side: tSide, delta } = intent;
+      if (!state.planning) return state;
+      const old = state.planning.ap[tSide] || 0;
+      state.planning.ap[tSide] = Math.max(0, old + delta);
+      logEvent(state, `AP ${delta > 0 ? '+' : ''}${delta} → ${state.planning.ap[tSide]}`);
       return state;
     }
     case 'holdPosition':

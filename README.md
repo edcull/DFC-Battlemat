@@ -1,6 +1,6 @@
 # DFC Battlemat
 
-A browser-based tactical assistant for **Dropfleet Commander**. The legacy single-file app (`web/index.html`) is fully self-contained — no server, no install, no dependencies; just open it in any modern browser and play. A newer module-based client (`client/index.html`) adds optional online two-player rooms via a small Node.js server.
+A browser-based tactical assistant for **Dropfleet Commander**. The client (`client/index.html`) requires a small static server to load ES modules; an optional Node.js server adds online two-player rooms.
 
 ---
 
@@ -8,31 +8,31 @@ A browser-based tactical assistant for **Dropfleet Commander**. The legacy singl
 
 An interactive 48"×48" virtual battlemat that implements the full DFC rules engine. It handles the fiddly parts of the game — tracking hull, spikes, crippling effects, weapon arcs, AP, VP, asset launches, battalion landing, and all the rules interactions — so players can focus on tactics rather than administration.
 
-Designed for **two players at the same screen** (hotseat), though the layout is clear enough to use alongside a physical game as a rules/tracking aid.
+Designed for **two players at the same screen** (hotseat), with full online two-player support via the Node server.
 
 ---
 
 ## Quick start
 
-1. Open `web/index.html` in Chrome, Firefox, or Edge. (For online play instead, run `npm install && npm start` and open `http://localhost:3000/client/index.html`.)
+1. **Hotseat:** serve the repo root with any static server (e.g. `python -m http.server`) and open `client/index.html`. **Online play:** run `npm install && npm start` and open `http://localhost:3000/client/index.html`.
 2. **Setup** — choose factions, admirals, secondary objectives for each side, then pick deployment/approach/layout/variant/scoring objective. Hit **⚡ TEST SETUP** for an instant UCM vs Scourge game if you just want to try it.
-3. **Scenery** — place or randomise scenery objects.
-4. **Deploy** — click a group in the left panel, then click in your deployment zone to place ships. Set facing by clicking after placement. Use **↩ UNDO DEPLOY** to take a group back off-table.
+3. **Scenery** — place or randomise scenery objects. The 3D view activates automatically when scenery is complete.
+4. **Deploy** — click a group in the left panel, then click in your deployment zone to place each ship. Move the mouse and click again to set facing, then hit **✓ CONFIRM PLACEMENT**. Multi-ship groups prompt for each ship in turn. Use **↩ UNDO DEPLOY** in the board HUD to return a whole group off-table.
 5. **Play** — activate groups, move ships, assign weapon targets, fire, launch assets, and score VP. Click **FINISH ACTIVATION** after each group.
 
 ---
 
 ## Factions
 
-Six factions are fully modelled with correct stats, weapons, specials, and launch profiles:
+Six factions are fully modelled with correct stats, weapons, specials, and launch profiles. A full ship and weapon database (`src/fleet/db.js`) covers all published ships from all factions for the New Recruit import format.
 
 | Faction | Ships |
 |---------|-------|
-| **UCM** | Bruges, Edmonton, San Francisco, Toulon, New Orleans, Lima |
-| **Shaltari** | Amber, Onyx, Topaz, Emerald (Mothership), Pearl, Turquoise (Voidgates) |
-| **PHR** | Theseus, Ikarus, Orpheus, Pandora, Medea |
-| **Resistance** | Battleship, Cruiser, Freerider, Troopship, Gunship |
-| **Scourge** | Sphinx, Hydra, Wyvern, Gargoyle, Banshee |
+| **UCM** | Full roster including all Frigates, Cruisers, Heavy Cruisers, Battlecruiser, Carriers, Destroyers, Monitors, and more |
+| **Shaltari** | Full roster including Gates, Mothership, Carriers, Cruisers, Frigates |
+| **PHR** | Full roster |
+| **Resistance** | Full roster |
+| **Scourge** | Full roster |
 | **Bioficer** | Full Bioficer roster with Payload/Porter mechanics |
 
 ---
@@ -83,7 +83,7 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 - **Breakthrough** — Red flies off for 1 VP/200 pts; Blue scores pts-destroyed
 - **Raze** — double standard scoring for Levelled/Ruined Dropsites ≥24" from own zone; pts-destroyed
 - All seven **secondary objectives** with manual nomination and ★ markers
-- VP toasts on every award; clickable VP counter in topbar opens full breakdown with objective description
+- VP toasts on every award; clicking the faction/VP topbar display opens full breakdown with objective description
 
 ### Admiral abilities (core four)
 | Cost | Ability |
@@ -104,29 +104,32 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 
 ## Interface
 
+### Topbar
+- **Faction VS VP display** — shows `{FACTION1} {P1 VP} {P1 name} VS {P2 name} {P2 VP} {FACTION2}` in faction colours. Click to open the full VP breakdown modal with objective details and per-round log.
+- Phase breadcrumb (Setup → Scenery → Deploy → Play) always visible.
+- Play-phase: round indicator, END ROUND button, opponent-waiting banner in online mode.
+
 ### Left panel — Fleet lists
-- Group cards for each side; click to select a group
-- AP chip at top of each fleet list — click to open AP adjuster
-- Cards dim when it's not your side's turn; **LOCKED** when another group is mid-activation (one activation per side per turn)
-- ✓ ACTIVATED badge after a group finishes
+- Group cards for each side, sorted heaviest tonnage first (C→H→M→L)
+- Card shows group name, role, tonnage. Admiral flagship marked with ⭐. Deployment/reserve/activation badges as appropriate.
+- AP chip at top of each fleet list during play — click to open AP adjuster
+- Click the **player name** at the top of each fleet section to open a full fleet view
+- Cards dim when it's not your side's turn; locked when another group is mid-activation
 
 ### Board (centre)
-- 48"×48" SVG with 1" grid
+- 48"×48" SVG with 1" grid, plus an optional **3D view** (toggle top-right of board)
 - Ships shown with hull bar, crippling badges (🔥 fire, Nav/Wep/Scan/Def/Decay), spike indicators, carried-operative count (⬆N)
 - Lead ship marked with ✦ for group fire
 - Move cone shown when a ship is selected and has an order
 - Weapon targeting highlights valid targets from the lead ship; right-click cancels
 - Range auras: scan/sig/launch/extract/explosion radius as appropriate
 - Deployment zones shown during deploy phase and reserve arrival
+- 3D view activates automatically when the scenery phase or protect nomination phase ends
 
 ### Right panel — Detail + Event Log
 - Top section: full ship/dropsite detail, weapon cards, launch cards, move stats, ability buttons
-- **Event Log** docked at the bottom — last 3 events collapsed; click header to expand full scrollable history. Logs: orders, movement (distance + turn angle), weapon locks, hit/save results, AP use, Brace/Contain, crippling, explosions, launches (all types), detector, anti-wing, extracts, kills/captures, VP awards, round markers
-
-### Topbar
-- Phase breadcrumb (Setup → Scenery → Deploy → Play)
-- During play: **VP counter** (click for full breakdown with objective description)
-- Round indicator, End Round, Pass Activation, Reset
+- **Dropsite detail** includes an Objectives section listing any secondary or protect nominations targeting that site (icon, player name in faction colour, objective name)
+- **Event Log** always docked at the bottom — last 3 events collapsed; click header to expand full scrollable history. In online mode the log header also shows the room ID and connection status dot. Logs: orders, movement (distance + turn angle), weapon locks, hit/save results, AP use, Brace/Contain, crippling, explosions, launches (all types), detector, anti-wing, extracts, kills/captures, VP awards, round markers
 
 ---
 
@@ -144,7 +147,8 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 
 ## Deployment
 
-- **Deploy phase**: click a group, click in your DZ to place each ship, click again to set facing. Reposition by clicking a placed ship then clicking a new spot. **↩ UNDO DEPLOY** returns the whole group off-table.
+- **Deploy phase**: click a group, click in your DZ to place the first ship, move the mouse to set facing and click again — then hit **✓ CONFIRM PLACEMENT** to commit. Multi-ship groups repeat the flow for each ship in turn. Use **↩ UNDO DEPLOY** in the board HUD to return the whole group off-table.
+- If only one side has Vanguard/Direct-deploy ships, the phase advances as soon as that side confirms; both sides must confirm when both have deployable ships.
 - **Reserve arrival (play phase)**: off-table groups show DEPLOY NOW when eligible. Click in DZ to place, then pick an order. Ships can be redeployed (in-zone clicks) until the group acts.
 
 ---
@@ -152,8 +156,8 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 ## Known limitations
 
 - **Named / Famous Admiral abilities** are not implemented (generic Admiral Level + Command Ship-X are).
-- **Custom fleet import** is not implemented — the six built-in rosters cover the included ships only. A full New Recruit import system is designed and documented (`DFC_Fleet_Import_Plan.md`).
-- **Multiplayer**: the legacy `web/index.html` is single-screen hotseat only. The module client (`client/index.html`) adds online two-player rooms via the Node server (`server.js`) — currently a trusted relay with no server-side rules enforcement (production hosting still to do; see `DFC_Multiplayer_Plan.md`).
+- **Custom fleet import** — New Recruit list import is supported via ⊕ IMPORT LIST in the setup overlay. Famous admirals, multiple non-famous admirals, secondary objectives, and modular weapon options (Drive Refit, Laser Refit, etc.) are parsed automatically.
+- **Online play** requires running the Node server. Most actions are server-authoritative; remaining relay items: asset board movement, DA feature attack opening, undo deploy, scenery placement, pre-game setup.
 - **Single-player AI** is not implemented. A rules-bot + LLM-commander design is documented (`DFC_AI_Opponent_Plan.md`).
 - A few §12 Dropsite interactions (Collateral Damage, attack-damage → feature removal) are partially implemented and worth confirming in play.
 
@@ -164,7 +168,6 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 ```
 package.json                    — Node project + deps (express, ws, fast-json-patch); npm start / npm run dev
 server.js                       — Node server: Express static + REST API + WebSocket upgrade
-web/index.html                  — Legacy self-contained app (~11,400 lines); deployed to GitHub Pages
 client/
   index.html                    — Module-based client (imports src/engine/; hotseat + online, networking inline)
   local.js                      — Hotseat glue: shared state + localRng
@@ -176,8 +179,11 @@ src/
     rng.js                      — Seeded PRNG + Math.random wrapper for local play
     state.js                    — createState() factory, buildSideFleet(), rebuildFleets()
     mutators.js                 — All state-mutating functions (movement, combat, scoring…)
+    gating.js                   — Intent legality: isLegal() + legalActions()
+  fleet/
+    db.js                       — Full ship/weapon DB for all factions (New Recruit format)
 plans/
-  DFC_Foundation_Architecture_Plan.md  — Engine extraction + server + online client (Phases 1–3 done bar gating.js)
+  DFC_Foundation_Architecture_Plan.md  — Engine extraction + server + online client (Phases 1–3 done)
   DFC_Fleet_Import_Plan.md             — New Recruit custom fleet import design
   DFC_Multiplayer_Plan.md              — WebSocket two-player design
   DFC_AI_Opponent_Plan.md              — Rules bot + LLM commander design
@@ -187,6 +193,6 @@ plans/
 
 ## Browser compatibility
 
-Chrome, Firefox, and Edge (current versions). SVG, CSS Grid, and ES2020 are required — any browser from 2020+ will work. No internet connection required after the file is downloaded.
+Chrome, Firefox, and Edge (current versions). SVG, CSS Grid, and ES2020 are required — any browser from 2020+ will work.
 
-The module-based client (`client/index.html`) requires ES modules to be served over HTTP — use any static file server (e.g. `python -m http.server`) rather than opening the file directly.
+`client/index.html` uses ES modules and must be served over HTTP — use any static file server (e.g. `python -m http.server`) or the included Node server rather than opening the file directly.

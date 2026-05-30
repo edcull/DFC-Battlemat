@@ -53,6 +53,14 @@ Each room holds the authoritative `state` and a seeded `rng` (from `makeRng`). T
 
 As more families move to intents, the relay path shrinks toward removal.
 
+### Fleet database (`src/fleet/`)
+
+| File | Contents |
+|---|---|
+| `src/fleet/db.js` | Full ship and weapon DB for all factions (UCM, PHR, Shaltari, Scourge, Resistance, Bioficer) in the New Recruit export format. Used by the custom fleet import system. |
+
+The DB entries use `{ role, pts, tonnage, thrust, scan, sig, hull, es, ks, bs, weapons, launch, special }` shape, keyed by ship name string. Weapon entries use a helper `W(name, arc, att, lock, dmg, type, special)` and launch entries use `L(name, n, type)`.
+
 ### Module-based client (`client/`)
 
 | File | Contents |
@@ -99,6 +107,36 @@ const UCM_FLEET = [{ id, name, role, pts, tonnage, thrust, scan, sig, hull,
 
 Ships are cloned with side-prefixed IDs (`'ucm:u1'`, `'shal:s1'`) into `state.groups` at game start, preventing ID collisions in mirror matches.
 
+A more complete ship/weapon DB lives in `src/fleet/db.js`, keyed by ship name, used by the custom fleet import parser.
+
+## Client UI
+
+### Topbar
+- **`renderBrand()`** — replaces the old static brand element. In play phase renders a clickable button showing `{FACTION1} {P1vp} {P1name} VS {P2name} {P2vp} {FACTION2}` (opens VP breakdown modal). In other phases shows plain faction names.
+- Phase breadcrumb nav is always visible.
+- Play-phase controls (round counter, END ROUND) remain in `topbar-controls`.
+
+### Fleet panels (left)
+- **`makeGroupCard()`** — group cards are simplified: no stat row (T/SC/SIG/HP removed), no points shown, tonnage label only. Groups sorted heaviest-first (C→H→M→L). Admiral flagship gets a ⭐ prefix (detected from `importedFleets[slot].admiralGroupIdx` matching `def.baseId`).
+- Clicking the player name title opens a fleet view modal: `openFleetViewForSide(side)` handles both imported and pre-generated fleets.
+
+### Right panel
+- **`renderEventLog()`** — always visible (dock shown in all phases). Pre-play shows just the header; play phase shows the expandable log.
+- When online (`_netRoom` set), the event log header shows the room ID and a colour-coded connection status dot. `_netUpdateBadge()` updates these elements in-place; there is no longer a separate topbar badge.
+- **`renderDropsiteDetail(ds)`** — includes an **Objectives** section when any secondary nominations (`secondaryNominations[side][key].dsId === ds.id`) or protect nominations (`protectNom[side] === ds.id`) target the dropsite. Each entry shows the objective icon, player name in faction colour, and objective name.
+
+### Deploy phase
+- **Two-click + confirm flow:** first click places the ship locally (sets position + enters aiming mode); second click (aim confirm) sets the final heading locally and stores `_pendingDeploy = {gid, si, x, y, heading}` — **no dispatch yet**. `renderDeployHint()` shows **CONFIRM PLACEMENT** and **CANCEL** buttons. Only CONFIRM dispatches `deployShip`.
+- `_pendingDeploy` is a client-local variable (never in server state). It is cleared by `_netApplyRemote` on any server broadcast.
+- Board click handlers (both 3D canvas and SVG) guard against `_pendingDeploy` being set — clicking the board while a ship is pending confirmation flashes a message rather than starting a new placement. This enables correct multi-ship group deployment.
+- **`sideNeedsDeployPhase(state, side)`** — new export in `mutators.js`; imported by `gating.js`. True if a side has vanguard ships or a `directly_deploy` approach. Used to:
+  - Allow player2 to deploy without waiting for player1 when player1 has nothing to deploy (`deploySideAllowed`).
+  - Advance to play as soon as every side that actually needs deployment has signalled `deployDone` (rather than requiring both unconditionally).
+  - Gate the `deployDone` legality check in `gating.js` (player2 only waits for player1 if player1 genuinely has ships).
+
+### 3D view
+- **Auto-switch:** `renderAll()` tracks `_prevPhase` and `_prevProtectNomPhase`. When the scenery phase ends or the protect nomination phase completes (`protectNomPhase` flips false), `toggle3d()` is called automatically if 3D is not already active.
+
 ## Planned Features
 
 Architecture plans live in `plans/`. The Foundation plan's section 8 holds the authoritative phase-by-phase status table.
@@ -114,7 +152,7 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
   - Turn flow: `pass`, `endRound`, `finishActivation`
   - Orders: `applyOrder`, `applyShipOrder`
   - Movement: `moveShip` (full geometric cone validation), `aimShip`, `vectoredMove`, `holdPosition`, `undoMove`, `nominateLead`
-  - Deploy: `deployShip`, `deployDone` (server-enforced side check), `beginPlay` (rolls initiative server-side), `advanceFromScenery` (scenery→deploy or play; rolls initiative when no deploy phase)
+  - Deploy: `deployShip`, `deployDone` (server-enforced side check + smart single-side advancement via `sideNeedsDeployPhase`), `beginPlay` (rolls initiative server-side), `advanceFromScenery` (scenery→deploy or play; rolls initiative when no deploy phase)
   - Weapons: `fireWeapons`, `lockWeaponTarget`, `unlockWeapon`
   - Combat modal: `attackStep`, `attackReroll`, `attackFighterReroll`, `finishAttack`, `attackDeclare` (shields/overcharge/escort/brace/contain/impel). Every die rolls server-side; attacker and defender each drive only their own decisions.
   - Launches: `launchAsset`, `cancelLaunch`
@@ -131,19 +169,19 @@ Architecture plans live in `plans/`. The Foundation plan's section 8 holds the a
   - Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes) — acceptable relay for pre-game config
 - **UX gap (no-op instead of disabled):** wrong-side online clicks silently no-op + resync rather than having their buttons visually disabled.
 
+**In progress — Custom Fleet Import:**
+- `src/fleet/db.js` — complete: full ship and weapon DB for all six factions, keyed by New Recruit ship name.
+- Parser and setup-overlay integration still pending (`DFC_Fleet_Import_Plan.md`).
+
 **Pending (later phases):**
-- **Custom Fleet Import** (`DFC_Fleet_Import_Plan.md`) — `src/fleet/` parser + ship/weapon DBs for the New Recruit export format.
 - **AI Opponent** (`DFC_AI_Opponent_Plan.md`) — `src/ai/` rules-based heuristics + optional LLM commander; consumes `legalActions`/`apply`.
 - **Production deploy** (`DFC_Multiplayer_Plan.md`) — nginx/TLS/systemd hosting for live online play.
 
 ## Known Limitations
 
 - Named admirals not implemented (uses generic admiral stats)
-- No custom fleet import yet (only built-in faction rosters)
+- Custom fleet import DB (`src/fleet/db.js`) exists but the New Recruit parser and setup integration are not yet wired up — only built-in faction rosters are selectable in the setup overlay
 - No AI opponent yet
 - Online multiplayer is **mostly server-authoritative**: the vast majority of play actions (movement, combat, scoring, asset phase, battalion combat, deploy) route through server-validated intents. Remaining relay items: asset board movement, DA feature attack opening, undo deploy, scenery placement, pre-game setup.
 - Wrong-side online clicks silently no-op + resync rather than having their buttons visually disabled
-- No custom fleet import yet (only built-in faction rosters)
-- No AI opponent yet
-- Named admirals not implemented (uses generic admiral stats)
 - Online play requires running the Node server (the GitHub Pages deploy is hotseat-only)

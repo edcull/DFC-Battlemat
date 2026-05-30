@@ -118,6 +118,19 @@ function onMessage(room, ws, side, msg) {
         send(ws, { type: 'full', state: room.state }); // resync the rejected client
         return;
       }
+      // endRound requires both connected players to vote before the round advances.
+      if (intent.type === 'endRound') {
+        room.endRoundVotes.add(side);
+        const connected = Object.values(room.sockets).filter(Boolean).length;
+        // Broadcast the current vote set so both clients can show who's ready.
+        broadcast(room, { type: 'endRoundVotes', votes: [...room.endRoundVotes] });
+        if (room.endRoundVotes.size < Math.max(connected, 2)) {
+          // Still waiting — don't apply yet.
+          return;
+        }
+        // Both (or all connected players) have voted — apply and reset.
+        room.endRoundVotes.clear();
+      }
       apply(room.state, intent, room.rng);
       broadcast(room, { type: 'full', state: room.state }); // to all, incl. sender
       break;

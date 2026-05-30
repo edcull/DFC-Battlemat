@@ -31,6 +31,7 @@ export function createRoom() {
     sockets: { player1: null, player2: null },
     spectators: [],
     lastActivity: Date.now(),
+    endRoundVotes: new Set(), // tracks which sides have voted to end the round
   };
 
   rooms.set(id, room);

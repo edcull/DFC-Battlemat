@@ -8,21 +8,41 @@ import {
   DROPSITE_BASE
 } from './constants.js';
 import { rollD6 } from './rng.js';
+import { FLEET_DB, findShipDef, applyHardpointOptions } from '../fleet/db.js';
 
 /* Build a per-side clone of a faction's fleet, giving each def a unique,
    side-prefixed id (e.g. 'ucm:u1') and the correct side. This prevents id
    collisions in mirror matches (same faction on both sides) and avoids mutating
-   the shared module fleet constants. */
+   the shared module fleet constants.
+   When an imported fleet is stored for this side's slot, uses db.js instead. */
 export function buildSideFleet(state, side) {
+  const slot = state.slotForSide && state.slotForSide[side];
+  const imported = slot && state.importedFleets && state.importedFleets[slot];
+  if (imported && imported.faction && imported.groups && imported.groups.length) {
+    return imported.groups.map((grp, i) => {
+      const dbDef = findShipDef(imported.faction, grp.name);
+      if (!dbDef) return null;
+      const clone = Object.assign({}, dbDef);
+      clone.name    = grp.name;
+      clone.baseId  = 'imp' + i;
+      clone.id      = side + ':imp' + i;
+      clone.side    = side;
+      clone.faction = imported.faction;
+      clone.groupSize = grp.count;
+      if (dbDef.weapons) clone.weapons = dbDef.weapons.map(w => Object.assign({}, w));
+      if (dbDef.launch)  clone.launch  = dbDef.launch.map(l => Object.assign({}, l));
+      applyHardpointOptions(clone, grp.options);
+      return clone;
+    }).filter(Boolean);
+  }
   const fk = (state.factions && state.factions[side]) || (side === 'player1' ? 'ucm' : 'shaltari');
   const base = (FACTIONS[fk] && FACTIONS[fk].fleet) || [];
   return base.map(def => {
     const clone = Object.assign({}, def);
-    clone.baseId = def.id;          // original id (for reference)
-    clone.id = side + ':' + def.id; // unique per-side id
+    clone.baseId = def.id;
+    clone.id = side + ':' + def.id;
     clone.side = side;
     clone.faction = fk;
-    // Deep-copy mutable nested arrays so the two sides never share references.
     if (def.weapons) clone.weapons = def.weapons.map(w => Object.assign({}, w));
     if (def.launch)  clone.launch  = def.launch.map(l => Object.assign({}, l));
     return clone;
@@ -201,7 +221,7 @@ export function buildScenarioState(scen) {
 /* Factory — returns a fresh game state object. */
 export function createState() {
   return {
-    phase: 'setup',      // 'setup' | 'deploy' | 'play'
+    phase: 'setup',      // 'setup' | 'scenery' | 'nominations' | 'deploy' | 'play'
     round: 1,
     selectedGroupId: null,
     selectedShipIdx: null,
@@ -225,11 +245,12 @@ export function createState() {
     _assetId: 0,         // counter for stable launched-asset ids
     factions: { player1: 'ucm', player2: 'shaltari' }, // chosen faction per slot (red=player1, blue=player2)
     playerNames: { f1: 'Player 1', f2: 'Player 2' }, // editable display names per fleet slot
-    playerColors: { f1: 'blue', f2: 'red' },       // chosen colour key per fleet slot
+    playerColors: { f1: null, f2: null },            // chosen colour key per fleet slot (null = unassigned)
     sideColors: null,                                 // { player1: colorKey, player2: colorKey } — set at commitScenario
     deployZone: null,                                 // { player1: 'north'|'south', player2: 'south'|'north' } — set at commitScenario
     slotForSide: null,                                // { player1: 'f1'|'f2', player2: 'f1'|'f2' } — set at commitScenario
     fleetChoices: { f1: null, f2: null }, // picker selections (randomised to slots at commit)
+    importedFleets: { f1: null, f2: null }, // {faction, admiralLevel, groups:[{name,count,pts}], secondaries:[]} from New Recruit import
     admiralChoice: { f1: 0, f2: 0 },      // admiral Level per fleet slot (0 = no admiral)
     secondaryChoice: { f1: [], f2: [] },  // chosen Secondary Objective keys per fleet slot
     admiralLevel: { player1: 0, player2: 0 },    // admiral Level per side (set at commit)
@@ -239,7 +260,12 @@ export function createState() {
     secondaryNominations: { player1: {}, player2: {} }, // position-based secondary nominations
     shipReconOps: {},      // ship key → Recon Operatives carried (Extract objective)
     reconKills: { player1: 0, player2: 0 }, // enemy operative-carriers destroyed
-    nominationPhase: false, // secondary-objective nomination editor active
+    nominationPhase: false,   // true when secondary nominations are needed (gates setNomination)
+    nominationsReady: { player1: false, player2: false }, // per-side confirmNominations barrier
+    protectNomPhase: false,   // protect-objective nomination overlay active
+    protectNomReady: { player1: false, player2: false },  // per-side confirmProtectNom barrier
+    setupReady: { player1: false, player2: false },       // per-side readySetup barrier
+    sceneryReady: { player1: false, player2: false },     // per-side commitScenery barrier
     captured: { player1: 0, player2: 0 },      // points of captured enemy ships
     admiralKilled: { player1: false, player2: false }, // was this side's admiral killed
     scoredRounds: [],                     // standard-scoring rounds already awarded
