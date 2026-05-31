@@ -9,6 +9,8 @@ import {
 } from './constants.js';
 import { rollD6 } from './rng.js';
 import { FLEET_DB, findShipDef, applyHardpointOptions } from '../fleet/db.js';
+import { parseNewRecruit } from '../fleet/parser.js';
+import { FASTPLAY_LISTS } from '../fleet/fastplay/index.js';
 import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './version.js';
 
 /* Build a per-side clone of a faction's fleet, giving each def a unique,
@@ -17,8 +19,9 @@ import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './version.js';
    the shared module fleet constants.
    When an imported fleet is stored for this side's slot, uses db.js instead. */
 export function buildSideFleet(state, side) {
-  const slot = state.slotForSide && state.slotForSide[side];
-  const imported = slot && state.importedFleets && state.importedFleets[slot];
+  // slotForSide is null during setup (assigned at commitScenario); default to f1/f2.
+  const slot = (state.slotForSide && state.slotForSide[side]) || (side === 'player1' ? 'f1' : 'f2');
+  const imported = state.importedFleets && state.importedFleets[slot];
   if (imported && imported.faction && imported.groups && imported.groups.length) {
     return imported.groups.map((grp, i) => {
       const dbDef = findShipDef(imported.faction, grp.name);
@@ -36,18 +39,36 @@ export function buildSideFleet(state, side) {
       return clone;
     }).filter(Boolean);
   }
-  const fk = (state.factions && state.factions[side]) || (side === 'player1' ? 'ucm' : 'shaltari');
-  const base = (FACTIONS[fk] && FACTIONS[fk].fleet) || [];
-  return base.map(def => {
-    const clone = Object.assign({}, def);
-    clone.baseId = def.id;
-    clone.id = side + ':' + def.id;
-    clone.side = side;
-    clone.faction = fk;
-    if (def.weapons) clone.weapons = def.weapons.map(w => Object.assign({}, w));
-    if (def.launch)  clone.launch  = def.launch.map(l => Object.assign({}, l));
-    return clone;
-  });
+  // Prefer fleetChoices (live setup selection) over factions (only set after commitScenario).
+  const fk = (slot && state.fleetChoices && state.fleetChoices[slot])
+    || (state.factions && state.factions[side])
+    || (side === 'player1' ? 'ucm' : 'shaltari');
+
+  // Fastplay: parse the New Recruit text file for this faction if available.
+  const listText = FASTPLAY_LISTS[fk];
+  if (listText && listText.trim()) {
+    const parsed = parseNewRecruit(listText);
+    if (parsed && parsed.groups && parsed.groups.length) {
+      const fpFaction = parsed.faction || fk;
+      return parsed.groups.map((grp, i) => {
+        const dbDef = findShipDef(fpFaction, grp.name);
+        if (!dbDef) return null;
+        const clone = Object.assign({}, dbDef);
+        clone.name      = grp.name;
+        clone.baseId    = fk.slice(0, 3) + i;
+        clone.id        = side + ':' + clone.baseId;
+        clone.side      = side;
+        clone.faction   = fpFaction;
+        clone.groupSize = grp.count;
+        if (dbDef.weapons) clone.weapons = dbDef.weapons.map(w => Object.assign({}, w));
+        if (dbDef.launch)  clone.launch  = dbDef.launch.map(l => Object.assign({}, l));
+        applyHardpointOptions(clone, grp.options);
+        return clone;
+      }).filter(Boolean);
+    }
+  }
+
+  return [];
 }
 
 /* Resolve the active (cloned) fleet for a side. Built once per rebuild and
@@ -71,8 +92,7 @@ export function factionName(state, side) {
    Attached payloads cannot activate / be targeted / be selected and are hidden
    from the board (they ride inside the Porter). */
 export function fleetHasPayloads(fk) {
-  const fleet = FACTIONS[fk] && FACTIONS[fk].fleet;
-  return !!(fleet && fleet.some(d => d.payload) && fleet.some(d => d.porter));
+  return fk === 'bioficer';
 }
 export function sideHasPayloads(state, side) {
   const fk = state.factions && state.factions[side];
@@ -84,14 +104,15 @@ export function sideHasPayloads(state, side) {
 export function payloadsReady(state, slot) {
   const fk = state.fleetChoices && state.fleetChoices[slot];
   if (!fleetHasPayloads(fk)) return true;
-  const fleet = FACTIONS[fk].fleet;
+  const side = slot === 'f1' ? 'player1' : 'player2';
+  const defs = fleetForSide(state, side);
   const links = (state.payloadLinks && state.payloadLinks[slot]) || {};
   let allAssigned = true;
-  fleet.forEach(def => {
+  defs.forEach(def => {
     if (!def.payload) return;
     const n = def.groupSize || 1;
     for (let si = 0; si < n; si++) {
-      if (!links[`${def.id}:${si}`]) allAssigned = false;
+      if (!links[`${def.baseId}:${si}`]) allAssigned = false;
     }
   });
   return allAssigned;
