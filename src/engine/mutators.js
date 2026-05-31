@@ -80,7 +80,7 @@ export function effectiveMaxMovePx(def, ship, order) {
 /* Targeting range in PIXELS = attacker Scan + (target Signature + target Spikes×3").
    Scenery on the LoS line can cause the target's Spikes (and, for Debris, Signature)
    to be ignored. */
-export function targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, attackerShip, w) {
+export function targetingRangePx(state, attackerDef, targetDef, targetShip, targetGrp, attackerShip, w) {
   // Close Action weapons target only within the attacker's Scan range (Sig & Spikes
   // give the target no extra "visibility" range against Close Action).
   if (w && /Close Action/i.test(w.special || '')) {
@@ -89,7 +89,7 @@ export function targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, 
   let spikes = (targetGrp ? (targetGrp.spikes || 0) : 0) + (targetShip.spikes || 0);
   let sig = targetShip.sigSilent ? 0 : (targetDef.sig || 0);
   if (attackerShip) {
-    const eff = sceneryAttackEffects(attackerShip.x, attackerShip.y, targetShip.x, targetShip.y, attackerShip, targetShip);
+    const eff = sceneryAttackEffects(state, attackerShip.x, attackerShip.y, targetShip.x, targetShip.y, attackerShip, targetShip);
     if (eff.ignoreSpikes) spikes = 0;
     if (eff.ignoreSig) sig = 0;
   }
@@ -100,7 +100,7 @@ export function targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, 
 /* Can a weapon legally target a given enemy ship right now?
    Checks: orbital layer rules, weapon arc, Scan+Sig(+spikes) range, and that a
    Large Object does not block Line of Sight. */
-export function weaponCanTarget(attackerDef, attackerShip, w, targetDef, targetShip, targetGrp) {
+export function weaponCanTarget(state, attackerDef, attackerShip, w, targetDef, targetShip, targetGrp) {
   if (targetShip.destroyed || targetShip.offTable || targetShip.attachedTo) return false;
   const aLayer = attackerShip.layer || 'orbit', tLayer = targetShip.layer || 'orbit';
   if (aLayer !== tLayer) {
@@ -113,9 +113,9 @@ export function weaponCanTarget(attackerDef, attackerShip, w, targetDef, targetS
   }
   if (!pointInWeaponArc(attackerShip, w, targetShip.x, targetShip.y)) return false;
   // Large Objects block Line of Sight (unless both ends in atmosphere).
-  const eff = sceneryAttackEffects(attackerShip.x, attackerShip.y, targetShip.x, targetShip.y, attackerShip, targetShip);
+  const eff = sceneryAttackEffects(state, attackerShip.x, attackerShip.y, targetShip.x, targetShip.y, attackerShip, targetShip);
   if (eff.blocked) return false;
-  const range = targetingRangePx(attackerDef, targetDef, targetShip, targetGrp, attackerShip, w);
+  const range = targetingRangePx(state, attackerDef, targetDef, targetShip, targetGrp, attackerShip, w);
   if (Math.hypot(targetShip.x - attackerShip.x, targetShip.y - attackerShip.y) > range) return false;
   return true;
 }
@@ -1075,11 +1075,12 @@ export function layerMove(normalMaxPx, ship, toggle) {
     if (toggle) return { maxPx: normalMaxPx, endLayer: 'atmosphere', label: 'Descend to Atmosphere (end of move)' };
     return { maxPx: normalMaxPx, endLayer: 'orbit', label: null };
   } else { // atmosphere
-    if (toggle) {
+    const decayed = ship.crippling && ship.crippling.includes('decay');
+    if (toggle && !decayed) {
       const reduced = Math.max(0, normalMaxPx - 4 * INCH);
       return { maxPx: reduced, endLayer: 'orbit', label: 'Ascend to Orbit (−4" this move)' };
     }
-    return { maxPx: 2 * INCH, endLayer: 'atmosphere', label: 'In Atmosphere (move capped 2")' };
+    return { maxPx: 2 * INCH, endLayer: 'atmosphere', label: decayed ? 'In Atmosphere — Orbital Decay (cannot ascend)' : 'In Atmosphere (move capped 2")' };
   }
 }
 
@@ -1865,6 +1866,7 @@ export function rollSaves(state, rng, M) {
     const _ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === s.dsId);
     const _base = _ds && _ds.base;
     const _hr = M.hitResult;
+    const _sp = parseWeaponSpecials(s.w);
     // Best save = base save improved by any features present (lower = better).
     const _better = (a, b) => {
       const va = saveVal(a), vb = saveVal(b);
@@ -1877,17 +1879,24 @@ export function rollSaves(state, rng, M) {
       if (f) { _bestES = _better(_bestES, f.es); _bestKS = _better(_bestKS, f.ks); }
     });
     const _svStr = s.w.type === 'K' ? _bestKS : s.w.type === 'E' ? _bestES : null;
-    const _sv = saveVal(_svStr);
+    const _svBase = saveVal(_svStr);
+    // Burnthrough-X: each crit reduces the save for all hits (dropsites have no shields).
+    const _burnReduce = _sp.burnthrough * _hr.crits;
+    const _sv = _svBase != null ? Math.min(6, _svBase + _burnReduce) : _svBase;
     const _hitsList = [];
+    let _critsRem = _hr.crits;
     for (let i = 0; i < _hr.hits; i++) {
-      _hitsList.push({ type: s.w.type, sv: _sv, dmg: s.w.dmg || 1, saved: false });
+      const isCrit = _critsRem > 0; if (isCrit) _critsRem--;
+      // Critical-X: crit hits deal extra damage if unsaved.
+      const dmg = (s.w.dmg || 1) + (isCrit ? _sp.critical : 0);
+      _hitsList.push({ isCrit, type: s.w.type, sv: _sv, dmg, saved: false });
     }
     const _primDice = [];
     _hitsList.forEach(h => {
       if (h.sv == null) return;
       const r = rollDie(rng);
       const ok = r >= h.sv;
-      _primDice.push({ r, ok, sv: h.sv });
+      _primDice.push({ r, ok, sv: h.sv, crit: h.isCrit });
       if (ok) h.saved = true;
     });
     const _dmg = _hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
@@ -1896,7 +1905,8 @@ export function rollSaves(state, rng, M) {
       hitsList: _hitsList, primDice: _primDice, backDice: [], aegisDice: [],
       backupVal: null, aegisY: 0, backupRolled: true,
       unsaved: _unsaved, dmg: _dmg, dsId: s.dsId,
-      flash: 0, crippling: false, penetrator: false, status: false, corruptor: 0, critDamaged: false,
+      flash: 0, crippling: false, penetrator: false, status: false, corruptor: 0,
+      critDamaged: _hitsList.some(h => h.isCrit && !h.saved),
     };
     return;
   }
@@ -1906,6 +1916,7 @@ export function rollSaves(state, rng, M) {
   const hr = M.hitResult;
   const k = targetKey(s.targetGid, s.targetSi);
   const shieldUp = !!M.shieldsUp[k];
+  const boostedGid = shieldUp && M.shieldBooster && M.shieldBooster[k];
   const sat = M.saturation || 0;
   // Build a per-hit list. Penetrator: criticals become Core hits. Burnthrough: each
   // crit worsens this weapon's ES/KS for all its hits.
@@ -1921,6 +1932,7 @@ export function rollSaves(state, rng, M) {
       const red = sp.scald + burnReduce + (isCrit ? sp.reave : 0);
       if (red) sv = Math.min(6, sv + red);
     }
+    if (shieldUp && boostedGid && sv != null) sv = Math.max(3, sv - 1);
     const ocOn = M.overcharge && M.overcharge[s.wi];
     const baseDmg = ocOn ? (s.w.dmg * 2) : s.w.dmg;
     const dmg = baseDmg + (isCrit ? sp.critical : 0);
@@ -1940,6 +1952,16 @@ export function rollSaves(state, rng, M) {
   if (shieldUp && !M.shieldSpiked) {
     M.shieldSpiked = M.shieldSpiked || {};
     if (!M.shieldSpiked[k]) { M.shieldSpiked[k] = true; ts.spikes = (ts.spikes || 0) + 1; }
+  }
+  // Shield Booster: the booster Group gains 1 Spike (once per target per attack).
+  if (boostedGid) {
+    M.shieldBoosted = M.shieldBoosted || {};
+    if (!M.shieldBoosted[k]) {
+      M.shieldBoosted[k] = true;
+      const bGrp = state.groups[boostedGid];
+      const bDef = getDef(state, boostedGid);
+      if (bGrp && bDef) addGroupSpikes(bGrp, bDef, 1);
+    }
   }
   // Backup save value (Formation gives a 6+ backup to grouped ships); rolled later.
   let backupVal = saveVal(td.bs);
@@ -2237,7 +2259,16 @@ export function applyCripplingNext(state, M) {
     ship.hull = Math.max(0, ship.hull - 1);
     if (ship.hull <= 0 && !ship.destroyed) { ship.destroyed = true; if (isCapital(def)) M.explodeQueue.push(makeExplosionRoll(c.gid, c.si, def, ship)); }
   }
-  else if (!ship.crippling.includes(c.effectKey)) ship.crippling.push(c.effectKey);
+  else if (!ship.crippling.includes(c.effectKey)) {
+    ship.crippling.push(c.effectKey);
+    if (c.effectKey === 'decay' && (ship.layer || 'orbit') !== 'atmosphere') {
+      const grp = state.groups[c.gid];
+      grp.moveTrail = grp.moveTrail || [];
+      grp.moveTrail.push({ si: c.si, x: ship.x, y: ship.y, heading: ship.heading, layer: ship.layer || 'orbit' });
+      ship.layer = 'atmosphere';
+      logEvent(state, `${def.name} — Orbital Decay: falls to Atmosphere`);
+    }
+  }
   M.log.push(`${c.name} crippled: ${c.effectName}`);
   proceedQueues(M, state);
 }
@@ -2387,6 +2418,12 @@ export function attackDeclare(state, M, decl) {
     case 'shield':
       M.shieldsUp = M.shieldsUp || {};
       M.shieldsUp[decl.key] = !!decl.value;
+      if (!decl.value && M.shieldBooster) delete M.shieldBooster[decl.key];
+      break;
+    case 'shieldBooster':
+      M.shieldBooster = M.shieldBooster || {};
+      if (decl.value) M.shieldBooster[decl.key] = decl.boosterGid;
+      else delete M.shieldBooster[decl.key];
       break;
     case 'overcharge':
       M.overcharge = M.overcharge || {};
@@ -2531,6 +2568,8 @@ function advanceRoundInternal(state, rng) {
     g.moveTrail = [];
   });
   state.selectedShipIdx = null;
+  state.groundLaunchLines = [];
+  (state.launchedAssets || []).forEach(a => { delete a.fromGid; delete a.fromSi; delete a.fromDropsite; });
   ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => { ds.firedFeatures = []; ds.launchedFeatures = []; });
   if (scoreLog.length) state._lastScoreLog = scoreLog;
   rollInitiative(state, rng);
@@ -3221,6 +3260,20 @@ export function useDetector(state, rng, gid, si, wi, targetGid, targetSi) {
   return state;
 }
 
+function applyBeginLaunch(state, { gid, si, li, launchType }) {
+  state.launching = { gid, si, li, type: launchType, gateSel: null };
+}
+
+function applySelectGate(state, { gateSel }) {
+  if (state.launching) state.launching.gateSel = gateSel || null;
+}
+
+function applyCancelLaunch(state, { clearGateSel }) {
+  if (!state.launching) return;
+  if (clearGateSel) state.launching.gateSel = null;
+  else state.launching = null;
+}
+
 function applyLaunchGroundAsset(state, intent) {
   const { gid, si, li, dsId, count, locationKey, targetGid, targetSi, gateSel } = intent;
   const grp = state.groups[gid];
@@ -3544,6 +3597,9 @@ export function apply(state, intent, rng) {
     case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
     case 'finishAttack':       finishAttack(state, state.attackModal); return state;
     case 'attackDeclare':      return attackDeclare(state, state.attackModal, intent);
+    case 'beginLaunch':        applyBeginLaunch(state, intent); return state;
+    case 'selectGate':         applySelectGate(state, intent); return state;
+    case 'cancelLaunch':       applyCancelLaunch(state, intent); return state;
     case 'launchAsset':        return applyLaunchAsset(state, intent);
     case 'launchGroundAsset':  return applyLaunchGroundAsset(state, intent);
     case 'deployPayload':      return applyDeployPayload(state, intent);
@@ -3741,6 +3797,30 @@ export function apply(state, intent, rng) {
       const old = state.planning.ap[tSide] || 0;
       state.planning.ap[tSide] = Math.max(0, old + delta);
       logEvent(state, `AP ${delta > 0 ? '+' : ''}${delta} → ${state.planning.ap[tSide]}`);
+      return state;
+    }
+    case 'adjustSpike': {
+      const { gid, delta } = intent;
+      const grp = state.groups[gid];
+      const newVal = Math.min(4, Math.max(0, (grp.spikes || 0) + delta));
+      grp.spikes = newVal;
+      const def = grp.def || {};
+      logEvent(state, `${def.name || gid} spike ${delta > 0 ? '+1' : '−1'} → ${newVal}`);
+      return state;
+    }
+    case 'adjustHull': {
+      const { gid, si, delta } = intent;
+      const grp = state.groups[gid];
+      const ship = grp.ships[si];
+      const newHull = Math.min(ship.maxHull, Math.max(0, ship.hull + delta));
+      ship.hull = newHull;
+      if (newHull <= 0) ship.destroyed = true;
+      else if (ship.destroyed && newHull > 0) ship.destroyed = false;
+      if (grp.leadShipIdx != null && grp.ships[grp.leadShipIdx] && grp.ships[grp.leadShipIdx].destroyed) {
+        grp.leadShipIdx = null;
+      }
+      const def = grp.def || {};
+      logEvent(state, `${def.name || gid} #${si + 1} HP ${delta > 0 ? '+1' : '−1'} → ${newHull}/${ship.maxHull}${ship.destroyed ? ' (destroyed)' : ''}`);
       return state;
     }
     case 'holdPosition':

@@ -39,7 +39,7 @@
   .app {
     display: grid;
     grid-template-columns: 240px 1fr 280px;
-    grid-template-rows: 48px 1fr;
+    grid-template-rows: 48px auto 1fr;
     height: 100vh;
     gap: 0;
   }
@@ -962,7 +962,7 @@
     .app { grid-template-columns: 200px 1fr 240px; }
   }
   @media (max-width: 860px) {
-    .app { grid-template-columns: 1fr; grid-template-rows: 48px 1fr; }
+    .app { grid-template-columns: 1fr; grid-template-rows: 48px auto 1fr; }
     .panel { display: none; }
     .panel.mobile-visible { display: block; position: fixed; top: 48px; bottom: 0; width: 80%; z-index: 100; }
     .panel.left.mobile-visible { left: 0; border-right: 1px solid var(--border); }
@@ -997,7 +997,7 @@
     </div>
   </header>
 
-  <div id="replay-bar" style="display:none;position:fixed;top:44px;left:0;right:0;z-index:9999;background:#0d1a1f;border-bottom:2px solid #2a7fff;padding:6px 14px;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;color:#ccc;">
+  <div id="replay-bar" style="display:none;grid-column:1/-1;z-index:9999;background:#0d1a1f;border-bottom:2px solid #2a7fff;padding:6px 14px;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;color:#ccc;">
     <span style="color:#2a7fff;font-weight:bold;letter-spacing:1px;">↺ REPLAY</span>
     <button class="btn" id="replay-round-prev" title="Previous round" style="padding:3px 8px;">⟨⟨ RND</button>
     <button class="btn" id="replay-prev" title="Previous step" style="padding:3px 8px;">◀ PREV</button>
@@ -1338,7 +1338,7 @@ function connectedGateships(mSide, mx, my)                 { return _connectedGa
 function otherShipBases(skipGid, skipSi)                   { return _otherShipBases(state, skipGid, skipSi); }
 function isInVanguardZone(xIn, yIn, def, bz)               { return _isInVanguardZone(state, xIn, yIn, def, bz); }
 function largeObjectAt(xpx, ypx)                           { return _largeObjectAt(state, xpx, ypx); }
-function sceneryAttackEffects(ax, ay, bx, by, as_, ts)     { return _sceneryAttackEffects(state, rng, ax, ay, bx, by, as_, ts); }
+function sceneryAttackEffects(ax, ay, bx, by, as_, ts)     { return _sceneryAttackEffects(state, ax, ay, bx, by, as_, ts); }
 function sceneryMoveHits(ax, ay, bx, by, ship)             { return _sceneryMoveHits(state, rng, ax, ay, bx, by, ship); }
 function sceneryValid(type, xIn, yIn)                      { return _sceneryValid(state, type, xIn, yIn); }
 function canDeployNow(def)                                 { return _canDeployNow(state, def); }
@@ -2866,17 +2866,23 @@ function renderDetail() {
       const ltOrder = effectiveOrder(def, grp, state.selectedShipIdx);
       const ltO = ltOrder && ORDERS[ltOrder];
       if (ltShip && !ltShip.destroyed && !ltShip.offTable && !ltShip.movedThisRound && ltO && ltO.moveMax > 0) {
-        const ltNormalMaxR = effectiveMaxMovePx(def, ltShip, ltOrder);
-        const ltLm = layerMove(ltNormalMaxR, ltShip, state.layerToggle);
         const ltCurLayer = ltShip.layer || 'orbit';
-        const ltToggleLabel = ltCurLayer === 'orbit'
-          ? (state.layerToggle ? '↓ Descending → Atmosphere' : '↓ Descend to Atmosphere')
-          : (state.layerToggle ? '↑ Ascending → Orbit (−4")' : '↑ Ascend to Orbit (−4")');
-        ordersHTML += `<div class="panel-section" style="padding-top:0;padding-bottom:2px;">
-          <button class="btn ${state.layerToggle ? sideClass : ''}" data-layer-toggle="1"
-            style="width:100%;${state.layerToggle ? 'border-color:var(--'+sideClass+');color:var(--'+sideClass+');' : ''}">
-            ${ltToggleLabel}${state.layerToggle ? ' ✓' : ''}</button>
-        </div>`;
+        const ltDecayed = ltShip.crippling && ltShip.crippling.includes('decay');
+        if (ltCurLayer === 'atmosphere' && ltDecayed) {
+          ordersHTML += `<div class="panel-section" style="padding-top:0;padding-bottom:2px;">
+            <button class="btn" disabled style="width:100%;opacity:0.45;cursor:not-allowed;">↑ Ascend to Orbit — Orbital Decay</button>
+          </div>`;
+        } else {
+          const ltNormalMaxR = effectiveMaxMovePx(def, ltShip, ltOrder);
+          const ltToggleLabel = ltCurLayer === 'orbit'
+            ? (state.layerToggle ? '↓ Descending → Atmosphere' : '↓ Descend to Atmosphere')
+            : (state.layerToggle ? '↑ Ascending → Orbit (−4")' : '↑ Ascend to Orbit (−4")');
+          ordersHTML += `<div class="panel-section" style="padding-top:0;padding-bottom:2px;">
+            <button class="btn ${state.layerToggle ? sideClass : ''}" data-layer-toggle="1"
+              style="width:100%;${state.layerToggle ? 'border-color:var(--'+sideClass+');color:var(--'+sideClass+');' : ''}">
+              ${ltToggleLabel}${state.layerToggle ? ' ✓' : ''}</button>
+          </div>`;
+        }
       }
     }
   }
@@ -2897,7 +2903,7 @@ function renderDetail() {
     const weaponsOffline = selShip && selShip.crippling && selShip.crippling.includes('weapons');
     selShip && (selShip.weaponTargets = selShip.weaponTargets || {});
     const usedCost = selShip ? lockedWeaponCost(def, selShip, eo) : 0;
-    const lockedCount = selShip ? Object.keys(selShip.weaponTargets).length : 0;
+    const lockedCount = grp.ships.reduce((n, s) => n + (s.weaponTargets ? Object.keys(s.weaponTargets).length : 0), 0);
     const fired = selShip && selShip.firedThisActivation;
     // Movement-before-firing: for normal group orders the WHOLE group must finish moving
     // first; ships on individual orders (Open Network / individual) gate on their own move.
@@ -2962,7 +2968,7 @@ function renderDetail() {
       else if (!moved) weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">Move this ship first, then assign weapon targets.</div>`;
       else if (limit === 0) weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">This Order cannot fire weapons.</div>`;
       else if (lockedCount > 0) {
-        weaponsHTML += `<button class="btn-finish-act" data-fire="${state.selectedGroupId}|${si}" style="background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">🔥 ENGAGE (${lockedCount})</button>`;
+        weaponsHTML += `<button class="btn-finish-act" data-fire="${state.selectedGroupId}|${si}" style="background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">⊕ ENGAGE (${lockedCount})</button>`;
       } else {
         weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">Click a weapon, then click an enemy ship to lock a target.</div>`;
       }
@@ -3878,10 +3884,22 @@ function renderBoard() {
       html += `<circle cx="${a.x}" cy="${a.y}" r="${thrPx}" fill="rgba(255,255,255,0.03)"
                 stroke="${col}" stroke-width="1" stroke-dasharray="5 4"/>`;
     }
+    // Compute facing rotation if launched from a dropsite (direction: dropsite → asset).
+    let _assetFromDs = null, _assetRotDeg = 0;
+    if (a.fromDropsite) {
+      const _dss = state.scenarioData && state.scenarioData.dropsites;
+      _assetFromDs = _dss && _dss.find(d => d.id === a.fromDropsite);
+      if (_assetFromDs) {
+        const _dsx = inchToPx(_assetFromDs.x), _dsy = inchToPx(_assetFromDs.y);
+        const _ddx = a.x - _dsx, _ddy = a.y - _dsy;
+        if (Math.abs(_ddx) > 0.5 || Math.abs(_ddy) > 0.5)
+          _assetRotDeg = Math.atan2(_ddy, _ddx) * 180 / Math.PI + 90;
+      }
+    }
     html += `<g data-asset="${ai}" data-asset-id="${a.id}" style="cursor:pointer;">
       <polygon points="${a.x},${a.y-s} ${a.x+s},${a.y} ${a.x},${a.y+s} ${a.x-s},${a.y}"
         fill="${a.side==='player1'?'rgba(74,214,255,0.15)':'rgba(212,166,71,0.15)'}" stroke="${col}" stroke-width="${isSel?2:1}"
-        ${a.moved && assetMoveMode ? 'opacity="0.5"' : ''}/>
+        ${a.moved && assetMoveMode ? 'opacity="0.5"' : ''}${_assetRotDeg ? ` transform="rotate(${_assetRotDeg.toFixed(1)},${a.x},${a.y})"` : ''}/>
       <text x="${a.x}" y="${a.y+1.5}" font-family="var(--mono)" font-size="7" font-weight="700"
         fill="${col}" text-anchor="middle" dominant-baseline="middle" pointer-events="none">${cnt}</text>
       <text x="${a.x}" y="${a.y+s+9}" font-family="var(--mono)" font-size="6.5" font-weight="700"
@@ -3904,6 +3922,11 @@ function renderBoard() {
       if (fromShip && !fromShip.destroyed && !fromShip.offTable) {
         html += `<line x1="${fromShip.x}" y1="${fromShip.y}" x2="${a.x}" y2="${a.y}" stroke="${col}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>`;
       }
+    }
+    // Dotted movement line from launching dropsite to deployed asset.
+    if (_assetFromDs) {
+      const _dsx = inchToPx(_assetFromDs.x), _dsy = inchToPx(_assetFromDs.y);
+      html += `<line x1="${_dsx}" y1="${_dsy}" x2="${a.x}" y2="${a.y}" stroke="${col}" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>`;
     }
   });
 
@@ -4005,9 +4028,27 @@ function renderBoard() {
         Object.keys(state.groups).forEach(gid => {
           const def = getDef(gid);
           if (!def || def.side === aDef.side) return;
-          state.groups[gid].ships.forEach((s, si) => {
+          const tGrp = state.groups[gid];
+          tGrp.ships.forEach((s, si) => {
             if (s.destroyed || s.offTable || s.attachedTo) return;
-            if (weaponCanTarget(aDef, originShip, w, def, s, state.groups[gid])) {
+            const eff = sceneryAttackEffects(originShip.x, originShip.y, s.x, s.y, originShip, s);
+            const sig = s.sigSilent ? 0 : (def.sig || 0);
+            const spikes = (tGrp.spikes || 0) + (s.spikes || 0);
+            const sigPx      = sig * INCH;
+            const sigSpikePx = (sig + 3 * spikes) * INCH;
+            if (eff.ignoreSpikes && spikes > 0) {
+              // Path crosses a planetary ring: spikes are ignored. Show full sig+spike aura
+              // in grey to indicate it doesn't count, and base sig aura in red.
+              if (sigSpikePx > 0) {
+                html += `<circle cx="${s.x}" cy="${s.y}" r="${sigSpikePx}" fill="rgba(100,100,100,0.03)" stroke="#555" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5" pointer-events="none"/>`;
+              }
+              if (sigPx > 0) {
+                html += `<circle cx="${s.x}" cy="${s.y}" r="${sigPx}" fill="rgba(255,82,82,0.04)" stroke="var(--hull-crit)" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5" pointer-events="none"/>`;
+              }
+            } else if (sigSpikePx > 0) {
+              html += `<circle cx="${s.x}" cy="${s.y}" r="${sigSpikePx}" fill="rgba(255,82,82,0.04)" stroke="var(--hull-crit)" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5" pointer-events="none"/>`;
+            }
+            if (weaponCanTarget(state, aDef, originShip, w, def, s, tGrp)) {
               html += `<circle cx="${s.x}" cy="${s.y}" r="9" fill="none" stroke="var(--hull-crit)" stroke-width="1.5" stroke-dasharray="2 2"/>`;
             }
           });
@@ -4121,6 +4162,35 @@ function renderWeaponArc(ship, def, w) {
 }
 
 
+/* Return eligible Shield Booster groups for a given target ship.
+   A group qualifies when: it has Shield Booster in its def, it is friendly to the
+   target, it has < 4 spikes, it is NOT the target's own group, and at least one alive
+   on-table ship is within 6" of the target ship. */
+function findShieldBoosters(targetGid, targetSi) {
+  const tDef = getDef(targetGid);
+  const tGrp = state.groups[targetGid];
+  const tShip = tGrp && tGrp.ships[targetSi];
+  if (!tShip || tShip.destroyed) return [];
+  const sv = shieldSaveVal(tDef);
+  if (!sv || sv <= 3) return []; // already 3+ or no shield — can't improve further
+  const out = [];
+  Object.keys(state.groups).forEach(gid => {
+    if (gid === targetGid) return; // "Ships with this rule are unaffected"
+    const grp = state.groups[gid];
+    const def = getDef(gid);
+    if (!def || def.side !== tDef.side) return;
+    if (!/Shield Booster/i.test(def.special || '')) return;
+    if ((grp.spikes || 0) >= 4) return;
+    const inRange = grp.ships.some(s =>
+      !s.destroyed && !s.offTable &&
+      Math.hypot(s.x - tShip.x, s.y - tShip.y) <= 6 * INCH
+    );
+    if (!inRange) return;
+    out.push({ gid, name: def.name, spikes: grp.spikes || 0, boostedSv: Math.max(3, sv - 1) });
+  });
+  return out;
+}
+
 /* Build the attack from the firing ship's locked weapons, grouped by target. */
 function openAttackModal(gid, si) {
   const aDef = getDef(gid);
@@ -4156,6 +4226,7 @@ function openAttackModal(gid, si) {
   });
   const shots = Object.values(combined);
   if (!shots.length) { flashLaunchMsg('No valid targets'); return; }
+  const totalLocks = grp.ships.reduce((n, s) => n + (s.weaponTargets ? Object.keys(s.weaponTargets).length : 0), 0);
   // Group fire is measured from the LEAD ship — use it as the attacker origin so the
   // hit step's range/scenery/layer effects measure from the correct point.
   const individual = aDef.openNetwork || onIndividualOrders(aDef, grp);
@@ -4168,7 +4239,7 @@ function openAttackModal(gid, si) {
   state.attackModal = {
     attackerGid: gid, attackerSi: originSi,
     groupFire: true,
-    shots,
+    shots, totalLocks,
     step: 'intro',       // intro → hit → save → crippling → explosion → done
     shotIdx: 0,
     shieldsUp: {},        // {targetKey: bool}
@@ -4303,7 +4374,8 @@ function renderAttackModal() {
       }).join(' · ');
       targetsWithShields.push({ k, name: td.name, sv, saveParts });
     });
-    body = `<div class="am-line">Firing <b>${aDef.name}</b> — ${M.shots.length} weapon${M.shots.length>1?'s':''} locked.</div>`;
+    const _tl = M.totalLocks ?? M.shots.length;
+    body = `<div class="am-line">Firing <b>${aDef.name}</b> — ${_tl} weapon${_tl>1?'s':''} locked.</div>`;
     M.shots.forEach(s => {
       if (s.dsId) {
         const _bds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === s.dsId);
@@ -4330,6 +4402,16 @@ function renderAttackModal() {
         const dis = isDefender ? '' : ' disabled';
         const op = isDefender ? '' : ' style="opacity:0.5;"';
         body += `<label class="am-toggle"${op}><input type="checkbox" data-shield-toggle="${t.k}" ${M.shieldsUp[t.k]?'checked':''}${dis}/> Raise shields on ${t.name} (${t.saveParts}, ignores save mods; +1 Spike)</label>`;
+        // Shield Booster: show eligible Opal groups that can improve this target's shield save.
+        const [_bGid, _bSi] = t.k.split('#');
+        const boosters = findShieldBoosters(_bGid, parseInt(_bSi));
+        boosters.forEach(b => {
+          const shieldRaised = !!M.shieldsUp[t.k];
+          const boosting = M.shieldBooster && M.shieldBooster[t.k] === b.gid;
+          const bdis = (isDefender && shieldRaised) ? '' : ' disabled';
+          const bop = (isDefender && shieldRaised) ? '' : ' style="opacity:0.45;"';
+          body += `<label class="am-toggle" style="margin-left:14px;color:var(--shal)"${bop}><input type="checkbox" data-booster-toggle="${t.k}|${b.gid}" ${boosting?'checked':''}${bdis}/> Shield Booster (${b.name}) — save ${t.sv}+→${b.boostedSv}+S; +1 Spike to ${b.name}</label>`;
+        });
       });
     }
     // Escort (§15.6): a friendly H/C target within 6" of a coherent Escort Group may
@@ -4445,10 +4527,49 @@ function renderAttackModal() {
     const sp = parseWeaponSpecials(s.w);
     const typeLabel = (t) => t === 'E' ? 'ES' : t === 'K' ? 'KS' : 'Shield/Core';
     const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
-    body = `<div class="am-step-head">Shot ${M.shotIdx+1}/${M.shots.length} · ${sr.backupRolled ? 'Saves' : 'ES / KS Saves'}</div>
+    // Damage type, base save, and modified save info for the header/label.
+    const _wtype = s.w.type;
+    const _saveTypeHdr = _wtype === 'E' ? 'E Saves' : _wtype === 'K' ? 'K Saves' : 'Core Saves';
+    const _baseSvStr = _wtype === 'E' ? td.es : _wtype === 'K' ? td.ks : null;
+    const _baseSv = (_baseSvStr && _baseSvStr !== '—') ? parseInt(_baseSvStr) : null;
+    const _firstWithSv = sr.hitsList.find(h => h.sv != null);
+    const _modSv = _firstWithSv ? _firstWithSv.sv : null;
+    const _savesVary = sr.hitsList.some(h => h.sv != null && h.sv !== _modSv);
+    const _mods = [sp.scald ? `Scald-${sp.scald}` : '', sp.reave ? `Reave-${sp.reave}` : '',
+      sp.burnthrough && M.hitResult && M.hitResult.crits > 0 ? `Burnthrough-${sp.burnthrough}` : ''].filter(Boolean);
+    let _saveInfo = '';
+    if (_baseSv != null) {
+      const _lbl = _wtype === 'E' ? 'ES' : 'KS';
+      _saveInfo = `${_lbl} ${_baseSvStr}`;
+      if (_modSv != null && _modSv !== _baseSv) {
+        _saveInfo += ` → ${_savesVary ? 'varies' : _modSv + '+'}`;
+        if (_mods.length) _saveInfo += ` (${_mods.join(', ')})`;
+      }
+    }
+    const _primSavesLabel = _saveInfo ? `Primary saves · ${_saveInfo}` : `Primary saves (vs each hit's modified save)`;
+    // Pool primDice by save target so identical saves are rolled together.
+    const _poolByKey = {}, _poolArr = [];
+    sr.primDice.forEach(d => {
+      const k = String(d.sv);
+      if (!_poolByKey[k]) { _poolByKey[k] = { sv: d.sv, dice: [], crits: 0 }; _poolArr.push(_poolByKey[k]); }
+      _poolByKey[k].dice.push(d);
+      if (d.crit) _poolByKey[k].crits++;
+    });
+    const _multiPools = _poolArr.length > 1;
+    const _primDiceHtml = _poolArr.map(p => {
+      const allCrit = p.crits === p.dice.length;
+      const critDmgNote = allCrit && sp.critical > 0 ? ` · +${sp.critical} dmg each` : '';
+      const plbl = _multiPools
+        ? `<div class="am-line" style="font-size:9px;color:var(--text-mute)">${allCrit ? 'Crit saves' : 'Normal saves'} vs ${p.sv}+${critDmgNote}:</div>`
+        : (sp.critical > 0 && p.crits > 0
+            ? `<div class="am-line" style="font-size:9px;color:var(--text-mute)">Saves vs ${p.sv}+ · +${sp.critical} dmg per crit:</div>`
+            : '');
+      return plbl + `<div class="am-dice">${p.dice.map(d => `<span class="am-die ${d.ok?'hit':'miss'}" title="vs ${d.sv}+${d.crit?' (crit)':''}">${d.r}</span>`).join('')}</div>`;
+    }).join('');
+    body = `<div class="am-step-head">Shot ${M.shotIdx+1}/${M.shots.length} · ${sr.backupRolled ? 'Saves' : _saveTypeHdr}</div>
       <div class="am-line">${td.name} — ${sr.hitsList.length} hit${sr.hitsList.length!==1?'s':''}${sr.penetrator?' (criticals → Core)':''}</div>
-      ${sr.primDice.length?`<div class="am-line" style="font-size:9px;color:var(--text-mute)">Primary saves (vs each hit's modified save):</div>
-        <div class="am-dice">${sr.primDice.map(d=>`<span class="am-die ${d.ok?'hit':'miss'}" title="vs ${d.sv}+${d.crit?' (crit)':''}">${d.r}</span>`).join('')}</div>`:''}
+      ${sr.primDice.length?`<div class="am-line" style="font-size:9px;color:var(--text-mute)">${_primSavesLabel}:</div>
+        ${_primDiceHtml}`:''}
       ${sr.backupRolled && sr.backDice.length?`<div class="am-line" style="font-size:9px;color:var(--text-mute)">Backup saves (${td.bs}):</div>
         <div class="am-dice">${sr.backDice.map(d=>`<span class="am-die ${d.ok?'hit':'miss'}">${d.r}</span>`).join('')}</div>`:''}
       ${sr.backupRolled && sr.aegisDice && sr.aegisDice.length?`<div class="am-line" style="font-size:9px;color:#4ad6ff">Aegis-${sr.aegisY} save dice:</div>
@@ -4617,6 +4738,10 @@ function renderAttackModal() {
 
   overlay.querySelectorAll('[data-shield-toggle]').forEach(cb => {
     cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'shield', key: cb.dataset.shieldToggle, value: cb.checked }));
+  });
+  overlay.querySelectorAll('[data-booster-toggle]').forEach(cb => {
+    const [key, boosterGid] = cb.dataset.boosterToggle.split('|');
+    cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'shieldBooster', key, boosterGid, value: cb.checked }));
   });
   overlay.querySelectorAll('[data-overcharge]').forEach(cb => {
     cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'overcharge', wi: cb.dataset.overcharge, value: cb.checked }));
@@ -6428,9 +6553,12 @@ function renderDropsiteActivation() {
         <button class="btn" id="da-launch-cancel" style="padding:4px 10px;font-size:10px;">CANCEL</button>`;
     }
   } else if (ds) {
-    // A dropsite is selected — show a minimal banner; panel handles the detail
-    dsBan.innerHTML = `<span><b style="color:var(--${sideKey})">${sideName(da.side)}</b> activating <b>${ds.base.name}</b> · use right panel to fire weapons / launch assets</span>
-      ${isMyTurn ? `<button class="btn" id="da-skip-all" style="padding:4px 10px;font-size:10px;margin-left:8px;">SKIP ALL ACTIVATIONS</button>` : ''}`;
+    // A dropsite is selected — show banner with confirm button (mirrors ship FINISH ACTIVATION)
+    dsBan.innerHTML = `<span><b style="color:var(--${sideKey})">${sideName(da.side)}</b> activating <b>${ds.base.name}</b> · fire weapons / launch assets in right panel</span>
+      ${isMyTurn ? `
+        <button class="btn-finish-act" id="da-confirm-finish" style="padding:4px 14px;font-size:10px;margin-left:8px;">CONFIRM END ACTIVATION ▸</button>
+        <button class="btn" id="da-skip-all" style="padding:4px 10px;font-size:10px;margin-left:4px;">SKIP ALL ACTIVATIONS</button>
+      ` : ''}`;
   } else if (controlled.length > 0) {
     // Picking phase — controlled dropsites are highlighted on the map; click one to activate
     dsBan.innerHTML = `<span><b style="color:var(--${sideKey})">${sideName(da.side)}</b> — click a highlighted dropsite to activate it</span>
@@ -6443,6 +6571,9 @@ function renderDropsiteActivation() {
         : ''}`;
   }
 
+  // "Confirm End Activation" — finish this dropsite and pass to the opponent
+  const confirmFinishBtn = dsBan.querySelector('#da-confirm-finish');
+  if (confirmFinishBtn) confirmFinishBtn.addEventListener('click', () => dispatch({ type: 'daFinishDropsite', dsId: da.dsId }));
   // "Skip All Activations" — dispatch daSwitchSide; mutator marks this side's dropsites done
   const skipAll = dsBan.querySelector('#da-skip-all');
   if (skipAll) skipAll.addEventListener('click', () => dispatch({ type: 'daSwitchSide' }));
@@ -8208,7 +8339,7 @@ function _handle3dClick(e) {
     const hit = _3dHitShip(e, m => getDef(m.gid) && getDef(m.gid).side !== aDef.side);
     if (!hit) { flashLaunchMsg('Click an enemy ship'); return; }
     const originShip = firingOriginShip(aDef, aGrp, t.si);
-    if (!weaponCanTarget(aDef, originShip, w, hit.def, hit.ship, hit.grp)) {
+    if (!weaponCanTarget(state, aDef, originShip, w, hit.def, hit.ship, hit.grp)) {
       flashLaunchMsg('Target not in arc / range / layer'); return;
     }
     dispatch({ type: 'lockWeaponTarget', gid: t.gid, si: t.si, wi: t.wi, targetGid: hit.gid, targetSi: hit.si });
@@ -8328,16 +8459,19 @@ function _handle3dClick(e) {
           return dl === _gLLayer && Math.hypot(inchToPx(d.x) - _gLBest.x, inchToPx(d.y) - _gLBest.y) <= _gLGATEPX + 2;
         });
         if (!_gLReachable) { flashLaunchMsg('No same-layer dropsite within 3" of that Voidgate'); return; }
-        state.launching.gateSel = { x: _gLBest.x, y: _gLBest.y, si: _gLBest.si, gid: _gLBest.def.id, layer: _gLLayer };
+        dispatch({ type: 'selectGate', gid: L.gid, si: L.si, gateSel: { x: _gLBest.x, y: _gLBest.y, si: _gLBest.si, gid: _gLBest.def.id, layer: _gLLayer } });
         flashLaunchMsg('Voidgate selected — click a dropsite within 3"');
-        renderAll(true);
         return;
       }
 
       // Step 2: click a dropsite within 3" of the selected Voidgate on the same layer.
       const _gLGsel = L.gateSel;
       const _gLGship = state.groups[_gLGsel.gid] && state.groups[_gLGsel.gid].ships[_gLGsel.si];
-      if (!_gLGship || _gLGship.destroyed) { state.launching.gateSel = null; flashLaunchMsg('Voidgate lost'); renderAll(true); return; }
+      if (!_gLGship || _gLGship.destroyed) {
+        dispatch({ type: 'cancelLaunch', gid: L.gid, si: L.si, clearGateSel: true });
+        flashLaunchMsg('Voidgate lost');
+        return;
+      }
       const _gLDsHit = _3dNearestDropsite(e, 4 * INCH);
       if (!_gLDsHit) { flashLaunchMsg('Click a dropsite within 3" of the Voidgate'); return; }
       const _gLDs = _gLDsHit.ds;
@@ -8964,9 +9098,20 @@ function init3d() {
       flashLaunchMsg('Launch cancelled'); renderAll(true); return;
     }
     if (state.launching) {
+      const _wasDs = !!state.launching.fromDropsite;
+      if (state.launching.type === 'gate_dropship') {
+        if (state.launching.gateSel) {
+          flashLaunchMsg('Voidgate selection cancelled');
+          dispatch({ type: 'cancelLaunch', gid: state.launching.gid, si: state.launching.si, clearGateSel: true });
+        } else {
+          flashLaunchMsg('Launch cancelled');
+          dispatch({ type: 'cancelLaunch', gid: state.launching.gid, si: state.launching.si, clearGateSel: false });
+        }
+        return; // dispatch handles renderAll in hotseat; online re-renders on server broadcast
+      }
       if (state.launching.gateSel) { state.launching.gateSel = null; flashLaunchMsg('Voidgate selection cancelled'); }
       else { state.launching = null; flashLaunchMsg('Launch cancelled'); }
-      renderAll(); return;
+      renderAll(_wasDs); return;
     }
     if (state.assetMove) { state.assetMove = null; renderAll(true); return; } // deselect is local-only
     if (state.extracting) { state.extracting = null; flashLaunchMsg('Extract cancelled'); renderAll(); return; }
@@ -8978,9 +9123,19 @@ function init3d() {
     if (state.payloadDetach) { state.payloadDetach = null; flashLaunchMsg('Detach cancelled'); renderAll(true); return; }
     if (state.payloadReattach) { state.payloadReattach = null; flashLaunchMsg('Reattach cancelled'); renderAll(); return; }
     if (state.antiWing) { state.antiWing = null; flashLaunchMsg('Anti-Wing cancelled'); renderAll(); return; }
-    if (state.detector) { state.detector = null; flashLaunchMsg('Detector cancelled'); renderAll(); return; }
+    if (state.detector) { state.detector = null; flashLaunchMsg('Detector cancelled'); renderAll(true); return; }
     if (state.targeting) { state.targeting = null; flashLaunchMsg('Targeting cancelled'); renderAll(true); return; }
     if (state.layerToggle) { state.layerToggle = false; state.hoverPoint = null; renderAll(); return; }
+    if (state.phase === 'play' && state.selectedGroupId !== null && state.selectedShipIdx !== null) {
+      const _rGid = state.selectedGroupId, _rSi = state.selectedShipIdx;
+      const _rGrp = state.groups[_rGid];
+      const _rShip = _rGrp && _rGrp.ships[_rSi];
+      const _rTrail = _rGrp && (_rGrp.moveTrail || []);
+      const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
+      if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
+      else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
+      return;
+    }
   });
 
   _loadGlbModels();
@@ -9452,24 +9607,51 @@ function _sync3dOverlays(group) {
   // 2. Enemy signature auras (mode 1, while moving, or while targeting a weapon)
   if (arcViewMode !== 2 && (movingActive || arcViewMode === 1 || state.targeting)) {
     const enemySide = def.side === 'player1' ? 'player2' : 'player1';
+    // During targeting, find the firing origin so we can check per-target ring crossing.
+    let targetingOrigin = null;
+    if (state.targeting) {
+      const t = state.targeting;
+      const tAGrp = state.groups[t.gid];
+      const tADef = getDef(t.gid);
+      targetingOrigin = tAGrp && tADef && firingOriginShip(tADef, tAGrp, t.si);
+    }
     fleetForSide(enemySide).forEach(edef => {
       const eg = getGroup(edef.id);
       if (!eg) return;
       eg.ships.forEach(es => {
         if (es.destroyed || es.offTable) return;
-        const sig   = es.sigSilent ? 0 : edef.sig;
-        const sigPx = (sig + 3 * (eg.spikes || 0)) * INCH;
-        if (sigPx <= 0) return;
+        const sig        = es.sigSilent ? 0 : edef.sig;
+        const spikes     = eg.spikes || 0;
+        const sigPx      = sig * INCH;
+        const sigSpikePx = (sig + 3 * spikes) * INCH;
+        if (sigSpikePx <= 0) return;
         const wy = _3D_LAYER_Y[es.layer] ?? 120;
-        const sigCircle = _3dDashedCircle(es.x - 288, es.y - 288, sigPx, wy, 0xff5252, 0.45, 2, 4);
-        group.add(sigCircle);
-        // Faint fill
-        const fillGeo = new THREE.CircleGeometry(sigPx, 64);
-        fillGeo.rotateX(-Math.PI / 2);
-        fillGeo.translate(es.x - 288, wy, es.y - 288);
-        group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({
-          color: 0xff5252, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false
-        })));
+
+        // When targeting, check if the firing path crosses a planetary ring.
+        const eff = targetingOrigin ? sceneryAttackEffects(targetingOrigin.x, targetingOrigin.y, es.x, es.y, targetingOrigin, es) : { ignoreSpikes: false };
+        const ringBlock = eff.ignoreSpikes && spikes > 0;
+
+        if (ringBlock) {
+          // Path crosses ring: grey sig+spike aura (spikes ignored), red base-sig aura.
+          group.add(_3dDashedCircle(es.x - 288, es.y - 288, sigSpikePx, wy, 0x555555, 0.3, 2, 4));
+          const greyFill = new THREE.CircleGeometry(sigSpikePx, 64);
+          greyFill.rotateX(-Math.PI / 2);
+          greyFill.translate(es.x - 288, wy, es.y - 288);
+          group.add(new THREE.Mesh(greyFill, new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.025, side: THREE.DoubleSide, depthWrite: false })));
+          if (sigPx > 0) {
+            group.add(_3dDashedCircle(es.x - 288, es.y - 288, sigPx, wy, 0xff5252, 0.45, 2, 4));
+            const redFill = new THREE.CircleGeometry(sigPx, 64);
+            redFill.rotateX(-Math.PI / 2);
+            redFill.translate(es.x - 288, wy, es.y - 288);
+            group.add(new THREE.Mesh(redFill, new THREE.MeshBasicMaterial({ color: 0xff5252, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false })));
+          }
+        } else {
+          group.add(_3dDashedCircle(es.x - 288, es.y - 288, sigSpikePx, wy, 0xff5252, 0.45, 2, 4));
+          const fillGeo = new THREE.CircleGeometry(sigSpikePx, 64);
+          fillGeo.rotateX(-Math.PI / 2);
+          fillGeo.translate(es.x - 288, wy, es.y - 288);
+          group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: 0xff5252, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false })));
+        }
       });
     });
   }
@@ -9588,7 +9770,7 @@ function _sync3dOverlays(group) {
             if (s.destroyed || s.offTable || s.attachedTo) return;
             const twy  = _3D_LAYER_Y[s.layer] ?? 120;
             const [tLen] = _3D_SHIP_DIMS[tDef.tonnage || 'L'] || _3D_SHIP_DIMS.L;
-            if (weaponCanTarget(aDef, originShip, w, tDef, s, tGrp)) {
+            if (weaponCanTarget(state, aDef, originShip, w, tDef, s, tGrp)) {
               // Valid target: tight bright ring + outer glow
               group.add(_3dDashedCircle(s.x - 288, s.y - 288, tLen * 0.85, twy, 0xff3030, 0.9, 2, 2));
               group.add(_3dDashedCircle(s.x - 288, s.y - 288, tLen * 1.25, twy, 0xff5252, 0.35, 4, 3));
@@ -10507,7 +10689,7 @@ function _sync3dAssets(group) {
       }
     }
 
-    // Derive facing from launch direction (ship → asset), fallback to 0
+    // Derive facing from launch direction (ship → asset, or dropsite → asset), fallback to 0
     let assetRotY = 0;
     {
       const fromGrp = a.fromGid && state.groups[a.fromGid];
@@ -10515,6 +10697,12 @@ function _sync3dAssets(group) {
       if (fromShip && !fromShip.destroyed && !fromShip.offTable) {
         const dx = a.x - fromShip.x, dz = a.y - fromShip.y;
         if (Math.abs(dx) > 0.5 || Math.abs(dz) > 0.5) assetRotY = Math.atan2(-dx, -dz);
+      } else if (a.fromDropsite) {
+        const _fds = state.scenarioData?.dropsites?.find(d => d.id === a.fromDropsite);
+        if (_fds) {
+          const dx = a.x - _fds.x * INCH, dz = a.y - _fds.y * INCH;
+          if (Math.abs(dx) > 0.5 || Math.abs(dz) > 0.5) assetRotY = Math.atan2(-dx, -dz);
+        }
       }
     }
 
@@ -10556,6 +10744,25 @@ function _sync3dAssets(group) {
         );
         _alLine.computeLineDistances();
         group.add(_alLine);
+      }
+    }
+
+    // Launch line from parent dropsite to asset token
+    if (a.fromDropsite) {
+      const _fds = state.scenarioData?.dropsites?.find(d => d.id === a.fromDropsite);
+      if (_fds) {
+        const _isStation = DROPSITE_BASE[_fds.type]?.category === 'station';
+        const _fdsY = _isStation ? _3D_LAYER_Y.orbit : 0;
+        const _fdsX = _fds.x * INCH - 288, _fdsZ = _fds.y * INCH - 288;
+        const _dsLine = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(_fdsX, _fdsY, _fdsZ),
+            new THREE.Vector3(wx, wy, wz),
+          ]),
+          new THREE.LineDashedMaterial({ color: col, transparent: true, opacity: 0.45, dashSize: 5, gapSize: 3 })
+        );
+        _dsLine.computeLineDistances();
+        group.add(_dsLine);
       }
     }
 
@@ -11076,14 +11283,14 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('[data-spike-u]')) {
     const gid = e.target.dataset.spikeU;
     const grp = state.groups[gid];
-    if (grp.spikes < 4) { grp.spikes++; logEvent(`${(grp.def&&grp.def.name)||gid} spike +1 → ${grp.spikes}`); }
-    renderAll(); netAfterRender(); return;
+    if (grp.spikes < 4) dispatch({ type: 'adjustSpike', gid, delta: 1 });
+    return;
   }
   if (e.target.matches('[data-spike-d]')) {
     const gid = e.target.dataset.spikeD;
     const grp = state.groups[gid];
-    if (grp.spikes > 0) { grp.spikes--; logEvent(`${(grp.def&&grp.def.name)||gid} spike −1 → ${grp.spikes}`); }
-    renderAll(); netAfterRender(); return;
+    if (grp.spikes > 0) dispatch({ type: 'adjustSpike', gid, delta: -1 });
+    return;
   }
   // Dropsite damage controls
   if (e.target.matches('[data-ds-damage-u]')) {
@@ -11101,32 +11308,15 @@ document.addEventListener('click', (e) => {
   // HP controls
   if (e.target.matches('[data-hpu]')) {
     const [gid, si] = e.target.dataset.hpu.split('|');
-    const grp = state.groups[gid];
-    const ship = grp.ships[si];
-    const shipLabel = (grp.def&&grp.def.name)||gid;
-    if (ship.hull < ship.maxHull) {
-      ship.hull++;
-      if (ship.destroyed && ship.hull > 0) ship.destroyed = false;
-      logEvent(`${shipLabel} HP +1 → ${ship.hull}/${ship.maxHull}`);
-    }
-    renderAll(); netAfterRender(); return;
+    const ship = state.groups[gid].ships[si];
+    if (ship.hull < ship.maxHull) dispatch({ type: 'adjustHull', gid, si: parseInt(si, 10), delta: 1 });
+    return;
   }
   if (e.target.matches('[data-hpd]')) {
     const [gid, si] = e.target.dataset.hpd.split('|');
-    const grp = state.groups[gid];
-    const ship = grp.ships[si];
-    const shipLabel = (grp.def&&grp.def.name)||gid;
-    if (ship.hull > 0) {
-      ship.hull--;
-      if (ship.hull <= 0) ship.destroyed = true;
-      logEvent(`${shipLabel} HP −1 → ${ship.hull}/${ship.maxHull}${ship.destroyed?' (destroyed)':''}`);
-    }
-    // If the destroyed ship was the nominated lead, clear the nomination.
-    const g = state.groups[gid];
-    if (g.leadShipIdx != null && g.ships[g.leadShipIdx] && g.ships[g.leadShipIdx].destroyed) {
-      g.leadShipIdx = null;
-    }
-    renderAll(); netAfterRender(); return;
+    const ship = state.groups[gid].ships[si];
+    if (ship.hull > 0) dispatch({ type: 'adjustHull', gid, si: parseInt(si, 10), delta: -1 });
+    return;
   }
   if (e.target.matches('[data-bat-cancel]')) {
     if (state.pendingGroundLaunch) {
@@ -11318,6 +11508,17 @@ document.addEventListener('click', (e) => {
   if (launchEl) {
     const [gid, si, type, liStr] = launchEl.dataset.launch.split('|');
     const sIdx = parseInt(si), li = parseInt(liStr);
+    if (type === 'gate_dropship') {
+      // Gate dropship launch: server-authoritative so both clients see the Voidgate network.
+      if (state.launching && state.launching.gid === gid && state.launching.si === sIdx
+          && state.launching.type === type && state.launching.li === li) {
+        dispatch({ type: 'cancelLaunch', gid, si: sIdx, clearGateSel: false });
+      } else {
+        state.targeting = null; state.extracting = null;
+        dispatch({ type: 'beginLaunch', gid, si: sIdx, li, launchType: type });
+      }
+      return; // dispatch calls renderAll in hotseat; online re-renders on server broadcast
+    }
     // Toggle off if already targeting this exact launch entry.
     if (state.launching && state.launching.gid === gid && state.launching.si === sIdx
         && state.launching.type === type && state.launching.li === li) {
@@ -11891,16 +12092,19 @@ function resolveLaunchClick(e) {
         return dl === gLayer && Math.hypot(inchToPx(d.x) - best.x, inchToPx(d.y) - best.y) <= GATE_REACH + 2;
       });
       if (!reachable) { flashLaunchMsg('No same-layer dropsite within 3" of that Voidgate'); return false; }
-      state.launching.gateSel = { x: best.x, y: best.y, si: best.si, gid: best.def.id, layer: gLayer };
+      dispatch({ type: 'selectGate', gid: L.gid, si: L.si, gateSel: { x: best.x, y: best.y, si: best.si, gid: best.def.id, layer: gLayer } });
       flashLaunchMsg('Voidgate selected — now click a dropsite within 3"');
-      renderAll(true);
       return true;
     }
 
     // STEP 2 — Voidgate chosen: clicking selects the dropsite within 3" same layer.
     const gsel = L.gateSel;
     const gship = state.groups[gsel.gid] && state.groups[gsel.gid].ships[gsel.si];
-    if (!gship || gship.destroyed) { state.launching.gateSel = null; flashLaunchMsg('Voidgate lost'); renderAll(true); return true; }
+    if (!gship || gship.destroyed) {
+      dispatch({ type: 'cancelLaunch', gid: L.gid, si: L.si, clearGateSel: true });
+      flashLaunchMsg('Voidgate lost');
+      return true;
+    }
     const ds = nearestDropsite(pt);
     if (!ds) { flashLaunchMsg('Click a dropsite within 3" of the Voidgate'); return false; }
     const dx = inchToPx(ds.x), dy = inchToPx(ds.y);
@@ -12073,6 +12277,17 @@ board.addEventListener('contextmenu', (e) => {
   }
   if (state.launching) {
     e.preventDefault();
+    const _wasDs = !!state.launching.fromDropsite;
+    if (state.launching.type === 'gate_dropship') {
+      if (state.launching.gateSel) {
+        flashLaunchMsg('Voidgate selection cancelled');
+        dispatch({ type: 'cancelLaunch', gid: state.launching.gid, si: state.launching.si, clearGateSel: true });
+      } else {
+        flashLaunchMsg('Launch cancelled');
+        dispatch({ type: 'cancelLaunch', gid: state.launching.gid, si: state.launching.si, clearGateSel: false });
+      }
+      return; // dispatch handles renderAll in hotseat; online re-renders on server broadcast
+    }
     if (state.launching.gateSel) {
       // First right-click backs out of the chosen Voidgate (back to gate pick).
       state.launching.gateSel = null;
@@ -12082,7 +12297,7 @@ board.addEventListener('contextmenu', (e) => {
       state.launching = null;
       flashLaunchMsg('Launch cancelled');
     }
-    renderAll();
+    renderAll(_wasDs);
     return;
   }
   if (state.assetMove) {
@@ -12143,7 +12358,7 @@ board.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     state.detector = null;
     flashLaunchMsg('Detector cancelled');
-    renderAll();
+    renderAll(true);
     return;
   }
   if (state.targeting) {
@@ -12151,6 +12366,17 @@ board.addEventListener('contextmenu', (e) => {
     state.targeting = null;
     flashLaunchMsg('Targeting cancelled');
     renderAll(true);
+    return;
+  }
+  if (state.phase === 'play' && state.selectedGroupId !== null && state.selectedShipIdx !== null) {
+    e.preventDefault();
+    const _rGid = state.selectedGroupId, _rSi = state.selectedShipIdx;
+    const _rGrp = state.groups[_rGid];
+    const _rShip = _rGrp && _rGrp.ships[_rSi];
+    const _rTrail = _rGrp && (_rGrp.moveTrail || []);
+    const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
+    if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
+    else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
     return;
   }
 });
@@ -12575,7 +12801,7 @@ board.addEventListener('click', (e) => {
     const originShip = firingOriginShip(aDef, aGrp, t.si);
     const hit = enemyShipAtPoint(aDef.side, svgPointFromEvent(e));
     if (!hit) { flashLaunchMsg('Click an enemy ship'); return; }
-    if (!weaponCanTarget(aDef, originShip, w, hit.def, hit.ship, hit.grp)) {
+    if (!weaponCanTarget(state, aDef, originShip, w, hit.def, hit.ship, hit.grp)) {
       flashLaunchMsg('Target not in arc / range / layer (measured from lead ship)'); return;
     }
     dispatch({ type: 'lockWeaponTarget', gid: t.gid, si: t.si, wi: t.wi, targetGid: hit.gid, targetSi: hit.si });
@@ -13219,6 +13445,7 @@ function _netConnect() {
         break;
       case 'full':
         // Broadcast from the server after the other player acted.
+        _endRoundVotes = new Set();
         _netApplyRemote(msg.state);
         break;
       case 'peerJoined': {
@@ -13358,7 +13585,7 @@ function _intentSide(intent) {
   const defensive = state.attackModal && intent && (
     intent.type === 'attackFighterReroll' ||
     (intent.type === 'attackReroll' && intent.which === 'save') ||
-    (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'))
+    (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'shieldBooster' || intent.what === 'brace' || intent.what === 'contain'))
   );
   if (defensive) {
     if (atk) return atk === 'player1' ? 'player2' : 'player1';

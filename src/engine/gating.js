@@ -227,6 +227,32 @@ export function isLegal(state, intent, side) {
       const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
       return dist <= v.remaining + 0.5 && angOff <= 20;
     }
+    case 'beginLaunch': {
+      const { gid, si, li } = intent;
+      if (state.phase !== 'play') return false;
+      const grp = state.groups[gid];
+      if (!grp || grp.activated) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      const ship = grp.ships[si];
+      if (!ship || ship.destroyed || ship.offTable) return false;
+      if (!def.launch || !def.launch[li]) return false;
+      return true;
+    }
+    case 'selectGate': {
+      const { gid, si } = intent;
+      if (!state.launching || state.launching.gid !== gid || state.launching.si !== si) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      return true;
+    }
+    case 'cancelLaunch': {
+      const { gid, si } = intent;
+      if (!state.launching || state.launching.gid !== gid || state.launching.si !== si) return false;
+      const def = getDef(state, gid);
+      if (!def || def.side !== side) return false;
+      return true;
+    }
     case 'launchAsset': {
       const { gid, si, kind, count } = intent;
       if (state.phase !== 'play') return false;
@@ -281,7 +307,7 @@ export function isLegal(state, intent, side) {
       const defensive =
         (intent.type === 'attackFighterReroll') ||
         (intent.type === 'attackReroll' && intent.which === 'save') ||
-        (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'));
+        (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'shieldBooster' || intent.what === 'brace' || intent.what === 'contain'));
       // If activeSide is null (all activations done but attackModal still open), derive
       // the defender from the first target ship's faction so the shield intent can pass.
       if (defensive && def === null) {
@@ -325,11 +351,11 @@ export function isLegal(state, intent, side) {
       const origin = firingOriginShip(state, def, grp, si);
       if (!origin) { console.log('[gate:LWT] fail: no origin'); return false; }
       const tDef = getDef(state, targetGid);
-      const canTarget = weaponCanTarget(def, origin, w, tDef, tship, tgrp);
+      const canTarget = weaponCanTarget(state, def, origin, w, tDef, tship, tgrp);
       if (!canTarget) {
         const aLayer = origin.layer || 'orbit', tLayer = tship.layer || 'orbit';
         const inArc = pointInWeaponArc(origin, w, tship.x, tship.y);
-        const range = tDef ? targetingRangePx(def, tDef, tship, tgrp, origin, w) : 0;
+        const range = tDef ? targetingRangePx(state, def, tDef, tship, tgrp, origin, w) : 0;
         const dist = Math.hypot(tship.x - origin.x, tship.y - origin.y);
         console.log('[gate:LWT] weaponCanTarget FAIL', { arc: w.arc, heading: origin.heading, originXY: [origin.x, origin.y], targetXY: [tship.x, tship.y], inArc, dist: Math.round(dist), range: Math.round(range), aLayer, tLayer, attachedTo: tship.attachedTo });
       }
@@ -535,6 +561,26 @@ export function isLegal(state, intent, side) {
       if (!['player1','player2'].includes(tSide)) return false;
       if (typeof delta !== 'number' || !Number.isInteger(delta)) return false;
       if (side && tSide !== side) return false; // online: only own side can adjust their AP
+      return true;
+    }
+
+    case 'adjustSpike': {
+      const { gid, delta } = intent;
+      const grp = state.groups && state.groups[gid];
+      if (!grp) return false;
+      if (delta !== 1 && delta !== -1) return false;
+      if (side && grp.side !== side) return false;
+      return true;
+    }
+
+    case 'adjustHull': {
+      const { gid, si, delta } = intent;
+      const grp = state.groups && state.groups[gid];
+      if (!grp) return false;
+      const ship = grp.ships && grp.ships[si];
+      if (!ship) return false;
+      if (delta !== 1 && delta !== -1) return false;
+      if (side && grp.side !== side) return false;
       return true;
     }
 
