@@ -971,6 +971,7 @@
 </style>
 </head>
 <body>
+<div id="app-cover" style="position:fixed;inset:0;background:var(--bg);z-index:9999;pointer-events:none;"></div>
 <div class="app">
 
   <header class="topbar">
@@ -7437,14 +7438,8 @@ function renderSetupOverlay() {
         <button class="btn" data-reroll="all" ${payloadsLocked || anyReady ? 'disabled' : ''}>⚄ RANDOMISE ALL</button>
         ${(() => {
           if (!_netSide) {
-            // Hotseat: one ready button per player.
-            const p1Btn = p1Ready
-              ? `<button class="btn" data-unready-setup="player1" style="color:var(--hull-good);border-color:var(--hull-good);">✓ ${playerNameForSide('player1')} READY [${readyCount}/2]</button>`
-              : `<button class="btn-primary" data-ready-setup="player1" ${scenarioComplete ? '' : 'disabled'}>✓ ${playerNameForSide('player1')} READY</button>`;
-            const p2Btn = p2Ready
-              ? `<button class="btn" data-unready-setup="player2" style="color:var(--hull-good);border-color:var(--hull-good);">✓ ${playerNameForSide('player2')} READY [${readyCount}/2]</button>`
-              : `<button class="btn-primary" data-ready-setup="player2" ${scenarioComplete ? '' : 'disabled'}>✓ ${playerNameForSide('player2')} READY</button>`;
-            return p1Btn + p2Btn;
+            // Hotseat: single button that marks both sides ready simultaneously.
+            return `<button class="btn-primary" id="btn-hotseat-ready" ${scenarioComplete ? '' : 'disabled'}>✓ CONFIRM READY</button>`;
           }
           const mySide = _netSide;
           const myReady = mySide === 'player1' ? p1Ready : p2Ready;
@@ -7556,6 +7551,20 @@ function renderSetupOverlay() {
       openFleetView(btn.dataset.viewFleet);
     });
   });
+  // Hotseat: single button fires both readySetup intents.
+  const hsReadyBtn = overlay.querySelector('#btn-hotseat-ready');
+  if (hsReadyBtn) {
+    hsReadyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state.fleetChoices.f1 || !state.fleetChoices.f2) { flashLaunchMsg('Select both fleets first'); return; }
+      if (!state.scenario || ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k])) {
+        flashLaunchMsg('Select all scenario options first'); return;
+      }
+      dispatch({ type: 'readySetup', side: 'player1' });
+      dispatch({ type: 'readySetup', side: 'player2' });
+    });
+  }
+  // Online: per-side ready buttons.
   overlay.querySelectorAll('[data-ready-setup]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -7576,8 +7585,8 @@ function renderSetupOverlay() {
   });
   const exitBtn = overlay.querySelector('#exit-to-menu');
   if (exitBtn) exitBtn.addEventListener('click', () => {
-    overlay.remove();
-    showModeSelector();
+    showModeSelector(); // appends mode selector overlay first
+    overlay.remove();   // then removes setup overlay — no visible gap
   });
 }
 
@@ -7968,6 +7977,10 @@ function renderTopbarControls() {
 
 
 function renderAll(localOnly = false) {
+  // Remove the startup cover on the first render — by now the setup overlay
+  // is already in the DOM, so nothing flashes underneath.
+  const _cover = document.getElementById('app-cover');
+  if (_cover) _cover.remove();
   // Wrap ALL rendering in try/catch so the relay always fires even if a render
   // function throws — a stuck _netReceiving=true would silence all relay.
   try {
@@ -13490,6 +13503,13 @@ board.addEventListener('touchstart', (e) => {
 const _netParams = new URLSearchParams(location.search);
 const _netRoom   = (_netParams.get('room') || '').toUpperCase();
 const _netSide   = (_netParams.get('side') || '').toLowerCase(); // 'player1' | 'player2' | '' (hotseat)
+// Hotseat save room ID — generated once when the game moves past setup, persists for that session.
+let _hotseatRoomId = null;
+function _genId() { return Array.from({length:4}, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join(''); }
+function _hotseatSave() {
+  if (_netSide || !_hotseatRoomId || state.phase === 'setup') return;
+  fetch('/api/saves/hotseat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ roomId: _hotseatRoomId, state }) }).catch(() => {});
+}
 // Return the local player's board-side key ('player1' | 'player2').
 function _gs() { return _netSide; }
 let   _netWs            = null;
@@ -13733,6 +13753,9 @@ function dispatch(intent) {
   } else {
     _apply(state, intent, rng);
     renderAll();
+    // Generate a hotseat room ID the first time the game moves past setup.
+    if (!_hotseatRoomId && state.phase !== 'setup') _hotseatRoomId = _genId();
+    _hotseatSave();
     // Bug 4: after a ship action, auto-finish the activation if all ships have acted.
     const autoFinishTriggers = ['moveShip', 'holdPosition', 'endVectoredMove', 'fireWeapons', 'launchAsset', 'surveySite'];
     if (autoFinishTriggers.includes(intent.type)) maybeAutoFinish(intent.gid);
@@ -13812,18 +13835,14 @@ function _intentSide(intent) {
 // ---------------------------------------------------------------------------
 
 async function showModeSelector() {
-  // Clear game state so nothing renders behind the modal.
+  // Strip room/side/replay params from the URL without a page reload.
+  if (location.search) history.replaceState({}, '', location.pathname);
+  // Reset game state — the opaque overlay covers everything.
   Object.assign(state, createState());
   rebuildFleets();
-  renderAll();
 
-  // Fetch saved games upfront; silently ignore errors (server may not be running).
-  let saves = [];
-  try {
-    const r = await fetch('/api/saves');
-    if (r.ok) saves = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
-  } catch {}
-
+  // Append the overlay immediately so there is no gap between any outgoing
+  // overlay being removed and this one appearing.
   const overlay = document.createElement('div');
   overlay.id = 'mode-selector';
   overlay.className = 'setup-overlay';
@@ -13874,18 +13893,23 @@ async function showModeSelector() {
         </div>
       </div>`;
     } else if (view === 'saves') {
-      const rows = saves.map(s => `
+      const makeRow = s => `
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);line-height:1.5;">${fmtSave(s)}</div>
           <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="btn-primary" data-ms-resume="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;">▶ RESUME</button>
             <button class="btn" data-ms-replay="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;${!s.hasReplay ? 'opacity:0.35;cursor:not-allowed;' : ''}" ${!s.hasReplay ? 'disabled title="No replay data for this save"' : ''}>↺ REPLAY</button>
           </div>
-        </div>`).join('');
+        </div>`;
+      const sectionHdr = label => `<div style="font-size:9px;letter-spacing:0.1em;color:var(--text-mute);padding:4px 2px 2px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:2px;">${label}</div>`;
+      const hotseatSaves = saves.filter(s => s.isHotseat);
+      const onlineSaves  = saves.filter(s => !s.isHotseat);
+      const hsSection  = hotseatSaves.length ? sectionHdr('HOTSEAT') + hotseatSaves.map(makeRow).join('') : '';
+      const netSection = onlineSaves.length  ? sectionHdr('ONLINE')  + onlineSaves.map(makeRow).join('')  : '';
       html = `<div class="setup-card" style="max-width:440px;">
         <div class="setup-header"><h2 class="setup-title">SAVED GAMES</h2></div>
         <div class="setup-body" style="padding:16px;display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto;">
-          ${rows}
+          ${hsSection}${netSection}
         </div>
         <div class="setup-footer"><button class="btn" id="ms-back">← Back</button></div>
       </div>`;
@@ -13930,10 +13954,12 @@ async function showModeSelector() {
     if (view === 'main') {
       overlay.querySelector('#ms-hotseat').onclick = () => {
         if (_netSide || _netParams.get('room') || _netParams.get('replay')) {
+          sessionStorage.setItem('startHotseat', '1');
           location.href = location.pathname;
           return;
         }
         dismiss();
+        _hotseatRoomId = null;
         Object.assign(state, createState());
         rebuildFleets();
         renderAll();
@@ -13945,9 +13971,22 @@ async function showModeSelector() {
     }
     if (view === 'saves') {
       overlay.querySelectorAll('[data-ms-resume]').forEach(btn => {
-        btn.onclick = () => {
+        btn.onclick = async () => {
           const id = btn.dataset.msResume;
           const meta = saves.find(s => s.roomId === id);
+          if (meta && meta.isHotseat) {
+            // Hotseat resume: restore state locally, no WebSocket needed.
+            btn.disabled = true; btn.textContent = '…';
+            try {
+              const save = await fetch(`/api/saves/${id}`).then(r => r.json());
+              _hotseatRoomId = id;
+              dismiss();
+              Object.assign(state, save.currentState);
+              rebuildFleets();
+              renderAll();
+            } catch (err) { alert('Could not load save: ' + err.message); btn.disabled = false; btn.textContent = '▶ RESUME'; }
+            return;
+          }
           render('resuming');
           doResume(id, meta);
         };
@@ -14108,8 +14147,20 @@ async function showModeSelector() {
     }
   }
 
+  // Show with no saves first so there is no async gap between old and new overlay.
+  let saves = [];
   render('main');
+  wire('main');
   document.body.appendChild(overlay);
+
+  // Fetch saves in background and refresh if any are found.
+  try {
+    const r = await fetch('/api/saves');
+    if (r.ok) {
+      const fetched = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
+      if (fetched.length) { saves = fetched; render('main'); wire('main'); }
+    }
+  } catch {}
 }
 
 document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
@@ -14119,17 +14170,17 @@ document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
 // ---------------------------------------------------------------------------
 
 if (_netRoom && (_netSide === 'player1' || _netSide === 'player2')) {
-  // Online mode: connect — room/status badge is shown in the event log header.
+  // Online mode: connect — skip initial render, wait for server state broadcast.
   _netConnect();
 } else if (!_netRoom) {
-  // No URL params: show the mode selector before the game starts.
-  showModeSelector();
+  if (sessionStorage.getItem('startHotseat')) {
+    sessionStorage.removeItem('startHotseat');
+    renderAll(); // hotseat: go straight to setup
+  } else {
+    renderAll(); // render board behind mode selector before it appears
+    showModeSelector();
+  }
 }
-
-/* ==========================================================================
-   INITIAL RENDER
-   ========================================================================== */
-renderAll();
 
 </script>
 </body></html>

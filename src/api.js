@@ -32,19 +32,47 @@ router.get('/rooms/:id', (req, res) => {
   });
 });
 
-// GET /api/saves — list all saved games (summary only).
+// GET /api/saves — list all saved games that have progressed past setup.
 router.get('/saves', async (_req, res) => {
   const saves = await loadAllSaves();
-  res.json(saves.map(s => ({
-    roomId:      s.roomId,
-    phase:       s.phase,
-    round:       s.round,
-    savedAt:     s.savedAt,
-    playerNames: s.playerNames,
-    factions:    s.factions,
-    sideColors:  s.currentState?.sideColors || null,
-    hasReplay:   !!s.playStartState,
-  })));
+  res.json(
+    saves
+      .filter(s => s.phase && s.phase !== 'setup')
+      .map(s => ({
+        roomId:      s.roomId,
+        phase:       s.phase,
+        round:       s.round,
+        savedAt:     s.savedAt,
+        playerNames: s.playerNames,
+        factions:    s.factions,
+        sideColors:  s.currentState?.sideColors || null,
+        isHotseat:   s.isHotseat || false,
+        hasReplay:   !!s.playStartState,
+      }))
+  );
+});
+
+// POST /api/saves/hotseat — save a hotseat game state snapshot.
+router.post('/saves/hotseat', async (req, res) => {
+  const { roomId, state } = req.body;
+  if (!roomId || !state) return res.status(400).json({ error: 'Missing roomId or state.' });
+  const room = {
+    id: roomId,
+    state,
+    seed: null,
+    createdAt: state.createdAt || Date.now(),
+    rng: { getState: () => null },
+    playStartState: null,
+    playStartRngState: null,
+    intentLog: [],
+    isHotseat: true,
+  };
+  try {
+    await saveRoom({ ...room, isHotseat: true });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/saves/:id — full save data for resume/replay.
