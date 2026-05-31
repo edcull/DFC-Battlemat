@@ -16,9 +16,13 @@ function randomId(len = 4) {
   return id;
 }
 
-export function createRoom() {
+export function createRoom(forceId = null) {
   let id;
-  do { id = randomId(); } while (rooms.has(id));
+  if (forceId) {
+    id = forceId.toUpperCase();
+  } else {
+    do { id = randomId(); } while (rooms.has(id));
+  }
 
   const seed = Math.floor(Math.random() * 0xFFFFFFFF);
   const state = createState();

@@ -392,7 +392,7 @@
   .am-die.miss { opacity: 0.5; }
 
   .attack-hud {
-    position: absolute; bottom: 8px; right: 8px;
+    position: absolute; top: 8px; left: 8px;
     width: 400px; max-height: calc(100% - 16px);
     overflow-y: auto;
     background: rgba(8,16,15,0.93);
@@ -986,14 +986,29 @@
       <span class="phase-arrow">→</span>
       <span class="phase-step" data-phase="nominations">3 · SECONDARIES</span>
       <span class="phase-arrow">→</span>
-      <span class="phase-step" data-phase="deploy">4 · DEPLOY</span>
+      <span class="phase-step" data-phase="protect">4 · PROTECT</span>
       <span class="phase-arrow">→</span>
-      <span class="phase-step" data-phase="play">5 · PLAY</span>
+      <span class="phase-step" data-phase="deploy">5 · DEPLOY</span>
+      <span class="phase-arrow">→</span>
+      <span class="phase-step" data-phase="play">6 · PLAY</span>
     </nav>
     <div class="topbar-controls" id="topbar-controls">
       <!-- populated by renderTopbarControls() -->
     </div>
   </header>
+
+  <div id="replay-bar" style="display:none;position:fixed;top:44px;left:0;right:0;z-index:9999;background:#0d1a1f;border-bottom:2px solid #2a7fff;padding:6px 14px;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;color:#ccc;">
+    <span style="color:#2a7fff;font-weight:bold;letter-spacing:1px;">↺ REPLAY</span>
+    <button class="btn" id="replay-round-prev" title="Previous round" style="padding:3px 8px;">⟨⟨ RND</button>
+    <button class="btn" id="replay-prev" title="Previous step" style="padding:3px 8px;">◀ PREV</button>
+    <button class="btn" id="replay-play-pause" style="padding:3px 10px;">▶ PLAY</button>
+    <button class="btn" id="replay-next" title="Next step" style="padding:3px 8px;">NEXT ▶</button>
+    <button class="btn" id="replay-round-next" title="Next round" style="padding:3px 8px;">RND ⟩⟩</button>
+    <span id="replay-counter" style="color:#8ab;margin-left:6px;">Step 0 / 0</span>
+    <span id="replay-round-label" style="color:#8ab;margin-left:2px;"></span>
+    <span style="flex:1;"></span>
+    <button class="btn" id="exit-replay" style="padding:3px 10px;color:#f66;border-color:#f66;">✕ EXIT REPLAY</button>
+  </div>
 
   <aside class="panel left" id="panel-left">
     <div class="panel-section">
@@ -1055,7 +1070,7 @@ import {
   SECONDARY_OBJECTIVES, OBJECTIVES, ASSET_PROFILES
 } from '../src/engine/constants.js';
 
-import { localRng as _rng, rollD6 as _rollD6, rollDie as _rollDie } from '../src/engine/rng.js';
+import { localRng as _rng, rollD6 as _rollD6, rollDie as _rollDie, makeRng as _makeRng } from '../src/engine/rng.js';
 import { parseNewRecruit } from '../src/fleet/parser.js';
 import { findShipDef, ADMIRAL_FACTION_ABILITIES, FAMOUS_ADMIRAL_ABILITIES, FACTION_ADMIRAL_TITLES, FACTION_ADMIRAL_PERSONAL, SHIP_SPECIAL_RULES } from '../src/fleet/db.js';
 
@@ -1156,8 +1171,16 @@ import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 
 // ─── STATE INIT ───────────────────────────────────────────────────────────────
 const DROPSITE_VP = { S: { control: 2, contest: 0 }, M: { control: 3, contest: 1 }, L: { control: 4, contest: 2 } };
-const state = createState();
+let state   = createState();
 const rng   = _rng;   // Math.random — hotseat mode, no seed
+
+// ─── REPLAY STATE ─────────────────────────────────────────────────────────────
+let _replayMode     = false;
+let _replayData     = null;   // {seed, playStartState, playStartRngState, intentLog, playerNames}
+let _replayStep     = -1;     // index into intentLog; -1 = at playStartState
+let _replayRng      = null;   // seeded RNG for replay, separate from live rng
+let _liveState      = null;   // stashed live state while replay is active
+let _replayInterval = null;   // setInterval handle for auto-play
 
 // ─── PLAYER COLOUR PALETTE ────────────────────────────────────────────────────
 const PLAYER_COLORS = {
@@ -1619,8 +1642,9 @@ function renderAssetPhase() {
   const sideName = (s) => playerNameForSide(s);
 
   if (ap.step === 'assets') {
-    // Pending bomber/torpedo attacks flagged by the server — resolve client-side then re-render.
-    if (ap._pendingBomberResolve && (!_netSide || _gs() === ap._pendingBomberResolve.side)) {
+    // Pending bomber/torpedo attacks flagged by the server — both clients open the modal.
+    // No side restriction: renderAttackModal's isAttacker/isDefender flags gate the UI correctly.
+    if (ap._pendingBomberResolve) {
       const pbr = ap._pendingBomberResolve;
       ap._pendingBomberResolve = null;
       resolvePendingBomberAttacks(pbr.side, pbr.type);
@@ -6411,19 +6435,16 @@ function renderDropsiteActivation() {
     dsBan.innerHTML = `<span><b style="color:var(--${sideKey})">${sideName(da.side)}</b> — click a highlighted dropsite to activate it</span>
       ${isMyTurn ? `<button class="btn" id="da-skip-all" style="padding:4px 10px;font-size:10px;margin-left:8px;">SKIP ALL ACTIVATIONS</button>` : ''}`;
   } else {
-    // No dropsites left for this side
+    // No dropsites left for this side — mutator will auto-advance once the other side is done too
     dsBan.innerHTML = `<span style="color:var(--text-dim)"><b style="color:var(--${sideKey})">${sideName(da.side)}</b> has no more Dropsites to activate</span>
-      ${isMyTurn ? (otherControlled.length
+      ${isMyTurn && otherControlled.length > 0
         ? `<button class="btn-primary" id="da-next-side" style="padding:4px 12px;font-size:10px;margin-left:8px;">${sideName(otherSide).toUpperCase()}'S TURN →</button>`
-        : `<button class="btn-primary" id="da-done" style="padding:4px 12px;font-size:10px;margin-left:8px;">PROCEED TO ASSET PHASE →</button>`) : ''}`;
+        : ''}`;
   }
 
-  // "Skip All Activations" — marks all this side's remaining dropsites done
+  // "Skip All Activations" — dispatch daSwitchSide; mutator marks this side's dropsites done
   const skipAll = dsBan.querySelector('#da-skip-all');
-  if (skipAll) skipAll.addEventListener('click', () => {
-    if (otherControlled.length > 0) dispatch({ type: 'daSwitchSide' });
-    else dispatch({ type: 'daEnd' });
-  });
+  if (skipAll) skipAll.addEventListener('click', () => dispatch({ type: 'daSwitchSide' }));
   const nextBtn = dsBan.querySelector('#da-next-side');
   if (nextBtn) nextBtn.addEventListener('click', () => dispatch({ type: 'daSwitchSide' }));
   const doneBtn = dsBan.querySelector('#da-done');
@@ -6985,7 +7006,7 @@ function renderProtectNomModal() {
   const board = document.querySelector('.board-wrap');
   let panel = document.getElementById('protect-nom-overlay');
   if (panel) panel.remove();
-  if (!state.protectNomPhase) return;
+  if (state.phase !== 'protect') return;
   const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
   const renderRow = (side) => {
     if (_netSide && side !== _netSide) {
@@ -7728,10 +7749,14 @@ function renderTopbarControls() {
       const hint = (_netSide && theyVoted) ? ' (opponent ready)' : '';
       endRoundBtn = `<button class="btn" id="end-round"${hint ? ' style="border-color:var(--hull-warn);color:var(--hull-warn);"' : ''}>END ROUND${hint} ▸</button>`;
     }
+    const replayBtn = _netRoom
+      ? `<button class="btn" id="open-replay" style="font-size:10px;padding:4px 8px;opacity:0.7;" title="Watch this game's replay">↺ REPLAY</button>`
+      : '';
     ctrl.innerHTML = `
       ${waitingBanner}
       <div class="round-display">RND <b id="round-num">${state.round}</b> / 6</div>
       ${endRoundBtn}
+      ${replayBtn}
     `;
   }
 }
@@ -7756,9 +7781,8 @@ function renderAll(localOnly = false) {
     const _to3d = (state.phase === 'deploy' && _prevPhase !== 'deploy') ||
                   (state.phase === 'play'   && _prevPhase !== 'play');
     const _to2d = (state.phase === 'nominations' && _prevPhase !== 'nominations') ||
-                  (!!state.protectNomPhase && !_prevProtectNomPhase);
+                  (state.phase === 'protect' && _prevPhase !== 'protect');
     _prevPhase = state.phase;
-    _prevProtectNomPhase = !!state.protectNomPhase;
     if (_to3d && !_view3d) toggle3d();
     if (_to2d && _view3d) toggle3d();
     if (_view3d && _3d) sync3d();
@@ -7790,9 +7814,11 @@ function renderAll(localOnly = false) {
     console.error('[renderAll]', e);
   }
   // Selection-only renders skip the relay — both clients manage their own view state.
-  if (!localOnly) {
+  // Replay mode never relays — we're rendering a historical state copy.
+  if (!localOnly && !_replayMode) {
     if (state.phase === 'setup' || state.phase === 'scenery' || state.phase === 'nominations') netRelaySetup(); else netAfterRender();
   }
+  renderReplayControls();
   // Cursor: crosshair when targeting / placing / aiming on either board.
   const _cursorCrosshair = (() => {
     if (state.targeting || state.detector || state.extracting || state.payloadDetach) return true;
@@ -7819,11 +7845,94 @@ function renderAll(localOnly = false) {
   if (_canvas3d) _canvas3d.style.cursor = _cursorCrosshair ? 'crosshair' : '';
 }
 
+// ─── REPLAY FUNCTIONS ────────────────────────────────────────────────────────
+
+function renderReplayControls() {
+  const bar = document.getElementById('replay-bar');
+  if (!bar) return;
+  if (!_replayMode) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const total = _replayData.intentLog.length - 1; // max step index
+  const counter = document.getElementById('replay-counter');
+  const roundLabel = document.getElementById('replay-round-label');
+  if (counter) counter.textContent = `Step ${_replayStep + 1} / ${_replayData.intentLog.length}`;
+  if (roundLabel) {
+    const r = state.round || 1;
+    roundLabel.textContent = `— Round ${r}`;
+  }
+  const playPause = document.getElementById('replay-play-pause');
+  if (playPause) playPause.textContent = _replayInterval ? '⏸ PAUSE' : '▶ PLAY';
+  const prevBtn = document.getElementById('replay-prev');
+  if (prevBtn) prevBtn.disabled = _replayStep < 0;
+  const nextBtn = document.getElementById('replay-next');
+  if (nextBtn) nextBtn.disabled = _replayStep >= total;
+  const prevRndBtn = document.getElementById('replay-round-prev');
+  if (prevRndBtn) prevRndBtn.disabled = _replayStep < 0;
+  const nextRndBtn = document.getElementById('replay-round-next');
+  if (nextRndBtn) nextRndBtn.disabled = _replayStep >= total;
+}
+
+function loadReplay(data) {
+  if (!data || !data.playStartState) {
+    alert('No replay data available for this game yet (play must have started).');
+    return;
+  }
+  clearInterval(_replayInterval);
+  _replayInterval = null;
+  _liveState  = state;
+  _replayMode = true;
+  _replayData = data;
+  _replayStep = -1;
+  _replayRng  = _makeRng(data.seed);
+  _replayRng.setState(data.playStartRngState);
+  state = structuredClone(data.playStartState);
+  if (data.roomId) history.pushState({}, '', `${location.pathname}?replay=${data.roomId}`);
+  renderAll(true);
+}
+
+function replayGoTo(targetStep) {
+  if (!_replayMode || !_replayData) return;
+  const log = _replayData.intentLog;
+  const clampedStep = Math.max(-1, Math.min(targetStep, log.length - 1));
+  // If seeking backward, reset to playStartState
+  if (clampedStep < _replayStep) {
+    _replayRng.setState(_replayData.playStartRngState);
+    state = structuredClone(_replayData.playStartState);
+    _replayStep = -1;
+  }
+  // Fast-forward to target
+  while (_replayStep < clampedStep) {
+    _replayStep++;
+    const { intent } = log[_replayStep];
+    try { _apply(state, intent, _replayRng); } catch(e) { console.warn('[replay] step', _replayStep, e); }
+  }
+  renderAll(true);
+}
+
+function exitReplay() {
+  clearInterval(_replayInterval);
+  _replayInterval = null;
+  // Navigate to the root — full page reload returns to the mode selector.
+  location.href = location.pathname;
+}
+
+function _replayRoundStart(round) {
+  if (!_replayMode || !_replayData) return -1;
+  const log = _replayData.intentLog;
+  for (let i = 0; i < log.length; i++) {
+    if (log[i].intent && log[i].intent.type === 'advanceRound') {
+      // The step after advanceRound is the first of the next round
+      replayGoTo(i);
+      return i;
+    }
+  }
+  return -1;
+}
+
 // ─── 3D VIEW ─────────────────────────────────────────────────────────────────
 let _view3d = false;
 let _view3dTrails = localStorage.getItem('dfc_showTrails') !== 'false'; // persisted trail toggle (2D + 3D)
 let _prevPhase = null;
-let _prevProtectNomPhase = false;
 let _3d = null;
 let _3dShipMeshes = []; // [{mesh, gid, si}] rebuilt each sync3d — used for raycasting
 // How far to lower station GLB so the disc intersects the orbital plane (set after GLB loads).
@@ -8315,6 +8424,118 @@ function _handle3dClick(e) {
     return;
   }
 
+  // ── ASSET COMBAT — 3D asset selection and movement ──────────────────────────
+  // Handled before ship/dropsite selection so asset clicks take priority and
+  // dropsites can't be accidentally selected during asset phase.
+  if (state.assetPhase && state.assetPhase.step === 'assets') {
+    if (_netSide && state.assetActiveSide && _gs() !== state.assetActiveSide) return;
+    // Project to both planes — orbit for fighters/bombers/fireships, near-ground for torpedoes.
+    const _aptOrbit  = _3dProjectToPlane(e, _3D_LAYER_Y.orbit);
+    const _aptGround = _3dProjectToPlane(e, 8);
+    const _aHIT = 2 * INCH;
+    let _aNear = null, _aNearD = _aHIT;
+    (state.launchedAssets || []).forEach(a => {
+      const pt = (a.kind === 'torpedo' || a.kind === 'mine') ? _aptGround : _aptOrbit;
+      if (!pt) return;
+      const d = Math.hypot(a.x - pt.x, a.y - pt.y);
+      if (d < _aNearD) { _aNearD = d; _aNear = a; }
+    });
+
+    if (!state.assetMove) {
+      // Select an asset — uses same logic as the 2D handler.
+      if (_aNear) {
+        const a = _aNear;
+        const curType = state.assetPhase.assetType;
+        const inCurType = kindsForAssetType(curType).includes(a.kind);
+        if (a.moved) dispatch({ type: 'selectAssetMove', assetId: a.id, count: a.count });
+        else if (state.assetActiveSide && a.side !== state.assetActiveSide) flashLaunchMsg(`${playerNameForSide(state.assetActiveSide)} activates next`);
+        else if (curType && !inCurType) flashLaunchMsg(`${curType === 'fighter' ? 'Fighters' : curType === 'bomber' ? 'Bombers & Fire Ships' : 'Torpedoes'} activate now`);
+        else dispatch({ type: 'selectAssetMove', assetId: a.id, count: a.count });
+        renderAll();
+      }
+      return; // suppress ship/dropsite selection during asset phase
+    }
+
+    // Move the selected asset to the clicked point.
+    const _aSel = (state.launchedAssets || []).find(x => x.id === state.assetMove.id);
+    if (!_aSel) { state.assetMove = null; renderAll(); return; }
+    if (_aSel.moved) return;
+    if (_aSel.kind === 'mine') { flashLaunchMsg('Mines cannot move once launched'); state.assetMove = null; renderAll(); return; }
+    const _apt = (_aSel.kind === 'torpedo') ? _aptGround : _aptOrbit;
+    if (!_apt) return;
+    const _aThrPx = (_aSel._t2tRange ? _aSel._t2tRange : assetThrust(_aSel)) * INCH;
+
+    // Auto-move-and-lock for bombers / fire ships / torpedoes.
+    if (_aSel.kind === 'bomber' || _aSel.kind === 'fireship' || _aSel.kind === 'torpedo') {
+      const _aHitShip = enemyShipAtPoint(_aSel.side, _apt);
+      if (_aHitShip && (_aHitShip.ship.layer || 'orbit') !== 'atmosphere') {
+        const _aContact = 1 * INCH + shipBaseRadiusPx(_aHitShip.def);
+        const _aDist = Math.hypot(_aHitShip.ship.x - _aSel.x, _aHitShip.ship.y - _aSel.y);
+        let _aLx, _aLy;
+        if (_aDist <= _aContact) { _aLx = _aSel.x; _aLy = _aSel.y; }
+        else { const ux = (_aHitShip.ship.x - _aSel.x)/_aDist, uy = (_aHitShip.ship.y - _aSel.y)/_aDist; _aLx = _aHitShip.ship.x - ux*_aContact; _aLy = _aHitShip.ship.y - uy*_aContact; }
+        if (Math.hypot(_aLx - _aSel.x, _aLy - _aSel.y) > _aThrPx + 2) { flashLaunchMsg('Target out of move range'); return; }
+        const _aOx = _aSel.x, _aOy = _aSel.y;
+        _aSel._preMove = { x: _aSel.x, y: _aSel.y, t2tRange: _aSel._t2tRange };
+        _aSel.x = _aLx; _aSel.y = _aLy; _aSel.moved = true; _aSel._t2tRange = undefined;
+        const _aTn = _aHitShip.def.name + (_aHitShip.grp.ships.length > 1 ? ` #${_aHitShip.si + 1}` : '');
+        flashLaunchMsg(`${_aSel.kind} → base contact, locked onto ${_aTn}`, true);
+        applyAssetScenery(_aSel, _aOx, _aOy);
+        if (_aSel.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); }
+        else { dispatch({ type: 'assetLockTarget', assetId: _aSel.id, gid: _aHitShip.gid, si: _aHitShip.si }); }
+        state.assetMove = null;
+        afterAssetMove();
+        if (_aSel.count > 0 && state.assetActiveSide && !state.attackModal && state.launchedAssets.includes(_aSel)) {
+          dispatch({ type: 'selectAssetMove', assetId: _aSel.id, count: _aSel.count });
+        }
+        renderAll(); return;
+      }
+    }
+
+    if (Math.hypot(_apt.x - _aSel.x, _apt.y - _aSel.y) > _aThrPx + 2) { flashLaunchMsg('Out of move range'); return; }
+    const _aMoveCount = state.assetMove.count;
+    const _aOx2 = _aSel.x, _aOy2 = _aSel.y;
+    let _aMover;
+    if (_aMoveCount < _aSel.count) {
+      _aSel.count -= _aMoveCount;
+      _aMover = { id: 'a' + (state._assetId = (state._assetId||0)+1), kind: _aSel.kind, count: _aMoveCount, side: _aSel.side, x: _apt.x, y: _apt.y, moved: true };
+      state.launchedAssets.push(_aMover);
+    } else {
+      _aSel._preMove = { x: _aSel.x, y: _aSel.y, t2tRange: _aSel._t2tRange };
+      _aSel.x = _apt.x; _aSel.y = _apt.y; _aSel.moved = true; _aSel._t2tRange = undefined; _aMover = _aSel;
+    }
+    applyAssetScenery(_aMover, _aOx2, _aOy2);
+    if (_aMover.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); state.assetMove = null; afterAssetMove(); renderAll(); return; }
+    if (_aMover.kind === 'fighter') {
+      const _aEnemy = _aMover.side === 'player1' ? 'player2' : 'player1';
+      const _aFoe = state.launchedAssets.find(x => x.id !== _aMover.id && x.side === _aEnemy && Math.hypot(x.x - _aMover.x, x.y - _aMover.y) <= shipBaseRadiusPx({tonnage:'L'}));
+      if (_aFoe) {
+        const _aMb = _aMover.count, _aFb = _aFoe.count, _aFk = _aFoe.kind, _aRem = Math.min(_aMover.count, _aFoe.count);
+        _aMover.count -= _aRem; _aFoe.count -= _aRem;
+        state.launchedAssets = state.launchedAssets.filter(x => x.count > 0);
+        state.dogfightResult = { attackerSide: _aMover.side, foeSide: _aEnemy, foeKind: _aFk, attackerBefore: _aMb, attackerAfter: _aMover.count, foeBefore: _aFb, foeAfter: _aFoe.count, removed: _aRem };
+        state.assetMove = null; afterAssetMove(); renderAll(); return;
+      }
+    }
+    const _aMerge = state.launchedAssets.find(x => x.id !== _aMover.id && x.kind === _aMover.kind && x.side === _aMover.side && Math.hypot(x.x - _aMover.x, x.y - _aMover.y) <= shipBaseRadiusPx({tonnage:'L'}));
+    if (_aMerge) {
+      _aMerge.count += _aMover.count; _aMerge.moved = true;
+      state.launchedAssets = state.launchedAssets.filter(x => x.id !== _aMover.id);
+      flashLaunchMsg(`Combined into ${_aMerge.count} ${_aMerge.kind}s`, true);
+    } else {
+      flashLaunchMsg(`Moved ${_aMover.count} ${_aMover.kind}${_aMover.count>1?'s':''}`, true);
+    }
+    state.assetMove = null;
+    const _aMoverContact = _aMover.count > 0 && (_aMover.kind === 'bomber' || _aMover.kind === 'fireship' || _aMover.kind === 'torpedo') && enemyShipsInBaseContact(_aMover.side, _aMover.x, _aMover.y).length > 0;
+    const _aSideBefore = state.assetActiveSide, _aTypeBefore = state.assetPhase?.assetType;
+    afterAssetMove();
+    if (_aMoverContact && state.assetActiveSide === _aSideBefore && state.assetPhase?.assetType === _aTypeBefore && !state.attackModal && state.launchedAssets.includes(_aMover)) {
+      dispatch({ type: 'selectAssetMove', assetId: _aMover.id, count: _aMover.count });
+    }
+    renderAll(); return;
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
   // When a moveable ship is already selected in play phase, board clicks should
   // reach the movement handler. Skip ship/dropsite hit-testing BUT still allow
   // clicking a ship in the SAME group (to switch which ship you're moving next).
@@ -8755,7 +8976,7 @@ function init3d() {
       else { state.launching = null; flashLaunchMsg('Launch cancelled'); }
       renderAll(); return;
     }
-    if (state.assetMove) { state.assetMove = null; renderAll(); return; }
+    if (state.assetMove) { state.assetMove = null; renderAll(true); return; } // deselect is local-only
     if (state.extracting) { state.extracting = null; flashLaunchMsg('Extract cancelled'); renderAll(); return; }
     if (state.featureAttack) { state.featureAttack = null; flashLaunchMsg('Targeting cancelled'); renderAll(true); return; }
     if (state.aiming || state.vectoredSecondMove) {
@@ -9236,8 +9457,8 @@ function _sync3dOverlays(group) {
     });
   }
 
-  // 2. Enemy signature auras (mode 1 or while moving)
-  if (arcViewMode !== 2 && (movingActive || arcViewMode === 1)) {
+  // 2. Enemy signature auras (mode 1, while moving, or while targeting a weapon)
+  if (arcViewMode !== 2 && (movingActive || arcViewMode === 1 || state.targeting)) {
     const enemySide = def.side === 'player1' ? 'player2' : 'player1';
     fleetForSide(enemySide).forEach(edef => {
       const eg = getGroup(edef.id);
@@ -9455,20 +9676,6 @@ function _sync3dOverlays(group) {
   // so they persist regardless of which group is selected.
 
 
-  // Dropsite-launch aura: dashed ring around the source dropsite while player picks target.
-  if (state.launching && state.launching.fromDropsite) {
-    const _laDs = state.scenarioData?.dropsites?.find(d => d.id === state.launching.fromDropsite);
-    if (_laDs) {
-      const _laIsStation = DROPSITE_BASE[_laDs.type]?.category === 'station';
-      const _laY  = _laIsStation ? _3D_LAYER_Y.orbit : 0;
-      const _laCx = _laDs.x * INCH - 288, _laCz = _laDs.y * INCH - 288;
-      const _laR  = state.launching.auraIn * INCH;
-      const _laCol = state.launching.side === 'player1' ? 0x4488ff : 0xff8844;
-      group.add(_3dDashedCircle(_laCx, _laCz, _laR, _laY, _laCol, 0.70, 8, 5));
-      group.add(_3dDashedCircle(_laCx, _laCz, _laR * 0.05, _laY, _laCol, 0.20, 1, 0)); // centre dot
-    }
-  }
-
   // Extract aura: 6" dashed ring around the ship in extract-targeting mode.
   if (state.extracting) {
     const _exGrp  = state.groups[state.extracting.gid];
@@ -9515,6 +9722,15 @@ function _sync3dGroundLaunchLines(group) {
     const glDsIsStation = DROPSITE_BASE[glDs.type]?.category === 'station';
     const glDwy  = glDsIsStation ? _3D_LAYER_Y.orbit : 0;
     const glDwx  = glDs.x * INCH - 288, glDwz = glDs.y * INCH - 288;
+    const glSwy  = _3D_LAYER_Y[glShip.layer || 'orbit'] ?? 120;
+    const mkLine = (ax, ay, az, bx, by, bz) => {
+      const l = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(ax, ay, az), new THREE.Vector3(bx, by, bz)]),
+        new THREE.LineDashedMaterial({ color: glCol, transparent: true, opacity: 0.55, dashSize: 5, gapSize: 3 })
+      );
+      l.computeLineDistances();
+      group.add(l);
+    };
 
     if (gl.gateGid != null) {
       // Via voidgate: draw ship → gate → dropsite chain.
@@ -9522,21 +9738,14 @@ function _sync3dGroundLaunchLines(group) {
       const glGate    = glGateGrp && glGateGrp.ships[gl.gateSi];
       if (glGate && !glGate.destroyed && !glGate.offTable) {
         const glGwy = _3D_LAYER_Y[glGate.layer || 'orbit'] ?? 120;
-        const glSwy = _3D_LAYER_Y[glShip.layer || 'orbit'] ?? 120;
-        const mkLine = (ax, ay, az, bx, by, bz) => {
-          const l = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(ax, ay, az), new THREE.Vector3(bx, by, bz)]),
-            new THREE.LineDashedMaterial({ color: glCol, transparent: true, opacity: 0.55, dashSize: 5, gapSize: 3 })
-          );
-          l.computeLineDistances();
-          group.add(l);
-        };
         mkLine(glShip.x - 288, glSwy, glShip.y - 288, glGate.x - 288, glGwy, glGate.y - 288);
         mkLine(glGate.x - 288, glGwy, glGate.y - 288, glDwx, glDwy, glDwz);
       }
       // If gate is gone, draw nothing — the dropsite ring still marks the landing zone.
+    } else {
+      // Direct launch: draw ship → dropsite line.
+      mkLine(glShip.x - 288, glSwy, glShip.y - 288, glDwx, glDwy, glDwz);
     }
-    // Direct launches (no voidgate): just the ring at the dropsite target.
     group.add(_3dDashedCircle(glDwx, glDwz, 14, glDwy, glCol, 0.7, 4, 3));
   });
 }
@@ -9572,8 +9781,85 @@ function _sync3dDropsiteActivationHighlights(group) {
       const ringMesh = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 1.0 }));
       ringMesh.position.set(wx, wy + 1, wz);
       group.add(ringMesh);
+
+      // Scan ring + launch aura when the dropsite is selected for activation
+      // (suppressed when featureAttack targeting or fromDropsite launch aura takes over).
+      if (!state.featureAttack && !(state.launching && state.launching.fromDropsite)) {
+        let scanIn = 0;
+        (ds.features || []).forEach((fk, fi) => {
+          if ((ds.destroyedFeatures || []).includes(fi)) return;
+          const f = FEATURES[fk];
+          if (f && f.weapon) scanIn = Math.max(scanIn, parseInt(f.weapon.scan) || 6);
+        });
+        if (!scanIn && ds.base && ds.base.scan) scanIn = parseInt(ds.base.scan) || 0;
+        const hasLaunch = (ds.features || []).some((fk, fi) =>
+          !(ds.destroyedFeatures || []).includes(fi) && FEATURES[fk] && FEATURES[fk].launch && FEATURES[fk].launch.length);
+        const launchIn = hasLaunch ? 6 : 0;
+        if (scanIn > 0) {
+          group.add(_3dDashedCircle(wx, wz, scanIn * INCH, wy, 0xff9933, 0.65, 4, 3));
+        }
+        if (launchIn > 0 && launchIn !== scanIn) {
+          group.add(_3dDashedCircle(wx, wz, launchIn * INCH, wy, col, 0.65, 5, 3));
+        }
+      }
     }
   });
+
+  // Enemy sig auras while a dropsite is being activated (lets the controlling player
+  // judge detection ranges for weapon features — mirrors the 2D board behaviour).
+  if (da.dsId) {
+    const actDs = dss.find(d => d.id === da.dsId);
+    let showSigAuras = true;
+    if (state.featureAttack) {
+      const faf = actDs && FEATURES[(actDs.features || [])[state.featureAttack.fi]];
+      showSigAuras = !!(faf && faf.weapon && !/Close Action/i.test(faf.weapon.special || ''));
+    } else if (actDs) {
+      showSigAuras = (actDs.features || []).some((fk, fi) =>
+        !(actDs.destroyedFeatures || []).includes(fi) && FEATURES[fk] && FEATURES[fk].weapon &&
+        !/Close Action/i.test(FEATURES[fk].weapon.special || ''));
+    }
+    if (showSigAuras) {
+      const enemySide = da.side === 'player1' ? 'player2' : 'player1';
+      fleetForSide(enemySide).forEach(edef => {
+        const eg = getGroup(edef.id);
+        if (!eg) return;
+        eg.ships.forEach(es => {
+          if (es.destroyed || es.offTable) return;
+          const sig   = es.sigSilent ? 0 : edef.sig;
+          const sigPx = (sig + 3 * (eg.spikes || 0)) * INCH;
+          if (sigPx <= 0) return;
+          const ewy = _3D_LAYER_Y[es.layer] ?? 120;
+          group.add(_3dDashedCircle(es.x - 288, es.y - 288, sigPx, ewy, 0xff5252, 0.45, 2, 4));
+          const sfGeo = new THREE.CircleGeometry(sigPx, 48);
+          sfGeo.rotateX(-Math.PI / 2);
+          sfGeo.translate(es.x - 288, ewy, es.y - 288);
+          group.add(new THREE.Mesh(sfGeo, new THREE.MeshBasicMaterial({
+            color: 0xff5252, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false,
+          })));
+        });
+      });
+    }
+  }
+
+  // Dropsite-launch aura: dashed ring around the source dropsite while player picks placement.
+  // Rendered here (not in _sync3dOverlays) so it shows even when no ship group is selected.
+  if (state.launching && state.launching.fromDropsite) {
+    const laDs = dss.find(d => d.id === state.launching.fromDropsite);
+    if (laDs) {
+      const laIsStation = DROPSITE_BASE[laDs.type]?.category === 'station';
+      const laY  = laIsStation ? _3D_LAYER_Y.orbit : 0;
+      const laCx = laDs.x * INCH - 288, laCz = laDs.y * INCH - 288;
+      const laR  = state.launching.auraIn * INCH;
+      const laCol = state.launching.side === 'player1' ? 0x4ad6ff : 0xd4a647;
+      group.add(_3dDashedCircle(laCx, laCz, laR, laY, laCol, 0.75, 8, 5));
+      const lafGeo = new THREE.CircleGeometry(laR, 64);
+      lafGeo.rotateX(-Math.PI / 2);
+      lafGeo.translate(laCx, laY, laCz);
+      group.add(new THREE.Mesh(lafGeo, new THREE.MeshBasicMaterial({
+        color: laCol, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false,
+      })));
+    }
+  }
 }
 
 function sync3d() {
@@ -10204,6 +10490,7 @@ function _sync3dShips(group) {
 }
 
 function _sync3dAssets(group) {
+  const _amMode = state.assetPhase && state.assetPhase.step === 'assets';
   (state.launchedAssets || []).forEach(a => {
     const wx = a.x - 288, wz = a.y - 288;
     // Fighters/bombers/fireships fly at orbital layer; torpedoes/mines stay just above ground
@@ -10212,6 +10499,21 @@ function _sync3dAssets(group) {
     const isTorp = a.kind === 'torpedo' || a.kind === 'mine';
     const isFireship = a.kind === 'fireship';
     const count = a.count || 1;
+
+    // Movement aura ring — shown for all moveable assets during asset combat.
+    if (_amMode && a.kind !== 'mine') {
+      const isSel = state.assetMove && state.assetMove.id === a.id;
+      const thrPx = (a._t2tRange ? a._t2tRange : assetThrust(a)) * INCH;
+      group.add(_3dDashedCircle(wx, wz, thrPx, wy, col, isSel ? 0.8 : (a.moved ? 0.08 : 0.22), 5, 4));
+      if (isSel) {
+        const _afg = new THREE.CircleGeometry(thrPx, 64);
+        _afg.rotateX(-Math.PI / 2);
+        _afg.translate(wx, wy, wz);
+        group.add(new THREE.Mesh(_afg, new THREE.MeshBasicMaterial({
+          color: col, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false
+        })));
+      }
+    }
 
     // Derive facing from launch direction (ship → asset), fallback to 0
     let assetRotY = 0;
@@ -11166,6 +11468,42 @@ document.addEventListener('click', (e) => {
     dispatch({ type: 'endRound' });
     return;
   }
+  if (e.target.matches('#exit-replay'))    { exitReplay(); return; }
+  if (e.target.matches('#replay-prev'))    { replayGoTo(_replayStep - 1); return; }
+  if (e.target.matches('#replay-next'))    { replayGoTo(_replayStep + 1); return; }
+  if (e.target.matches('#replay-play-pause')) {
+    if (_replayInterval) {
+      clearInterval(_replayInterval);
+      _replayInterval = null;
+    } else {
+      _replayInterval = setInterval(() => {
+        const total = _replayData.intentLog.length - 1;
+        if (_replayStep >= total) { clearInterval(_replayInterval); _replayInterval = null; renderReplayControls(); return; }
+        replayGoTo(_replayStep + 1);
+      }, 1500);
+    }
+    renderReplayControls();
+    return;
+  }
+  if (e.target.matches('#replay-round-prev')) {
+    // Seek to the most recent advanceRound before current step
+    const log = _replayData ? _replayData.intentLog : [];
+    let target = -1;
+    for (let i = _replayStep - 1; i >= 0; i--) {
+      if (log[i].intent && log[i].intent.type === 'advanceRound') { target = i - 1; break; }
+    }
+    replayGoTo(target);
+    return;
+  }
+  if (e.target.matches('#replay-round-next')) {
+    // Seek to the step right after the next advanceRound
+    const log = _replayData ? _replayData.intentLog : [];
+    for (let i = _replayStep + 1; i < log.length; i++) {
+      if (log[i].intent && log[i].intent.type === 'advanceRound') { replayGoTo(i); return; }
+    }
+    replayGoTo(log.length - 1); // jump to end if no more rounds
+    return;
+  }
   // Dropsite Activation: pick a Controlled dropsite to activate.
   if (e.target.matches('[data-da-pick]')) {
     state.dropsiteActivation.dsId = e.target.dataset.daPick;
@@ -11314,11 +11652,11 @@ document.addEventListener('click', (e) => {
       const max = a ? a.count : 1;
       state.assetMove.count = Math.max(1, Math.min(max, state.assetMove.count + parseInt(e.target.dataset.asmAdj)));
     }
-    renderAll(); return;
+    renderAll(true); return; // count adjuster is local UI state — no relay needed
   }
-  // Asset detail panel: deselect the selected asset.
+  // Asset detail panel: deselect the selected asset — local-only, no relay.
   if (e.target.closest && e.target.closest('#asset-detail-deselect')) {
-    state.assetMove = null; renderAll(); return;
+    state.assetMove = null; renderAll(true); return;
   }
   // Asset detail panel: reset this asset's move (restore position if a whole-stack
   // move was recorded), so it can be activated again this turn.
@@ -11758,7 +12096,7 @@ board.addEventListener('contextmenu', (e) => {
   if (state.assetMove) {
     e.preventDefault();
     state.assetMove = null;
-    renderAll();
+    renderAll(true); // deselect is local-only
     return;
   }
   if (state.extracting) {
@@ -11829,7 +12167,7 @@ board.addEventListener('click', (e) => {
   if (state.phase === 'setup') return; // overlay handles
 
   // ── PROTECT NOMINATION — click a dropsite on the map ──
-  if (state.protectNomPhase && _nomPicking && _nomPicking.key === '__protect__' && (!_netSide || _nomPicking.side === _netSide)) {
+  if (state.phase === 'protect' && _nomPicking && _nomPicking.key === '__protect__' && (!_netSide || _nomPicking.side === _netSide)) {
     const { side } = _nomPicking;
     const pt = svgPointFromEvent(e);
     const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
@@ -12046,10 +12384,10 @@ board.addEventListener('click', (e) => {
         const curType = state.assetPhase.assetType;
         const inCurType = a && kindsForAssetType(curType).includes(a.kind);
         // Already-moved assets stay selectable (to reach panel actions like Clear Target).
-        if (a && a.moved) { state.assetMove = { id: a.id, count: a.count }; }
+        if (a && a.moved) dispatch({ type: 'selectAssetMove', assetId: a.id, count: a.count });
         else if (a && state.assetActiveSide && a.side !== state.assetActiveSide) flashLaunchMsg(`${playerNameForSide(state.assetActiveSide)} activates next`);
         else if (a && curType && !inCurType) flashLaunchMsg(`${curType === 'fighter' ? 'Fighters' : curType === 'bomber' ? 'Bombers & Fire Ships' : 'Torpedoes'} activate now`);
-        else if (a) state.assetMove = { id: a.id, count: a.count };
+        else if (a) dispatch({ type: 'selectAssetMove', assetId: a.id, count: a.count });
         renderAll();
       }
       return;
@@ -12083,18 +12421,18 @@ board.addEventListener('click', (e) => {
         const aOrigX2 = a.x, aOrigY2 = a.y;
         a._preMove = { x: a.x, y: a.y, t2tRange: a._t2tRange };
         a.x = lx; a.y = ly; a.moved = true; a._t2tRange = undefined;
-        a.bomberTarget = { gid: hit.gid, si: hit.si };
         const tn = hit.def.name + (hit.grp.ships.length > 1 ? ` #${hit.si + 1}` : '');
         flashLaunchMsg(`${a.kind} → base contact, locked onto ${tn}`, true);
         // Resolve scenery attrition along the path (same rules as a normal move).
         applyAssetScenery(a, aOrigX2, aOrigY2);
-        if (a.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); a.bomberTarget = null; }
+        if (a.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); }
+        else { dispatch({ type: 'assetLockTarget', assetId: a.id, gid: hit.gid, si: hit.si }); }
         state.assetMove = null;
         afterAssetMove();
         // Keep it selected (if its stage still holds) so the lock is visible/clearable.
         if (a.count > 0 && state.assetActiveSide && !state.attackModal &&
             (state.launchedAssets || []).includes(a)) {
-          state.assetMove = { id: a.id, count: a.count };
+          dispatch({ type: 'selectAssetMove', assetId: a.id, count: a.count });
         }
         renderAll(); return;
       }
@@ -12164,8 +12502,9 @@ board.addEventListener('click', (e) => {
       && mover.count > 0 && enemyShipsInBaseContact(mover.side, mover.x, mover.y).length > 0;
     const sideBefore = state.assetActiveSide, typeBefore = state.assetPhase.assetType;
     afterAssetMove();
-    if (moverInContact && state.assetActiveSide === sideBefore && state.assetPhase.assetType === typeBefore && !state.attackModal) {
-      state.assetMove = { id: mover.id, count: mover.count };
+    if (moverInContact && state.assetActiveSide === sideBefore && state.assetPhase.assetType === typeBefore && !state.attackModal
+        && (state.launchedAssets || []).includes(mover)) {
+      dispatch({ type: 'selectAssetMove', assetId: mover.id, count: mover.count });
     }
     renderAll();
     return;
@@ -13029,7 +13368,17 @@ function _intentSide(intent) {
     (intent.type === 'attackReroll' && intent.which === 'save') ||
     (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'))
   );
-  if (defensive) return atk === 'player1' ? 'player2' : atk === 'player2' ? 'player1' : atk;
+  if (defensive) {
+    if (atk) return atk === 'player1' ? 'player2' : 'player1';
+    // activeSide is null but attackModal is still open — derive defender from target ship
+    const M = state.attackModal;
+    const firstShot = M && M.shots && M.shots[0];
+    if (firstShot && firstShot.targetGid) {
+      const tDef = getDef(firstShot.targetGid);
+      if (tDef) return tDef.side === 'player1' ? 'player1' : 'player2';
+    }
+    return atk;
+  }
   return atk;
 }
 
@@ -13037,15 +13386,42 @@ function _intentSide(intent) {
 // Mode selector — full-screen overlay shown at first load (no URL params)
 // ---------------------------------------------------------------------------
 
-function showModeSelector() {
+async function showModeSelector() {
+  // Fetch saved games upfront; silently ignore errors (server may not be running).
+  let saves = [];
+  try {
+    const r = await fetch('/api/saves');
+    if (r.ok) saves = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
+  } catch {}
+
   const overlay = document.createElement('div');
   overlay.id = 'mode-selector';
   overlay.className = 'setup-overlay';
   overlay.style.zIndex = '500';
 
+  function fmtDate(ts) {
+    const d = new Date(ts);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+      d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtSave(s) {
+    const p1 = (s.playerNames && s.playerNames.f1) || 'P1';
+    const p2 = (s.playerNames && s.playerNames.f2) || 'P2';
+    const f1 = (s.factions && s.factions.player1) || '';
+    const f2 = (s.factions && s.factions.player2) || '';
+    const rnd = s.round ? `Rnd ${s.round}` : '';
+    return [p1 + ' vs ' + p2, f1 + '/' + f2, rnd, fmtDate(s.savedAt)].filter(Boolean).join(' · ');
+  }
+
   function render(view) {
     let html = '';
     if (view === 'main') {
+      const savesBtn = saves.length
+        ? `<button class="btn" id="ms-saves" style="padding:14px 10px;font-size:13px;width:100%;">
+            ↩ SAVED GAMES
+            <div style="font-size:10px;font-weight:400;color:var(--text-mute);margin-top:3px;">${saves.length} game${saves.length !== 1 ? 's' : ''} — resume or replay</div>
+          </button>` : '';
       html = `<div class="setup-card" style="max-width:360px;text-align:center;">
         <div class="setup-header"><h2 class="setup-title">DFC FLEET OPS</h2></div>
         <div class="setup-body" style="display:flex;flex-direction:column;gap:12px;padding:24px;">
@@ -13061,7 +13437,24 @@ function showModeSelector() {
             🔗 JOIN ONLINE GAME
             <div style="font-size:10px;font-weight:400;color:var(--text-mute);margin-top:3px;">Enter a room code to connect</div>
           </button>
+          ${savesBtn}
         </div>
+      </div>`;
+    } else if (view === 'saves') {
+      const rows = saves.map(s => `
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);line-height:1.5;">${fmtSave(s)}</div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button class="btn-primary" data-ms-resume="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;">▶ RESUME</button>
+            <button class="btn" data-ms-replay="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;${!s.hasReplay ? 'opacity:0.35;cursor:not-allowed;' : ''}" ${!s.hasReplay ? 'disabled title="No replay data for this save"' : ''}>↺ REPLAY</button>
+          </div>
+        </div>`).join('');
+      html = `<div class="setup-card" style="max-width:440px;">
+        <div class="setup-header"><h2 class="setup-title">SAVED GAMES</h2></div>
+        <div class="setup-body" style="padding:16px;display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto;">
+          ${rows}
+        </div>
+        <div class="setup-footer"><button class="btn" id="ms-back">← Back</button></div>
       </div>`;
     } else if (view === 'join') {
       html = `<div class="setup-card" style="max-width:360px;">
@@ -13071,13 +13464,6 @@ function showModeSelector() {
             <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:5px;">ROOM CODE</div>
             <input id="ms-code" type="text" maxlength="4" placeholder="XXXX"
               style="width:100%;box-sizing:border-box;padding:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:20px;letter-spacing:6px;text-transform:uppercase;border-radius:4px;text-align:center;"/>
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:5px;">YOUR SIDE</div>
-            <div style="display:flex;gap:8px;">
-              <button class="btn ms-side" data-side="player1" style="flex:1;padding:10px;">Player 1 (Red)</button>
-              <button class="btn ms-side" data-side="player2" style="flex:1;padding:10px;">Player 2 (Blue)</button>
-            </div>
           </div>
           <div id="ms-join-err" style="color:var(--hull-crit);font-size:10px;display:none;"></div>
           <button class="btn-primary" id="ms-join-go" disabled style="padding:12px;">JOIN ▸</button>
@@ -13091,6 +13477,13 @@ function showModeSelector() {
           <div id="ms-host-msg" style="color:var(--text-dim);font-size:12px;">Contacting server…</div>
         </div>
       </div>`;
+    } else if (view === 'resuming') {
+      html = `<div class="setup-card" style="max-width:360px;">
+        <div class="setup-header"><h2 class="setup-title">RESUMING…</h2></div>
+        <div class="setup-body" style="padding:24px;text-align:center;">
+          <div id="ms-resume-msg" style="color:var(--text-dim);font-size:12px;">Creating room…</div>
+        </div>
+      </div>`;
     }
     overlay.innerHTML = html;
     wire(view);
@@ -13099,24 +13492,42 @@ function showModeSelector() {
   function wire(view) {
     if (view === 'main') {
       overlay.querySelector('#ms-hotseat').onclick = () => overlay.remove();
-      overlay.querySelector('#ms-host').onclick  = () => { render('hosting'); doHost(); };
-      overlay.querySelector('#ms-join').onclick   = () => render('join');
+      overlay.querySelector('#ms-host').onclick    = () => { render('hosting'); doHost(); };
+      overlay.querySelector('#ms-join').onclick    = () => render('join');
+      const savesBtn = overlay.querySelector('#ms-saves');
+      if (savesBtn) savesBtn.onclick = () => render('saves');
     }
-    if (view === 'join') {
-      let chosenSide = null;
-      const codeEl  = overlay.querySelector('#ms-code');
-      const goBtn   = overlay.querySelector('#ms-join-go');
-      const errEl   = overlay.querySelector('#ms-join-err');
-      const check   = () => { goBtn.disabled = !(codeEl.value.length === 4 && chosenSide); };
-      codeEl.oninput = () => { codeEl.value = codeEl.value.toUpperCase(); check(); };
-      overlay.querySelectorAll('.ms-side').forEach(btn => {
+    if (view === 'saves') {
+      overlay.querySelectorAll('[data-ms-resume]').forEach(btn => {
         btn.onclick = () => {
-          chosenSide = btn.dataset.side;
-          overlay.querySelectorAll('.ms-side').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          check();
+          const id = btn.dataset.msResume;
+          const meta = saves.find(s => s.roomId === id);
+          render('resuming');
+          doResume(id, meta);
         };
       });
+      overlay.querySelectorAll('[data-ms-replay]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.msReplay;
+          btn.disabled = true; btn.textContent = '…';
+          try {
+            const data = await fetch(`/api/rooms/${id}/replay`).then(r => r.json());
+            if (data.error) { alert(data.error); btn.disabled = false; btn.textContent = '↺ REPLAY'; return; }
+            overlay.remove();
+            loadReplay(data);
+          } catch (err) {
+            alert('Could not load replay: ' + err.message);
+            btn.disabled = false; btn.textContent = '↺ REPLAY';
+          }
+        };
+      });
+      overlay.querySelector('#ms-back').onclick = () => render('main');
+    }
+    if (view === 'join') {
+      const codeEl = overlay.querySelector('#ms-code');
+      const goBtn  = overlay.querySelector('#ms-join-go');
+      const errEl  = overlay.querySelector('#ms-join-err');
+      codeEl.oninput = () => { codeEl.value = codeEl.value.toUpperCase(); goBtn.disabled = codeEl.value.length !== 4; };
       goBtn.onclick = () => {
         const code = codeEl.value.trim();
         errEl.style.display = 'none';
@@ -13124,12 +13535,93 @@ function showModeSelector() {
           .then(r => r.json())
           .then(d => {
             if (d.error) { errEl.textContent = d.error; errEl.style.display = 'block'; return; }
-            if (d.sides[chosenSide]) { errEl.textContent = `That side is already taken.`; errEl.style.display = 'block'; return; }
-            location.href = `${location.pathname}?room=${code}&side=${chosenSide}`;
+            if (d.sides.player2) { errEl.textContent = 'Game full.'; errEl.style.display = 'block'; return; }
+            location.href = `${location.pathname}?room=${code}&side=player2`;
           })
           .catch(() => { errEl.textContent = 'Could not reach server.'; errEl.style.display = 'block'; });
       };
       overlay.querySelector('#ms-back').onclick = () => render('main');
+    }
+  }
+
+  async function doResume(saveId, saveMeta) {
+    const msgEl = () => document.getElementById('ms-resume-msg');
+    try {
+      const res = await fetch('/api/rooms/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ saveId }),
+      });
+      const data = await res.json();
+      if (data.error) { if (msgEl()) msgEl().textContent = data.error; return; }
+      const id = data.roomId;
+      const p1Name = saveMeta?.playerNames?.f1 || 'Player 1';
+      const p2Name = saveMeta?.playerNames?.f2 || 'Player 2';
+      const f1Key  = saveMeta?.factions?.player1 || '';
+      const f2Key  = saveMeta?.factions?.player2 || '';
+      const f1Name = (f1Key && FACTIONS[f1Key]?.name) || f1Key;
+      const f2Name = (f2Key && FACTIONS[f2Key]?.name) || f2Key;
+      const sc = saveMeta?.sideColors || {};
+      const c1 = (sc.player1 && PLAYER_COLORS[sc.player1]?.hex) || 'var(--ucm)';
+      const c2 = (sc.player2 && PLAYER_COLORS[sc.player2]?.hex) || 'var(--shal)';
+      const summary = `Rnd ${saveMeta?.round ?? '?'} · ${fmtDate(saveMeta?.savedAt)}`;
+      let chosenSide = null;
+      overlay.innerHTML = `<div class="setup-card" style="max-width:440px;">
+        <div class="setup-header"><h2 class="setup-title">ROOM ${id}</h2></div>
+        <div class="setup-body" style="padding:24px;display:flex;flex-direction:column;gap:14px;">
+          <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);">${summary}</div>
+          <div>
+            <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:6px;">SELECT PLAYER</div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn ms-resume-side" data-side="player1" style="flex:1;padding:10px;border-color:${c1};color:${c1};">${p1Name} (${f1Name})</button>
+              <button class="btn ms-resume-side" data-side="player2" style="flex:1;padding:10px;border-color:${c2};color:${c2};">${p2Name} (${f2Name})</button>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:5px;">OPPONENT LINK</div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <input readonly id="ms-resume-link" placeholder="Choose your side first"
+                style="flex:1;min-width:0;padding:7px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-family:var(--mono);font-size:9px;border-radius:4px;"/>
+              <button class="btn" id="ms-resume-copy" style="padding:7px 11px;white-space:nowrap;">📋 Copy</button>
+            </div>
+          </div>
+        </div>
+        <div class="setup-footer">
+          <button class="btn" id="ms-resume-back">← Back</button>
+          <button class="btn-primary" id="ms-resume-play" disabled style="padding:12px 28px;">▶ PLAY ▸</button>
+        </div>
+      </div>`;
+      const colorOf = { player1: c1, player2: c2 };
+      overlay.querySelectorAll('.ms-resume-side').forEach(btn => {
+        btn.onclick = () => {
+          chosenSide = btn.dataset.side;
+          overlay.querySelectorAll('.ms-resume-side').forEach(b => {
+            b.classList.remove('active');
+            b.style.background = '';
+          });
+          btn.classList.add('active');
+          btn.style.background = colorOf[chosenSide] + '22'; // 13% opacity tint
+          const otherSide = chosenSide === 'player1' ? 'player2' : 'player1';
+          const linkEl = document.getElementById('ms-resume-link');
+          if (linkEl) linkEl.value = `${location.origin}${location.pathname}?room=${id}&side=${otherSide}`;
+          const playBtn = document.getElementById('ms-resume-play');
+          if (playBtn) playBtn.disabled = false;
+        };
+      });
+      document.getElementById('ms-resume-copy').onclick = () => {
+        const link = document.getElementById('ms-resume-link')?.value;
+        if (!link || !chosenSide) return;
+        navigator.clipboard.writeText(link).then(() => {
+          const b = document.getElementById('ms-resume-copy');
+          if (b) { b.textContent = '✓ Copied'; setTimeout(() => { if (document.getElementById('ms-resume-copy')) b.textContent = '📋 Copy'; }, 1500); }
+        });
+      };
+      document.getElementById('ms-resume-play').onclick = () => {
+        if (chosenSide) location.href = `${location.pathname}?room=${id}&side=${chosenSide}`;
+      };
+      document.getElementById('ms-resume-back').onclick = () => render('saves');
+    } catch (err) {
+      if (msgEl()) msgEl().textContent = 'Could not reach server: ' + err.message;
     }
   }
 

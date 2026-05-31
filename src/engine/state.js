@@ -262,7 +262,6 @@ export function createState() {
     reconKills: { player1: 0, player2: 0 }, // enemy operative-carriers destroyed
     nominationPhase: false,   // true when secondary nominations are needed (gates setNomination)
     nominationsReady: { player1: false, player2: false }, // per-side confirmNominations barrier
-    protectNomPhase: false,   // protect-objective nomination overlay active
     protectNomReady: { player1: false, player2: false },  // per-side confirmProtectNom barrier
     setupReady: { player1: false, player2: false },       // per-side readySetup barrier
     sceneryReady: { player1: false, player2: false },     // per-side commitScenery barrier

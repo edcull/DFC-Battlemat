@@ -36,7 +36,19 @@ router.get('/saves', async (_req, res) => {
     savedAt:     s.savedAt,
     playerNames: s.playerNames,
     factions:    s.factions,
+    sideColors:  s.currentState?.sideColors || null,
+    hasReplay:   !!s.playStartState,
   })));
+});
+
+// GET /api/saves/:id — full save data for resume/replay.
+router.get('/saves/:id', async (req, res) => {
+  try {
+    const save = await loadSave(req.params.id.toUpperCase());
+    res.json(save);
+  } catch {
+    res.status(404).json({ error: 'Save not found.' });
+  }
 });
 
 // GET /api/rooms/:id/replay — full replay data for a room (from its save file).
@@ -70,7 +82,7 @@ router.post('/rooms/resume', async (req, res) => {
   } catch {
     return res.status(404).json({ error: 'Save not found.' });
   }
-  const room = createRoom();
+  const room = createRoom(save.roomId);
   // Overwrite the blank room with saved state
   room.state             = save.currentState;
   room.seed              = save.seed;
@@ -191,8 +203,9 @@ function onMessage(room, ws, side, msg) {
         room.endRoundVotes.clear();
       }
       apply(room.state, intent, room.rng);
-      // Checkpoint play start on first beginPlay
-      if (intent.type === 'beginPlay' && !room.playStartState) {
+      // Checkpoint play start on first transition into play phase (may happen via
+      // beginPlay intent directly, or implicitly via deployDone when both sides finish).
+      if (room.state.phase === 'play' && !room.playStartState) {
         room.playStartState    = structuredClone(room.state);
         room.playStartRngState = room.rng.getState();
       }

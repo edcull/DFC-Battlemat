@@ -274,7 +274,7 @@ export function isLegal(state, intent, side) {
     case 'attackDeclare': {
       if (state.phase !== 'play' || !state.attackModal) return false;
       const atk = state.assetActiveSide || state.activeSide;            // attacker drives the flow
-      const def = atk === 'player1' ? 'player2' : atk === 'player2' ? 'player1' : null; // defender owns defensive choices
+      let def = atk === 'player1' ? 'player2' : atk === 'player2' ? 'player1' : null; // defender owns defensive choices
       // Defensive decisions (Shields / Brace / Contain, save re-rolls, Close
       // Protection) belong to the defender; the rest (advances, hit re-rolls,
       // Overcharge / Escort / Impel, finish) to the attacker.
@@ -282,6 +282,16 @@ export function isLegal(state, intent, side) {
         (intent.type === 'attackFighterReroll') ||
         (intent.type === 'attackReroll' && intent.which === 'save') ||
         (intent.type === 'attackDeclare' && (intent.what === 'shield' || intent.what === 'brace' || intent.what === 'contain'));
+      // If activeSide is null (all activations done but attackModal still open), derive
+      // the defender from the first target ship's faction so the shield intent can pass.
+      if (defensive && def === null) {
+        const M = state.attackModal;
+        const firstShot = M.shots && M.shots[0];
+        if (firstShot && firstShot.targetGid) {
+          const tDef = getDef(state, firstShot.targetGid);
+          if (tDef) def = tDef.side;
+        }
+      }
       return side === (defensive ? def : atk);
     }
     case 'nominateLead': {
@@ -439,9 +449,9 @@ export function isLegal(state, intent, side) {
       return true;
     }
     case 'setProtectNom':
-      return state.protectNomPhase === true && (!intent.side || intent.side === side);
+      return state.phase === 'protect' && (!intent.side || intent.side === side);
     case 'confirmProtectNom': {
-      if (!state.protectNomPhase) return false;
+      if (state.phase !== 'protect') return false;
       if (side && intent.side && intent.side !== side) return false;
       const protectSide = intent.side || side;
       if (protectSide && (state.protectNomReady || {})[protectSide]) return false;
@@ -497,6 +507,7 @@ export function isLegal(state, intent, side) {
     }
     case 'startAssetMove':
     case 'assetT2T':
+    case 'selectAssetMove':
     case 'assetLockTarget':
     case 'assetUntarget':
     case 'assetResetMove':

@@ -3107,19 +3107,15 @@ function applyCommitScenario(state, rng) {
   } else if (needsNomination) {
     state.phase = 'nominations';
     state.nominationsReady = { player1: false, player2: false };
+  } else if (state.scenario && state.scenario.objective === 'protect') {
+    state.protectNomReady = { player1: false, player2: false };
+    state.phase = 'protect';
+  } else if (!anyoneNeedsDeployPhase(state)) {
+    state.phase = 'play';
+    rollInitiative(state, rng);
   } else {
-    // No scenery, no nominations — open protect nom overlay if applicable.
-    if (state.scenario && state.scenario.objective === 'protect') {
-      state.protectNomPhase = true;
-      state.protectNomReady = { player1: false, player2: false };
-    }
-    if (!anyoneNeedsDeployPhase(state)) {
-      state.phase = 'play';
-      rollInitiative(state, rng);
-    } else {
-      state.deployDone = { player1: false, player2: false };
-      state.phase = 'deploy';
-    }
+    state.deployDone = { player1: false, player2: false };
+    state.phase = 'deploy';
   }
   return state;
 }
@@ -3134,18 +3130,15 @@ export function applyCommitScenery(state, rng, side) {
   if (state.nominationPhase) {
     state.phase = 'nominations';
     state.nominationsReady = { player1: false, player2: false };
+  } else if (state.scenario && state.scenario.objective === 'protect') {
+    state.protectNomReady = { player1: false, player2: false };
+    state.phase = 'protect';
+  } else if (anyoneNeedsDeployPhase(state)) {
+    state.deployDone = state.deployDone || { player1: false, player2: false };
+    state.phase = 'deploy';
   } else {
-    if (state.scenario && state.scenario.objective === 'protect') {
-      state.protectNomPhase = true;
-      state.protectNomReady = { player1: false, player2: false };
-    }
-    if (anyoneNeedsDeployPhase(state)) {
-      state.deployDone = state.deployDone || { player1: false, player2: false };
-      state.phase = 'deploy';
-    } else {
-      state.phase = 'play';
-      rollInitiative(state, rng);
-    }
+    state.phase = 'play';
+    rollInitiative(state, rng);
   }
   return state;
 }
@@ -3434,6 +3427,12 @@ function applyFireWeapons(state, intent) {
   return state;
 }
 
+function daSidesDone(state) {
+  const da = state.dropsiteActivation;
+  const dropsites = (state.scenarioData && state.scenarioData.dropsites) || [];
+  return dropsites.every(ds => !dropsiteController(ds) || da.done.includes(ds.id));
+}
+
 function applyDaFinishDropsite(state, intent) {
   const da = state.dropsiteActivation;
   if (!da) return state;
@@ -3441,16 +3440,23 @@ function applyDaFinishDropsite(state, intent) {
   da.dsId = null;
   state.launching = null;
   state.featureAttack = null;
+  if (daSidesDone(state)) return applyDaEnd(state);
   return state;
 }
 
 function applyDaSwitchSide(state) {
   const da = state.dropsiteActivation;
   if (!da) return state;
+  // Mark any remaining controlled dropsites for the outgoing side as done (skipped)
+  const dropsites = (state.scenarioData && state.scenarioData.dropsites) || [];
+  dropsites.forEach(ds => {
+    if (dropsiteController(ds) === da.side && !da.done.includes(ds.id)) da.done.push(ds.id);
+  });
   da.side = da.side === 'player1' ? 'player2' : 'player1';
   da.dsId = null;
   state.launching = null;
   state.featureAttack = null;
+  if (daSidesDone(state)) return applyDaEnd(state);
   return state;
 }
 
@@ -3647,6 +3653,13 @@ export function apply(state, intent, rng) {
       if (at2t) { at2t.moved = false; at2t.t2t = true; at2t._t2tRange = 6; }
       return state;
     }
+    case 'selectAssetMove': {
+      const selA = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
+      if (selA && state.assetPhase && state.assetPhase.step === 'assets') {
+        state.assetMove = { id: intent.assetId, count: intent.count || selA.count };
+      }
+      return state;
+    }
     case 'assetLockTarget': {
       const alck = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
       if (alck) { alck.bomberTarget = { gid: intent.gid, si: intent.si }; }
@@ -3693,10 +3706,9 @@ export function apply(state, intent, rng) {
       // Both sides confirmed — advance.
       state.nominationPhase = false;
       if (state.scenario && state.scenario.objective === 'protect') {
-        state.protectNomPhase = true;
         state.protectNomReady = { player1: false, player2: false };
-      }
-      if (anyoneNeedsDeployPhase(state)) {
+        state.phase = 'protect';
+      } else if (anyoneNeedsDeployPhase(state)) {
         state.deployDone = state.deployDone || { player1: false, player2: false };
         state.phase = 'deploy';
       } else {
@@ -3713,7 +3725,14 @@ export function apply(state, intent, rng) {
       state.protectNomReady = state.protectNomReady || { player1: false, player2: false };
       if (intent.side) state.protectNomReady[intent.side] = true;
       if (!state.protectNomReady.player1 || !state.protectNomReady.player2) return state;
-      state.protectNomPhase = false;
+      // Both confirmed — advance to deploy or play.
+      if (anyoneNeedsDeployPhase(state)) {
+        state.deployDone = state.deployDone || { player1: false, player2: false };
+        state.phase = 'deploy';
+      } else {
+        state.phase = 'play';
+        rollInitiative(state, rng);
+      }
       return state;
     }
     case 'adjustAP': {
