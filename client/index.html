@@ -7328,6 +7328,70 @@ function renderSetupOverlay() {
       noteFor(scen.objectives.player2 ? OBJECTIVES[scen.objectives.player2] : null, playerNameForSide('player2'))
     : noteFor(obj, '');
 
+  // ---- Two-tab layout: Standard scenarios vs Custom generation ----
+  const setupTab = (_setupTab === 'custom') ? 'custom' : 'standard';
+  const lockStyle = (payloadsLocked || anyReady) ? 'opacity:0.4;pointer-events:none;filter:grayscale(0.6);' : '';
+  const lockAttr  = (payloadsLocked || anyReady) ? 'disabled' : '';
+  const tabBtn = (key, label) => `<button data-setup-tab="${key}" style="flex:1;padding:8px 6px;font:inherit;font-size:11px;font-weight:700;letter-spacing:0.04em;cursor:pointer;background:none;border:none;border-bottom:2px solid ${setupTab===key?'var(--ucm)':'transparent'};color:${setupTab===key?'var(--ucm)':'var(--text-mute)'};">${label}</button>`;
+  const tabsBar = `<div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);">
+      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('custom','⚙ CUSTOM / GENERATE')}
+    </div>`;
+
+  // Standard tab: dropdown + random button + a read-only summary of the chosen scenario
+  // (deployment, approach, scoring — layout & variant are bespoke and not shown here).
+  const sumRow = (lbl, title, sub) => `<div style="padding:8px 11px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;background:${ucmRgba(0.03)};">
+      <div style="font-size:9px;letter-spacing:0.1em;color:var(--text-mute);text-transform:uppercase;">${lbl}</div>
+      <div style="font-size:13px;font-weight:700;margin-top:2px;">${title || '<span style="color:var(--text-mute)">— not selected —</span>'}</div>
+      ${sub ? `<div style="font-size:10px;color:var(--text-dim);margin-top:3px;">${sub}</div>` : ''}
+    </div>`;
+  const standardSummary = () => {
+    if (!scen.deployment && !scen.approach && !scen.objective && !scen.objectives) {
+      return `<div class="scen-extra-note" style="text-align:center;color:var(--text-mute);">Pick a standard scenario above, or roll a random one.</div>`;
+    }
+    const dep = scen.deployment ? DEPLOYMENTS[scen.deployment] : null;
+    const ap  = scen.approach ? APPROACHES[scen.approach] : null;
+    const objTitle = asym
+      ? `${OBJECTIVES[scen.objectives.player1]?.name || '—'} / ${OBJECTIVES[scen.objectives.player2]?.name || '—'}`
+      : (scen.objective ? OBJECTIVES[scen.objective].name : '');
+    const objSub = asym
+      ? `<b style="color:var(--ucm)">${playerNameForSide('player1')}:</b> ${OBJECTIVES[scen.objectives.player1]?.short || '—'} · <b style="color:var(--shal)">${playerNameForSide('player2')}:</b> ${OBJECTIVES[scen.objectives.player2]?.short || '—'}`
+      : (scen.objective ? OBJECTIVES[scen.objective].short : '');
+    return sumRow('Deployment Type', dep ? dep.name : '', dep ? (dep.short || dep.desc) : '') +
+           sumRow('Approach', ap ? ap.name : '', cardSummary.approach()) +
+           sumRow('Scoring Objective', objTitle, objSub);
+  };
+  const standardTab = `<div style="${lockStyle}">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+        <select class="btn" data-preset-select style="flex:1;" ${lockAttr} title="Apply a standard scenario">
+          <option value="">⚑ Select standard scenario…</option>
+          <option value="take_and_hold">Take and Hold</option>
+          <option value="erupting_battlefront">Erupting Battlefront</option>
+          <option value="power_grab">Power Grab</option>
+          <option value="shock_and_yaw">Shock and Yaw</option>
+          <option value="orbital_support">Orbital Support</option>
+          <option value="entrapmoont">Entrapmoont</option>
+        </select>
+        <button class="btn" data-preset="random" ${lockAttr} title="Apply a random standard scenario">⚄ RANDOM</button>
+      </div>
+      ${standardSummary()}
+    </div>`;
+
+  // Custom tab: the full generation grid + RANDOMISE ALL.
+  const customTab = `<div style="${lockStyle}">
+      <div class="setup-grid">
+        ${makeCard('deployment','Deployment Type', DEPLOYMENTS, scen.deployment)}
+        ${makeCard('approach',  'Approach',        APPROACHES,  scen.approach)}
+        ${makeCard('layout',    'Layout',          LAYOUTS,     scen.layout)}
+        ${makeCard('variant',   'Variant',         VARIANTS,    scen.variant)}
+        ${objectiveSection}
+      </div>
+      ${vrn && vrn.d6 > 0 ? `<div class="scen-extra-note"><b>${vrn.name}:</b> ${vrn.desc}</div>` : ''}
+      ${objExtraNote}
+      <div style="display:flex;justify-content:flex-end;margin-top:10px;">
+        <button class="btn" data-reroll="all" ${lockAttr}>⚄ RANDOMISE ALL</button>
+      </div>
+    </div>`;
+
   overlay = document.createElement('div');
   overlay.id = 'setup-overlay';
   overlay.className = 'setup-overlay';
@@ -7376,31 +7440,11 @@ function renderSetupOverlay() {
             ? 'Select <b>both fleets</b> above before choosing a scenario.'
             : 'Complete fleet setup (admiral &amp; payload assignment) before choosing a scenario. Use <b>⚠ SETUP / VIEW FLEET</b> above.'}
         </div>` : ''}
-        <div class="setup-grid" style="${payloadsLocked || anyReady ? 'opacity:0.4;pointer-events:none;filter:grayscale(0.6);' : ''}">
-          ${makeCard('deployment','Deployment Type', DEPLOYMENTS, scen.deployment)}
-          ${makeCard('approach',  'Approach',        APPROACHES,  scen.approach)}
-          ${makeCard('layout',    'Layout',          LAYOUTS,     scen.layout)}
-          ${makeCard('variant',   'Variant',         VARIANTS,    scen.variant)}
-          ${objectiveSection}
-        </div>
-        ${vrn && vrn.d6 > 0 ? `<div class="scen-extra-note">
-          <b>${vrn.name}:</b> ${vrn.desc}
-        </div>` : ''}
-        ${objExtraNote}
+        ${tabsBar}
+        ${setupTab === 'custom' ? customTab : standardTab}
       </div>
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
-        <button class="btn" data-reroll="all" ${payloadsLocked || anyReady ? 'disabled' : ''}>⚄ RANDOMISE ALL</button>
-        <select class="btn" data-preset-select ${payloadsLocked || anyReady ? 'disabled' : ''} title="Apply a standard scenario">
-          <option value="">⚑ STANDARD SCENARIO…</option>
-          <option value="take_and_hold">Take and Hold</option>
-          <option value="erupting_battlefront">Erupting Battlefront</option>
-          <option value="power_grab">Power Grab</option>
-          <option value="shock_and_yaw">Shock and Yaw</option>
-          <option value="orbital_support">Orbital Support</option>
-          <option value="entrapmoont">Entrapmoont</option>
-        </select>
-        <button class="btn" data-preset="random" ${payloadsLocked || anyReady ? 'disabled' : ''} title="Apply a random standard scenario">⚄ RANDOM SCENARIO</button>
         ${(() => {
           if (!_netSide) {
             // Hotseat: one ready button per player.
@@ -7424,6 +7468,15 @@ function renderSetupOverlay() {
     </div>
   `;
   board.appendChild(overlay);
+
+  // Tab switching (local UI only — not relayed).
+  overlay.querySelectorAll('[data-setup-tab]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _setupTab = btn.dataset.setupTab;
+      renderAll(true);
+    });
+  });
 
   // Reroll buttons: 'all' randomises every row; a single key randomises just that row.
   const SCEN_TABLES = { deployment: DEPLOYMENTS, approach: APPROACHES, layout: LAYOUTS, variant: VARIANTS, objective: OBJECTIVES };
@@ -13407,6 +13460,8 @@ let   _netPendingIntent = false; // true after sending an intent, until server b
 let arcViewMode = 1;
 // Which nomination row is currently awaiting a board click: { side, key } | null
 let _nomPicking = null;
+// Active tab in the scenario setup overlay: 'standard' | 'custom' (not synced — local UI)
+let _setupTab = 'standard';
 // Pending deploy confirmation: { gid, si, x, y, heading } — aimed but not yet dispatched
 let _pendingDeploy = null;
 // Sides that have voted to end the current round (online mode only; cleared on full state update)
