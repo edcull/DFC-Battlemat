@@ -7441,7 +7441,8 @@ function renderSetupOverlay() {
             : 'Complete fleet setup (admiral &amp; payload assignment) before choosing a scenario. Use <b>⚠ SETUP / VIEW FLEET</b> above.'}
         </div>` : ''}
         ${tabsBar}
-        ${setupTab === 'custom' ? customTab : standardTab}
+        <div id="setup-tab-standard" style="display:${setupTab==='standard'?'block':'none'};">${standardTab}</div>
+        <div id="setup-tab-custom" style="display:${setupTab==='custom'?'block':'none'};">${customTab}</div>
       </div>
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
@@ -7469,12 +7470,22 @@ function renderSetupOverlay() {
   `;
   board.appendChild(overlay);
 
-  // Tab switching (local UI only — not relayed).
+  // Tab switching is purely local UI: toggle pane visibility directly without
+  // calling renderAll(), so it never mutates state, never relays, and never
+  // disturbs the current selections or the other client.
   overlay.querySelectorAll('[data-setup-tab]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      _setupTab = btn.dataset.setupTab;
-      renderAll(true);
+      _setupTab = (btn.dataset.setupTab === 'custom') ? 'custom' : 'standard';
+      const stdPane = overlay.querySelector('#setup-tab-standard');
+      const cusPane = overlay.querySelector('#setup-tab-custom');
+      if (stdPane) stdPane.style.display = _setupTab === 'standard' ? 'block' : 'none';
+      if (cusPane) cusPane.style.display = _setupTab === 'custom' ? 'block' : 'none';
+      overlay.querySelectorAll('[data-setup-tab]').forEach(b => {
+        const active = b.dataset.setupTab === _setupTab;
+        b.style.borderBottom = '2px solid ' + (active ? 'var(--ucm)' : 'transparent');
+        b.style.color = active ? 'var(--ucm)' : 'var(--text-mute)';
+      });
     });
   });
 
