@@ -5,8 +5,14 @@ import { createRoom, getRoom, joinRoom, leaveRoom, broadcast, send, sideOf, reco
 import { isLegal } from './engine/gating.js';
 import { apply } from './engine/mutators.js';
 import { saveRoom, loadSave, loadAllSaves } from './saves.js';
+import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './engine/version.js';
 
 export const router = Router();
+
+// GET /api/meta — app and ruleset version info.
+router.get('/meta', (_req, res) => {
+  res.json({ appVersion: APP_VERSION, rulebookVersion: RULEBOOK_VERSION, errataVersion: ERRATA_VERSION });
+});
 
 // POST /api/rooms — create a new room, return its code.
 router.post('/rooms', (_req, res) => {

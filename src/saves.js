@@ -3,6 +3,7 @@
 
 import { readdir, readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './engine/version.js';
 
 const SAVES_DIR = join(process.cwd(), 'saves');
 
@@ -12,6 +13,9 @@ export async function ensureSavesDir() {
 
 export async function saveRoom(room) {
   const data = {
+    appVersion:        APP_VERSION,
+    rulebookVersion:   RULEBOOK_VERSION,
+    errataVersion:     ERRATA_VERSION,
     roomId:            room.id,
     seed:              room.seed,
     createdAt:         room.createdAt,

@@ -1062,6 +1062,7 @@
 </script>
 <script type="module">
 // ─── ENGINE IMPORTS ──────────────────────────────────────────────────────────
+import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from '../src/engine/version.js';
 import {
   UCM_FLEET, SHAL_FLEET, PHR_FLEET, RESISTANCE_FLEET, SCOURGE_FLEET, BIOFICER_FLEET,
   FACTIONS, ORDERS, INCH, BOARD_IN, BOARD_PX,
@@ -7222,7 +7223,7 @@ function renderSetupOverlay() {
         </div>` : ''}
       </div>
       <div class="setup-footer">
-        <button class="btn" id="test-setup" title="UCM vs Scourge · no admirals/secondaries · Line / Close Enough / Diagonal / Guarded Sectors / Standard">⚡ TEST SETUP</button>
+        <button class="btn" id="exit-to-menu">← Back</button>
         <button class="btn" data-reroll="all" ${payloadsLocked || anyReady ? 'disabled' : ''}>⚄ RANDOMISE ALL</button>
         ${(() => {
           if (!_netSide) {
@@ -7361,19 +7362,10 @@ function renderSetupOverlay() {
       dispatch({ type: 'unreadySetup', side: btn.dataset.unreadySetup });
     });
   });
-  const testBtn = overlay.querySelector('#test-setup');
-  if (testBtn) testBtn.addEventListener('click', () => {
-    // Quick deterministic test game: UCM vs Scourge, no admirals/secondaries,
-    // Line deployment · Close Enough approach · Diagonal layout · Guarded Sectors
-    // variant · Standard scoring. Then commit straight to play.
-    state.fleetChoices = { f1: 'ucm', f2: 'scourge' };
-    state.admiralChoice = { f1: 0, f2: 0 };
-    state.secondaryChoice = { f1: [], f2: [] };
-    state.scenario = {
-      deployment: 'line', approach: 'close_enough', layout: 'diagonal',
-      variant: 'guarded_sectors', objective: 'standard'
-    };
-    commitScenario();
+  const exitBtn = overlay.querySelector('#exit-to-menu');
+  if (exitBtn) exitBtn.addEventListener('click', () => {
+    overlay.remove();
+    showModeSelector();
   });
 }
 
@@ -13424,6 +13416,9 @@ async function showModeSelector() {
           </button>` : '';
       html = `<div class="setup-card" style="max-width:360px;text-align:center;">
         <div class="setup-header"><h2 class="setup-title">DFC FLEET OPS</h2></div>
+        <div style="font-size:9px;color:var(--text-mute);font-family:var(--mono);padding:4px 0 0;letter-spacing:0.5px;">
+          App v${APP_VERSION} &nbsp;·&nbsp; Rulebook v${RULEBOOK_VERSION} &nbsp;·&nbsp; Errata v${ERRATA_VERSION}
+        </div>
         <div class="setup-body" style="display:flex;flex-direction:column;gap:12px;padding:24px;">
           <button class="btn-primary" id="ms-hotseat" style="padding:14px 10px;font-size:13px;">
             ⚔ HOTSEAT
@@ -13588,7 +13583,7 @@ async function showModeSelector() {
         </div>
         <div class="setup-footer">
           <button class="btn" id="ms-resume-back">← Back</button>
-          <button class="btn-primary" id="ms-resume-play" disabled style="padding:12px 28px;">▶ PLAY ▸</button>
+          <button class="btn-primary" id="ms-resume-play" disabled style="padding:12px 28px;">▶ PLAY</button>
         </div>
       </div>`;
       const colorOf = { player1: c1, player2: c2 };
@@ -13643,7 +13638,8 @@ async function showModeSelector() {
           </div>
         </div>
         <div class="setup-footer">
-          <button class="btn-primary" id="ms-play-ucm" style="padding:12px 28px;">▶ Play ▸</button>
+          <button class="btn" id="ms-host-back">← Back</button>
+          <button class="btn-primary" id="ms-play-ucm" style="padding:12px 28px;">▶ PLAY</button>
         </div>
       </div>`;
       document.getElementById('ms-copy').onclick = () => {
@@ -13652,6 +13648,7 @@ async function showModeSelector() {
           if (b) { b.textContent = '✓ Copied'; setTimeout(() => { if (document.getElementById('ms-copy')) b.textContent = '📋 Copy'; }, 1500); }
         });
       };
+      document.getElementById('ms-host-back').onclick = () => render('main');
       document.getElementById('ms-play-ucm').onclick = () => {
         location.href = `${location.pathname}?room=${id}&side=player1`;
       };

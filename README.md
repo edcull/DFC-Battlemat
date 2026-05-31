@@ -1,5 +1,7 @@
 # DFC Fleet Ops
 
+**App v0.1.0** &nbsp;·&nbsp; Rulebook v2.3.1 &nbsp;·&nbsp; Errata v1.3
+
 A browser-based tactical assistant for **Dropfleet Commander**. The client (`client/index.html`) requires a small static server to load ES modules; an optional Node.js server adds online two-player rooms.
 
 ---

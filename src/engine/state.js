@@ -9,6 +9,7 @@ import {
 } from './constants.js';
 import { rollD6 } from './rng.js';
 import { FLEET_DB, findShipDef, applyHardpointOptions } from '../fleet/db.js';
+import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './version.js';
 
 /* Build a per-side clone of a faction's fleet, giving each def a unique,
    side-prefixed id (e.g. 'ucm:u1') and the correct side. This prevents id
@@ -221,6 +222,9 @@ export function buildScenarioState(scen) {
 /* Factory — returns a fresh game state object. */
 export function createState() {
   return {
+    appVersion:      APP_VERSION,
+    rulebookVersion: RULEBOOK_VERSION,
+    errataVersion:   ERRATA_VERSION,
     phase: 'setup',      // 'setup' | 'scenery' | 'nominations' | 'deploy' | 'play'
     round: 1,
     selectedGroupId: null,

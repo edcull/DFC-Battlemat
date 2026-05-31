@@ -14,6 +14,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { router as apiRouter, handleConnection } from './src/api.js';
 import { ensureSavesDir } from './src/saves.js';
+import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './src/engine/version.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,8 +65,8 @@ wss.on('connection', handleConnection);
 await ensureSavesDir();
 
 server.listen(PORT, () => {
-  console.log(`DFC Fleet Ops server listening on http://localhost:${PORT}`);
-  console.log(`  Module client : http://localhost:${PORT}/client/index.html`);
-  console.log(`  Legacy client : http://localhost:${PORT}/web/index.html`);
-  console.log(`  API           : http://localhost:${PORT}/api/rooms`);
+  console.log(`DFC Fleet Ops v${APP_VERSION}  |  Rulebook v${RULEBOOK_VERSION}  |  Errata v${ERRATA_VERSION}`);
+  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`  Client : http://localhost:${PORT}/client/index.html`);
+  console.log(`  API    : http://localhost:${PORT}/api/rooms`);
 });
