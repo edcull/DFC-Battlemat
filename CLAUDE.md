@@ -80,7 +80,6 @@ Admiral data exports:
 | File | Contents |
 |---|---|
 | `client/index.html` | HTML/CSS + `<script type="module">`. Imports engine modules and fleet modules; defines all render functions, shims, event handlers, networking, and mode-selector code. |
-| `client/local.js` | Hotseat glue: creates the shared `state` and exports `localRng`. |
 
 **Shim pattern:** `client/index.html` exports state-bound wrapper functions (e.g. `function moveShip(...args) { return _moveShip(state, rng, ...args); }`) so render/handler code can call engine functions without passing `state` explicitly.
 
