@@ -499,6 +499,18 @@ export const LAYOUTS = {
     ],
     rings:[],
     largeObjects:[{ x:24, y:24, diameter:12 }]
+  },
+  take_and_hold: {
+    d6:0, name:'Take and Hold',
+    scenery:{ micrometeor:4, dense:4, rings:0, largeObjects:0 },
+    dropsites:[
+      ds('ds1','medium_city',    24, 24),
+      ds('ds2','large_city',      6, 24),
+      ds('ds3','large_city',     42, 24),
+      ds('ds4','medium_station', 12, 30),
+      ds('ds5','medium_station', 36, 18)
+    ],
+    rings:[], largeObjects:[]
   }
 };
 

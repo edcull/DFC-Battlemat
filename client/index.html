@@ -7356,6 +7356,7 @@ function renderSetupOverlay() {
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
         <button class="btn" data-reroll="all" ${payloadsLocked || anyReady ? 'disabled' : ''}>⚄ RANDOMISE ALL</button>
+        <button class="btn" data-preset="take_and_hold" ${payloadsLocked || anyReady ? 'disabled' : ''} title="Take and Hold standard scenario">⚑ TAKE &amp; HOLD</button>
         ${(() => {
           if (!_netSide) {
             // Hotseat: one ready button per player.
@@ -7392,6 +7393,18 @@ function renderSetupOverlay() {
         const keys = Object.keys(SCEN_TABLES[key]);
         state.scenario = { ...state.scenario, [key]: keys[Math.floor(Math.random() * keys.length)] };
       }
+      renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
+    });
+  });
+  // Standard-scenario preset buttons — set every scenario row at once.
+  const SCEN_PRESETS = {
+    take_and_hold: { deployment:'line', approach:'close_enough', layout:'take_and_hold', variant:'guarded_sectors', objective:'survey' }
+  };
+  overlay.querySelectorAll('[data-preset]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const preset = SCEN_PRESETS[btn.dataset.preset];
+      if (preset) state.scenario = { ...state.scenario, ...preset };
       renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
     });
   });
