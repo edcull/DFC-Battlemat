@@ -17,7 +17,7 @@ Designed for **two player hotseat**, and **full online two-player** support via 
 ## Quick start
 
 1. **Hotseat:** serve the repo root with any static server (e.g. `python -m http.server`) and open `client/index.html`. **Online play:** run `npm install && npm start` and open `http://localhost:3000/client/index.html`.
-2. **Setup** — choose factions, admirals, secondary objectives for each side, then pick deployment/approach/layout/variant/scoring objective. Hit **⚡ TEST SETUP** for an instant UCM vs Scourge game if you just want to try it.
+2. **Setup** — choose factions, admirals, secondary objectives for each side, then either pick a **standard scenario** (or roll a random one) or build a custom one from deployment/approach/layout/variant/scoring objective. Hit **⚡ TEST SETUP** for an instant UCM vs Scourge game if you just want to try it.
 3. **Scenery** — place or randomise scenery objects. The 3D view activates automatically when scenery is complete.
 4. **Deploy** — click a group in the left panel, then click in your deployment zone to place each ship. Move the mouse and click again to set facing, then hit **✓ CONFIRM PLACEMENT**. Multi-ship groups prompt for each ship in turn. Use **↩ UNDO DEPLOY** in the board HUD to return a whole group off-table.
 5. **Play** — activate groups, move ships, assign weapon targets, fire, launch assets, and score VP. Click **FINISH ACTIVATION** after each group.
@@ -99,6 +99,7 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 - **Protect** — nominated Dropsite scores double while intact; penalty if Levelled; 🛡 marker on map
 - **Breakthrough** — Red flies off for 1 VP/200 pts; Blue scores pts-destroyed
 - **Raze** — double standard scoring for Levelled/Ruined Dropsites ≥24" from own zone; pts-destroyed
+- **Asymmetric scoring** — each side can score against its own objective (e.g. attacker Raze / defender Protect), resolved per-side throughout
 - All seven **secondary objectives** with manual nomination and ★ markers
 - VP toasts on every award; clicking the faction/VP topbar display opens full breakdown with objective description
 
@@ -111,11 +112,13 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 | 2 AP | **Time to Target** — move a Fighter/Bomber Wing a second time up to 6" |
 
 ### Scenarios
-- 7 **Deployment types**: Line, Table Corners, Midboard, From Corners, Attacker/Defender, Encirclement + more
-- 6 **Approaches**: Standoff, Close Enough, Column, Counterattack, Delayed Response, Home Fleet Disadvantage
-- 6 **Layouts**: Diagonal, Edge Case, Eruption, Gatecrash, Moonlight, Moonstruck
-- 7 **Variants**: None, Guarded Sectors, Secure Comms Array, Battlescarred, Gridlocked, Expansive Atmosphere, Orbital Complex
-- 7 **Scoring objectives** (see above)
+- **Standard scenarios** (one-click presets): Take and Hold, Erupting Battlefront, Power Grab, Shock and Yaw, Orbital Support, Entrapmoont — pick from a dropdown or roll a random one
+- Or build a **custom** scenario from the generator:
+  - 7 **Deployment types**: Line, Table Corners, Midboard, From Corners, Attacker/Defender, Encirclement + more
+  - 6 **Approaches**: Standoff, Close Enough, Column, Counterattack, Delayed Response, Home Fleet Disadvantage
+  - 6 **Layouts**: Diagonal, Edge Case, Eruption, Gatecrash, Moonlight, Moonstruck
+  - 7 **Variants**: None, Guarded Sectors, Secure Comms Array, Battlescarred, Gridlocked, Expansive Atmosphere, Orbital Complex
+  - 7 **Scoring objectives** (see above), with an optional per-side (asymmetric) mode
 
 ---
 
@@ -177,6 +180,8 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 - **Wrong-side online clicks** silently no-op + resync rather than having buttons visually disabled.
 - **No AI opponent.**
 - A few §12 Dropsite interactions (Collateral Damage, attack-damage → feature removal) are partially implemented and worth confirming in play.
+- **Standard-scenario variant features** (Military Outposts, ODGs, Power Plants, Hangars, Comms) are placed on dropsites, but their in-game effects and any bespoke special rules are adjudicated manually.
+- **Team scenarios** (e.g. Entrapmoont, 2–4 players) are modelled as standard 2-player.
 
 ---
 
