@@ -556,7 +556,7 @@ export const LAYOUTS = {
     d6:0, name:'Orbital Support',
     scenery:{ micrometeor:'2-5', dense:'4-6', rings:0, largeObjects:0 },
     dropsites:[
-      ds('ds1','medium_city', 24, 24),
+      ds('ds1','medium_station', 24, 24),
       ds('ds2','large_city',   6, 12),
       ds('ds3','large_city',  42, 12),
       ds('ds4','large_city',   6, 36),
@@ -790,12 +790,12 @@ export const VARIANTS = {
   },
   orbital_support: {
     d6:0, name:'Orbital Support',
-    short:'Med/Large Cities +2 Mil Outposts. Small Cities +ODG & Mil Outpost.',
-    desc:'Each Medium City and Large City gains two Military Outposts; each Small City gains an Orbital Defence Gun and a Military Outpost.',
+    short:'Med Station/Large Cities +2 Mil Outposts. Small Cities +ODG & Mil Outpost.',
+    desc:'The central Medium Space Station and each Large City gain two Military Outposts; each Small City gains an Orbital Defence Gun and a Military Outpost.',
     apply:(base)=>{
       const features = {};
       base.forEach(d=>{
-        if (d.type === 'medium_city' || d.type === 'large_city') features[d.id] = ['military_outpost','military_outpost'];
+        if (d.type === 'medium_station' || d.type === 'large_city') features[d.id] = ['military_outpost','military_outpost'];
         if (d.type === 'small_city') features[d.id] = ['orbital_defence_gun','military_outpost'];
       });
       return { dropsites: base.map(d=>({...d})), features, scenery:{} };
