@@ -547,8 +547,8 @@ export const LAYOUTS = {
       ds('ds3','large_station',   8, 30),
       ds('ds4','medium_city',    32, 30),
       ds('ds5','medium_city',    16, 18),
-      ds('ds6','small_station',  16, 14),
-      ds('ds7','small_station',  32, 34)
+      ds('ds6','small_city',     16, 14),
+      ds('ds7','small_city',     32, 34)
     ],
     rings:[], largeObjects:[]
   }
@@ -756,13 +756,15 @@ export const VARIANTS = {
   },
   shock_and_yaw: {
     d6:0, name:'Shock and Yaw',
-    short:'Medium Station +Power Plant. Large Stations +ODG.',
-    desc:'The central Medium Space Station gains a Power Plant; each Large Space Station gains an Orbital Defence Gun. Special: destroying that Power Plant deals no extra damage to the Medium Space Station, but instead all Groups within 6" gain two Spikes and all Ships within 6" gain a Scanners Offline token.',
+    short:'Sm City +Hangar · Med City +Mil Outpost · Med Station +2 Power Plants · Lg Station +Comms & ODG.',
+    desc:'Each Small City gains a Hangar; each Medium City a Military Outpost; the central Medium Space Station two Power Plants; each Large Space Station a Comms Station and an Orbital Defence Gun. Special: destroying a Power Plant deals no extra damage to the Medium Space Station, but instead all Groups within 6" gain two Spikes and all Ships within 6" gain a Scanners Offline token.',
     apply:(base)=>{
       const features = {};
       base.forEach(d=>{
-        if (d.type === 'medium_station') features[d.id] = ['power_plant'];
-        if (d.type === 'large_station')  features[d.id] = ['orbital_defence_gun'];
+        if (d.type === 'small_city')     features[d.id] = ['hangar'];
+        if (d.type === 'medium_city')    features[d.id] = ['military_outpost'];
+        if (d.type === 'medium_station') features[d.id] = ['power_plant','power_plant'];
+        if (d.type === 'large_station')  features[d.id] = ['comms_station','orbital_defence_gun'];
       });
       return {
         dropsites: base.map(d=>({...d})),
