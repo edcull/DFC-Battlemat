@@ -511,6 +511,19 @@ export const LAYOUTS = {
       ds('ds5','medium_station', 36, 18)
     ],
     rings:[], largeObjects:[]
+  },
+  erupting_battlefront: {
+    d6:0, name:'Erupting Battlefront',
+    scenery:{ micrometeor:4, dense:0, rings:1, largeObjects:0 },
+    dropsites:[
+      ds('ds1','medium_city', 12, 12),
+      ds('ds2','medium_city', 36, 12),
+      ds('ds3','large_city',  24, 24),
+      ds('ds4','medium_city', 12, 36),
+      ds('ds5','medium_city', 36, 36)
+    ],
+    rings:[{ axis:'horizontal', y:24 }],
+    largeObjects:[]
   }
 };
 
@@ -700,6 +713,18 @@ export const VARIANTS = {
         return { ...d, type:newType };
       });
       return { dropsites, features, scenery:{} };
+    }
+  },
+  civic_infrastructure: {
+    d6:0, name:'Civic Infrastructure',
+    short:'Each Medium City +Power Plant, Hangar & Comms.',
+    desc:'Each Medium City gains a Power Plant, a Hangar and a Comms Station.',
+    apply:(base)=>{
+      const features = {};
+      base.forEach(d=>{
+        if (d.type === 'medium_city') features[d.id] = ['power_plant','hangar','comms_station'];
+      });
+      return { dropsites: base.map(d=>({...d})), features, scenery:{} };
     }
   }
 };

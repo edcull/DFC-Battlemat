@@ -7356,7 +7356,12 @@ function renderSetupOverlay() {
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
         <button class="btn" data-reroll="all" ${payloadsLocked || anyReady ? 'disabled' : ''}>⚄ RANDOMISE ALL</button>
-        <button class="btn" data-preset="take_and_hold" ${payloadsLocked || anyReady ? 'disabled' : ''} title="Take and Hold standard scenario">⚑ TAKE &amp; HOLD</button>
+        <select class="btn" data-preset-select ${payloadsLocked || anyReady ? 'disabled' : ''} title="Apply a standard scenario">
+          <option value="">⚑ STANDARD SCENARIO…</option>
+          <option value="take_and_hold">Take and Hold</option>
+          <option value="erupting_battlefront">Erupting Battlefront</option>
+        </select>
+        <button class="btn" data-preset="random" ${payloadsLocked || anyReady ? 'disabled' : ''} title="Apply a random standard scenario">⚄ RANDOM SCENARIO</button>
         ${(() => {
           if (!_netSide) {
             // Hotseat: one ready button per player.
@@ -7396,16 +7401,27 @@ function renderSetupOverlay() {
       renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
     });
   });
-  // Standard-scenario preset buttons — set every scenario row at once.
+  // Standard-scenario presets — set every scenario row at once.
   const SCEN_PRESETS = {
-    take_and_hold: { deployment:'line', approach:'close_enough', layout:'take_and_hold', variant:'guarded_sectors', objective:'survey' }
+    take_and_hold:        { deployment:'line', approach:'close_enough', layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey' },
+    erupting_battlefront: { deployment:'line', approach:'column',       layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'   }
   };
-  overlay.querySelectorAll('[data-preset]').forEach(btn => {
+  const applyPreset = (key) => {
+    const preset = SCEN_PRESETS[key];
+    if (!preset) return;
+    state.scenario = { ...state.scenario, ...preset };
+    renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
+  };
+  // Dropdown: pick a named standard scenario.
+  overlay.querySelectorAll('[data-preset-select]').forEach(sel => {
+    sel.addEventListener('change', (e) => { e.stopPropagation(); applyPreset(sel.value); });
+  });
+  // Button: apply a random standard scenario.
+  overlay.querySelectorAll('[data-preset="random"]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const preset = SCEN_PRESETS[btn.dataset.preset];
-      if (preset) state.scenario = { ...state.scenario, ...preset };
-      renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
+      const keys = Object.keys(SCEN_PRESETS);
+      applyPreset(keys[Math.floor(Math.random() * keys.length)]);
     });
   });
   // Picker dropdown — change (or clear) the chosen option for a scenario row.
