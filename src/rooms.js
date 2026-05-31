@@ -1,8 +1,9 @@
-// Room lifecycle. Rooms live in memory; no persistence required for Phase 2.
+// Room lifecycle. Rooms live in memory; games are persisted to saves/ for resume/replay.
 // Each room holds the authoritative game state and two player WebSocket slots.
 
 import { createState, rebuildFleets } from './engine/state.js';
 import { makeRng } from './engine/rng.js';
+import { deleteSave } from './saves.js';
 
 const ROOM_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours of inactivity
 const ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // omit 0/O/1/I
@@ -32,6 +33,10 @@ export function createRoom() {
     spectators: [],
     lastActivity: Date.now(),
     endRoundVotes: new Set(), // tracks which sides have voted to end the round
+    createdAt: Date.now(),
+    intentLog: [],          // [{ts, side, intent}] — play phase only
+    playStartState: null,   // deep clone of state the moment beginPlay is applied
+    playStartRngState: null,
   };
 
   rooms.set(id, room);
@@ -86,6 +91,10 @@ export function send(ws, msg) {
   if (ws.readyState === 1) ws.send(JSON.stringify(msg));
 }
 
+export function recordIntent(room, side, intent) {
+  room.intentLog.push({ ts: Date.now(), side, intent });
+}
+
 function scheduleExpiry(id) {
   setTimeout(() => {
     const room = rooms.get(id);
@@ -99,6 +108,7 @@ function scheduleExpiry(id) {
     }
     for (const ws of room.spectators) try { ws.close(); } catch {}
     rooms.delete(id);
+    deleteSave(id).catch(() => {});
     console.log(`Room ${id} expired and removed.`);
   }, ROOM_TTL_MS);
 }

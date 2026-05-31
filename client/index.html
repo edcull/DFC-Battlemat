@@ -390,6 +390,33 @@
   .am-die.hit { background: rgba(212,166,71,0.18); border-color: var(--ucm); color: var(--ucm); }
   .am-die.crit { background: rgba(255,181,71,0.22); border-color: var(--hull-warn); color: var(--hull-warn); }
   .am-die.miss { opacity: 0.5; }
+
+  .attack-hud {
+    position: absolute; bottom: 8px; right: 8px;
+    width: 400px; max-height: calc(100% - 16px);
+    overflow-y: auto;
+    background: rgba(8,16,15,0.93);
+    border: 1px solid var(--hull-crit);
+    border-radius: 3px;
+    padding: 12px 14px;
+    backdrop-filter: blur(8px);
+    color: var(--text);
+    font-size: 12px;
+    pointer-events: auto;
+    z-index: 10;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.5);
+  }
+  .attack-hud-title {
+    font-family: var(--display); font-size: 11px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--hull-crit);
+    margin-bottom: 10px; padding-bottom: 6px;
+    border-bottom: 1px solid rgba(220,50,50,0.3);
+  }
+  .attack-hud-footer {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap;
+  }
   .btn-primary:active { transform: scale(0.97); }
   .btn-primary.shal {
     background: linear-gradient(180deg, var(--shal) 0%, var(--shal-dim) 100%);
@@ -1584,26 +1611,53 @@ function renderAssetPhase() {
   if (overlay) overlay.remove();
   let banner = document.getElementById('asset-move-banner');
   if (banner) banner.remove();
+  const prevHud = document.getElementById('asset-phase-hud');
+  if (prevHud) prevHud.remove();
   if (!state.assetPhase) return;
 
   const ap = state.assetPhase;
   const sideName = (s) => playerNameForSide(s);
 
   if (ap.step === 'assets') {
+    // Pending bomber/torpedo attacks flagged by the server — resolve client-side then re-render.
+    if (ap._pendingBomberResolve && (!_netSide || _gs() === ap._pendingBomberResolve.side)) {
+      const pbr = ap._pendingBomberResolve;
+      ap._pendingBomberResolve = null;
+      resolvePendingBomberAttacks(pbr.side, pbr.type);
+      renderAll();
+      return;
+    }
+
     banner = document.createElement('div');
     banner.id = 'asset-move-banner';
     banner.className = 'deploy-hint';
     const typeLabel = { fighter: 'Fighters', bomber: 'Bombers & Fire Ships', torpedo: 'Torpedoes' }[ap.assetType] || 'Assets';
-    // Online: only the side whose turn it is may act.
     const myTurn = !_netSide || !state.assetActiveSide || _gs() === state.assetActiveSide;
+    const mySide = _netSide ? _gs() : null;
     let msg, footer;
+
     if (!state.assetActiveSide) {
-      msg = `<span><b>Asset Combat complete</b> — all Fighters, Bombers and Torpedoes have activated.</span>`;
-      // Either player may press DONE to advance past the asset phase.
-      footer = `<button class="btn-primary" id="asset-move-done" style="padding:5px 14px;font-size:11px;">DONE →</button>`;
+      // All stages done — both players must confirm.
+      const doneSides = ap.doneSides || [];
+      if (!_netSide) {
+        // Hotseat: show a confirm button per side.
+        const p1Done = doneSides.includes('player1'), p2Done = doneSides.includes('player2');
+        msg = `<span><b>Asset Combat complete.</b> Both players confirm to advance.</span>`;
+        footer = `${!p1Done
+          ? `<button class="btn-primary" id="apd-p1" style="padding:5px 12px;font-size:10px;">${playerNameForSide('player1')} DONE →</button>`
+          : `<span style="color:var(--hull-good);font-size:10px;padding:0 6px;">✓ ${playerNameForSide('player1')}</span>`}
+          ${!p2Done
+          ? `<button class="btn-primary" id="apd-p2" style="padding:5px 12px;font-size:10px;">${playerNameForSide('player2')} DONE →</button>`
+          : `<span style="color:var(--hull-good);font-size:10px;padding:0 6px;">✓ ${playerNameForSide('player2')}</span>`}`;
+      } else if (doneSides.includes(mySide)) {
+        msg = `<span><b>Asset Combat complete.</b> Waiting for <b>${playerNameForSide(mySide === 'player1' ? 'player2' : 'player1')}</b> to confirm…</span>`;
+        footer = '';
+      } else {
+        msg = `<span><b>Asset Combat complete.</b>${doneSides.length ? ` <b style="color:var(--hull-good)">Opponent confirmed.</b>` : ''} Confirm when ready.</span>`;
+        footer = `<button class="btn-primary" id="asset-move-done" style="padding:5px 14px;font-size:11px;">DONE →</button>`;
+      }
     } else if (!myTurn) {
-      // Waiting: the other player is moving their assets.
-      msg = `<span>Waiting for <b style="color:var(--${state.assetActiveSide})">${playerNameForSide(state.assetActiveSide)}</b> to activate ${typeLabel}…</span>`;
+      msg = `<span>Waiting for <b style="color:var(--${sideCssKey(state.assetActiveSide)})">${playerNameForSide(state.assetActiveSide)}</b> to activate ${typeLabel}…</span>`;
       footer = '';
     } else if (state.assetMove) {
       const a = state.launchedAssets.find(x => x.id === state.assetMove.id);
@@ -1622,23 +1676,28 @@ function renderAssetPhase() {
     }
     banner.innerHTML = `${msg}${footer}`;
     board.appendChild(banner);
+
+    // "DONE WITH [TYPE]" — server-authoritative stage advance.
     const fb = banner.querySelector('#asset-finish-stage');
     if (fb) fb.addEventListener('click', () => {
-      const side = state.assetActiveSide, type = ap.assetType;
-      (state.launchedAssets || []).forEach(a => { if (a.side === side && kindsForAssetType(type).includes(a.kind)) a.moved = true; });
-      state.assetMove = null;
-      const cur = { type, side };
-      const res = advanceAssetStage(cur);
-      if (res.resolveAttacksFor) resolvePendingBomberAttacks(res.resolveAttacksFor, res.resolveType);
+      dispatch({ type: 'assetStageDone', side: state.assetActiveSide, type: ap.assetType });
       renderAll();
     });
+
+    // "DONE →" — online: this player confirms all assets done.
     const db = banner.querySelector('#asset-move-done');
     if (db) db.addEventListener('click', () => {
       if (anyPendingBomberAttacks()) { state.assetMove = null; resolvePendingBomberAttacks(); renderAll(); return; }
-      state.assetMove = null;
-      state.assetPhase = { resolved: true, log: ap.log, step: 'battalion_done' };
+      dispatch({ type: 'assetPhaseDone', side: _gs() });
       renderAll();
     });
+
+    // Hotseat per-side confirm buttons.
+    const p1Btn = banner.querySelector('#apd-p1');
+    if (p1Btn) p1Btn.addEventListener('click', () => { dispatch({ type: 'assetPhaseDone', side: 'player1' }); renderAll(); });
+    const p2Btn = banner.querySelector('#apd-p2');
+    if (p2Btn) p2Btn.addEventListener('click', () => { dispatch({ type: 'assetPhaseDone', side: 'player2' }); renderAll(); });
+
     return;
   }
 
@@ -1733,35 +1792,31 @@ function renderAssetPhase() {
     return;
   }
 
-  overlay = document.createElement('div');
-  overlay.id = 'asset-overlay';
-  overlay.className = 'setup-overlay';
-  overlay.innerHTML = `
-    <div class="setup-card" style="max-width:440px;">
-      <div class="setup-header">
-        <h2 class="setup-title">ASSET PHASE</h2>
-        <div class="setup-sub">Round ${state.round} · ${sideName(initSide)} has initiative</div>
-      </div>
-      <div class="setup-body">
-        <div class="ap-section">
-          <div class="ap-title">Battalions <span style="color:var(--text-mute);font-weight:400;">(${sideName('player1')} · ${sideName('player2')})</span></div>
-          ${battSummaryFor(null)}
-        </div>
-        ${ap.resolved ? `<div class="ap-section"><div class="ap-log" style="color:var(--hull-good)">Battalion Combat resolved.</div></div>` : ''}
-        ${ap.boardingResolved ? `<div class="ap-section"><div class="ap-log" style="color:var(--hull-good)">Boarding Actions resolved.${ap.boardingLog&&ap.boardingLog.length?'<br>'+ap.boardingLog.join('<br>'):''}</div></div>` : ''}
-        <div class="scen-extra-note" style="font-size:9.5px;">
-          <b>Sequence:</b> Battalion Combat → Boarding Actions → Asset Combat. Boarding Actions are resolved manually; Battalion Combat & Asset movement are guided.
-        </div>
-      </div>
-      <div class="setup-footer">
-        ${!ap.resolved ? `<button class="btn-primary" id="asset-start-battalions">BATTALION COMBAT →</button>` : ''}
-        ${ap.resolved && !ap.boardingResolved && anyShipBattalions() ? `<button class="btn-primary" id="asset-boarding">BOARDING ACTIONS →</button>` : ''}
-        ${ap.resolved && (ap.boardingResolved || !anyShipBattalions()) ? `<button class="btn-primary" id="asset-move-assets">MOVE LAUNCH ASSETS →</button>` : ''}
-        <button class="btn" id="asset-advance-round">${state.round >= 6 ? 'END GAME → R1' : 'NEXT ROUND →'}</button>
-      </div>
-    </div>
+  const hasContested = contestedDropsites().length > 0;
+  const hudEl = document.createElement('div');
+  hudEl.id = 'asset-phase-hud';
+  hudEl.className = 'hud-item';
+  hudEl.style.cssText = 'pointer-events:auto;min-width:170px;';
+  let primaryBtn = '';
+  if (!ap.resolved) {
+    if (hasContested) {
+      primaryBtn = `<button class="hud-btn" id="asset-start-battalions" style="width:100%;margin-top:5px;padding:3px 8px;">BATTALION COMBAT →</button>`;
+    } else {
+      primaryBtn = `<button class="hud-btn" id="asset-skip-battalions" style="width:100%;margin-top:5px;padding:3px 8px;">ASSET PHASE →</button>`;
+    }
+  } else if (!ap.boardingResolved && anyShipBattalions()) {
+    primaryBtn = `<button class="hud-btn" id="asset-boarding" style="width:100%;margin-top:5px;padding:3px 8px;">BOARDING ACTIONS →</button>`;
+  } else {
+    primaryBtn = `<button class="hud-btn" id="asset-move-assets" style="width:100%;margin-top:5px;padding:3px 8px;">MOVE LAUNCH ASSETS →</button>`;
+  }
+  hudEl.innerHTML = `
+    <div style="font-family:var(--display);font-size:10px;letter-spacing:1px;color:var(--text);margin-bottom:3px;">ASSET PHASE · R${state.round}</div>
+    <div style="font-size:9px;color:var(--text-mute);">${sideName(initSide)} has initiative</div>
+    ${ap.resolved ? `<div style="font-size:9px;color:var(--hull-good);margin-top:3px;">&#10003; Battalion Combat done</div>` : ''}
+    ${ap.boardingResolved ? `<div style="font-size:9px;color:var(--hull-good);">&#10003; Boarding resolved</div>` : ''}
+    ${primaryBtn}
   `;
-  board.appendChild(overlay);
+  document.querySelector('.board-hud').appendChild(hudEl);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2254,32 +2309,40 @@ function renderDropsiteDetail(ds) {
             const meta = launchMeta(l.type);
             const lActive = state.launching && state.launching.fromDropsite === ds.id &&
               state.launching.fromFeature === fi && state.launching.type === l.type;
+            const lLaunched = (ds.launchedFeatures || []).includes(fi);
             const lSideKey = sideCssKey(daSide);
-            launchCardHTML += `<div class="weapon-row"${!lActive
-              ? ` data-da-launch="${ds.id}|${fi}|${l.type}" style="cursor:pointer;margin-top:6px;"`
-              : ` style="margin-top:6px;border-left:3px solid var(--${lSideKey});background:rgba(${daSide==='player1'?'212,166,71':'74,214,255'},0.06);"` }>
-              <div class="weapon-name">${l.name}${lActive ? ` <span style="color:var(--${lSideKey})">◉</span>` : ''}</div>
-              <div class="weapon-stats">Launch ${l.n} · ${meta.auraIn}" range · ${launchTargetLabel(meta.target)}</div>`;
-            if (lActive && l.type === 'fighter_bomber') {
-              const fCnt = state.launching.fighters || 0, bCnt = state.launching.bombers || 0;
-              launchCardHTML += `<div class="launch-counter">
-                <div class="lc-row"><span class="lc-lbl">Fighters</span>
-                  <button class="hp-btn" data-da-fb="fighters|-1" ${fCnt<=0?'disabled':''}>−</button>
-                  <span class="lc-val" style="color:var(--${lSideKey})">${fCnt}</span>
-                  <button class="hp-btn" data-da-fb="fighters|1" ${bCnt>0?'disabled':''}>+</button></div>
-                <div class="lc-row"><span class="lc-lbl">Bombers</span>
-                  <button class="hp-btn" data-da-fb="bombers|-1" ${bCnt<=0?'disabled':''}>−</button>
-                  <span class="lc-val" style="color:var(--${lSideKey})">${bCnt}</span>
-                  <button class="hp-btn" data-da-fb="bombers|1" ${fCnt>0?'disabled':''}>+</button></div>
-                <div class="weapon-special" style="color:var(--${lSideKey});margin-top:4px;">${(fCnt>0||bCnt>0)
-                  ? `Click board ≤${meta.auraIn}" to place ${fCnt>0?`${fCnt} Fighter${fCnt>1?'s':''}`:bCnt>0?`${bCnt} Bomber${bCnt>1?'s':''}`:''}`
-                  : 'Set Fighters or Bombers, then click the board'}</div>
-                <button class="btn" id="da-launch-cancel" style="width:100%;margin-top:4px;">Cancel</button>
+            if (lLaunched && !lActive) {
+              launchCardHTML += `<div class="weapon-row" style="margin-top:6px;opacity:0.65;">
+                <div class="weapon-name">${l.name} <span style="color:var(--hull-crit);font-size:9px;">✓ launched</span></div>
+                <div class="weapon-stats">Launch ${l.n} · ${meta.auraIn}" range · ${launchTargetLabel(meta.target)}</div>
               </div>`;
-            } else if (!lActive) {
-              launchCardHTML += `<div class="weapon-special" style="color:var(--text-mute);">Click to launch ▸ place on map ≤${meta.auraIn}"</div>`;
+            } else {
+              launchCardHTML += `<div class="weapon-row"${!lActive
+                ? ` data-da-launch="${ds.id}|${fi}|${l.type}" style="cursor:pointer;margin-top:6px;"`
+                : ` style="margin-top:6px;border-left:3px solid var(--${lSideKey});background:rgba(${daSide==='player1'?'212,166,71':'74,214,255'},0.06);"` }>
+                <div class="weapon-name">${l.name}${lActive ? ` <span style="color:var(--${lSideKey})">◉</span>` : ''}</div>
+                <div class="weapon-stats">Launch ${l.n} · ${meta.auraIn}" range · ${launchTargetLabel(meta.target)}</div>`;
+              if (lActive && l.type === 'fighter_bomber') {
+                const fCnt = state.launching.fighters || 0, bCnt = state.launching.bombers || 0;
+                launchCardHTML += `<div class="launch-counter">
+                  <div class="lc-row"><span class="lc-lbl">Fighters</span>
+                    <button class="hp-btn" data-da-fb="fighters|-1" ${fCnt<=0?'disabled':''}>−</button>
+                    <span class="lc-val" style="color:var(--${lSideKey})">${fCnt}</span>
+                    <button class="hp-btn" data-da-fb="fighters|1" ${bCnt>0||fCnt>=l.n?'disabled':''}>+</button></div>
+                  <div class="lc-row"><span class="lc-lbl">Bombers</span>
+                    <button class="hp-btn" data-da-fb="bombers|-1" ${bCnt<=0?'disabled':''}>−</button>
+                    <span class="lc-val" style="color:var(--${lSideKey})">${bCnt}</span>
+                    <button class="hp-btn" data-da-fb="bombers|1" ${fCnt>0||bCnt>=l.n?'disabled':''}>+</button></div>
+                  <div class="weapon-special" style="color:var(--${lSideKey});margin-top:4px;">${(fCnt>0||bCnt>0)
+                    ? `Click board ≤${meta.auraIn}" to place ${fCnt>0?`${fCnt} Fighter${fCnt>1?'s':''}`:bCnt>0?`${bCnt} Bomber${bCnt>1?'s':''}`:''}`
+                    : `Set up to ${l.n} Fighters or Bombers, then click the board`}</div>
+                  <button class="btn" id="da-launch-cancel" style="width:100%;margin-top:4px;">Cancel</button>
+                </div>`;
+              } else if (!lActive) {
+                launchCardHTML += `<div class="weapon-special" style="color:var(--text-mute);">Click to launch ▸ place on map ≤${meta.auraIn}"</div>`;
+              }
+              launchCardHTML += `</div>`;
             }
-            launchCardHTML += `</div>`;
           });
         }
       }
@@ -4143,7 +4206,10 @@ function resolvePendingBomberAttacks(side, type) {
   const locked = (state.launchedAssets || []).filter(inScope);
   if (!locked.length) {
     // No (more) attacks for this scope. If we were resolving for a stage, advance it.
-    if (side) { state._bomberResolveSide = null; state._bomberResolveType = null; advanceAssetStage({ type: type || 'bomber', side }); }
+    if (side) {
+      state._bomberResolveSide = null; state._bomberResolveType = null;
+      dispatch({ type: 'assetStageDone', side, type: type || 'bomber' });
+    }
     return false;
   }
   const first = locked[0];
@@ -4518,14 +4584,11 @@ function renderAttackModal() {
 
   overlay = document.createElement('div');
   overlay.id = 'attack-overlay';
-  overlay.className = 'setup-overlay';
-  overlay.style.zIndex = '300';
-  overlay.innerHTML = `<div class="setup-card" style="max-width:420px;">
-    <div class="setup-header"><h2 class="setup-title" style="color:var(--hull-crit)">⚔ ATTACK</h2></div>
-    <div class="setup-body">${body}</div>
-    <div class="setup-footer">${footer}</div>
-  </div>`;
-  document.body.appendChild(overlay);
+  overlay.className = 'attack-hud';
+  overlay.innerHTML = `<div class="attack-hud-title">⚔ ATTACK</div>
+    <div class="attack-hud-body">${body}</div>
+    ${footer ? `<div class="attack-hud-footer">${footer}</div>` : ''}`;
+  (document.querySelector('.board-wrap') || document.body).appendChild(overlay);
 
   overlay.querySelectorAll('[data-shield-toggle]').forEach(cb => {
     cb.addEventListener('change', () => dispatch({ type: 'attackDeclare', what: 'shield', key: cb.dataset.shieldToggle, value: cb.checked }));
@@ -4645,7 +4708,7 @@ function finishAttack() {
   if (hint && hint.bomber) {
     const { scope, scopeType } = hint;
     if (anyPendingBomberAttacks(scope, scopeType)) { resolvePendingBomberAttacks(scope, scopeType); renderAll(); return; }
-    if (scope) { state._bomberResolveSide = null; state._bomberResolveType = null; advanceAssetStage({ type: scopeType || 'bomber', side: scope }); }
+    if (scope) { state._bomberResolveSide = null; state._bomberResolveType = null; dispatch({ type: 'assetStageDone', side: scope, type: scopeType || 'bomber' }); }
   }
   renderAll();
 }
@@ -6684,7 +6747,6 @@ function renderInitiative() {
       else parts.push(`<span style="text-decoration:line-through;opacity:0.4;">+${bd.admiralChosen} admiral</span> (dead)`);
     }
     if (bd.cmd > 0) parts.push(`+${bd.cmd} cmd ship`);
-    if (bd.extras > 0) parts.push(`+${bd.extras} extra admiral${bd.extras > 1 ? 's' : ''}`);
     if (bd.comms > 0) parts.push(`+1 comms`);
     return `<span style="font-size:14px;font-weight:700;color:${col};">AP ${P.ap[side]}</span><br><span style="font-size:8px;opacity:0.65;">${parts.join(' ')}</span>`;
   };
@@ -7720,6 +7782,7 @@ function renderAll(localOnly = false) {
     renderInitiative();
     renderDeployHint();
     renderActivationHUD();
+    renderFeatureAttackHUD();
     renderScenBanner();
     updateHUD();
     renderAimHint();
@@ -8080,7 +8143,7 @@ function _handle3dClick(e) {
         if (!_fdKind || _fdCount <= 0) { flashLaunchMsg('Set Fighters or Bombers first'); return; }
       }
       flashLaunchMsg(`Dropsite launched ${_fdCount} ${_fdLabel}${_fdCount > 1 ? 's' : ''}`, true);
-      dispatch({ type: 'launchDropsiteAsset', kind: _fdKind, count: _fdCount, x: _fdPt.x, y: _fdPt.y, fromDropsite: _fdL.fromDropsite });
+      dispatch({ type: 'launchDropsiteAsset', kind: _fdKind, count: _fdCount, x: _fdPt.x, y: _fdPt.y, fromDropsite: _fdL.fromDropsite, fromFeature: _fdL.fromFeature ?? null });
       return;
     }
     // Non-point dropsite launches (gate-dropship etc.) fall through to panel UI.
@@ -8197,6 +8260,43 @@ function _handle3dClick(e) {
       }
       return;
     }
+
+    // Dropship / Bulk Lander / Drop Pod — click a target dropsite on the 3D board.
+    if (meta && (meta.target === 'dropsite_same_layer' || meta.target === 'dropsite_any_layer' || meta.target === 'city')) {
+      const _3dLDef = getDef(L.gid);
+      const _3dLShip = state.groups[L.gid] && state.groups[L.gid].ships[L.si];
+      if (!_3dLShip || _3dLShip.destroyed || _3dLShip.offTable) { state.launching = null; renderAll(); return; }
+      const _3dLHit = _3dNearestDropsite(e, 8 * INCH);
+      if (!_3dLHit) { flashLaunchMsg('Click a target Dropsite'); return; }
+      const _3dLDs = _3dLHit.ds;
+      const _3dLDx = inchToPx(_3dLDs.x), _3dLDy = inchToPx(_3dLDs.y);
+      if (Math.hypot(_3dLDx - _3dLShip.x, _3dLDy - _3dLShip.y) > meta.auraIn * INCH + 2) { flashLaunchMsg('Target out of range'); return; }
+      if (meta.target === 'city' && _3dLDs.base.category !== 'city') { flashLaunchMsg('Drop Pods target cities'); return; }
+      if (meta.target === 'dropsite_same_layer') {
+        const _3dLDsLayer = _3dLDs.base.layer === 'Atmosphere' ? 'atmosphere' : 'orbit';
+        const _3dLShipLayer = _3dLShip.layer || 'orbit';
+        if (_3dLDsLayer !== _3dLShipLayer) { flashLaunchMsg('Dropships need same orbital layer'); return; }
+      }
+      const _3dLEntry = (_3dLDef.launch || []).find(x => x.type === L.type);
+      let _3dLCount = _3dLEntry ? _3dLEntry.n : 1;
+      let _3dLHalved = false;
+      if (L.type === 'bulk_lander' && dsEnemyBattalions(_3dLDs, _3dLDef.side) > 0) {
+        _3dLCount = Math.floor(_3dLCount / 2); _3dLHalved = true;
+      }
+      if (_3dLCount <= 0) { flashLaunchMsg('No battalions landed (halved to 0)'); return; }
+      const _3dLActiveFeats = (_3dLDs.features || []).filter((fk, fi) => !(_3dLDs.destroyedFeatures || []).includes(fi));
+      state.selectedDropsiteId = _3dLDs.id;
+      state.launching = null;
+      if (_3dLActiveFeats.length === 0) {
+        dispatch({ type: 'launchGroundAsset', gid: L.gid, si: L.si, li: L.li, dsId: _3dLDs.id, count: _3dLCount, locationKey: 'ground' });
+        flashLaunchMsg(`${L.name} → ${_3dLDs.base.name}${_3dLHalved ? ' (halved: enemy present)' : ''}`, true);
+      } else {
+        flashLaunchMsg(`${L.name} → ${_3dLDs.base.name}${_3dLHalved ? ' (halved: enemy present)' : ''} — choose a location`, true);
+        state.pendingGroundLaunch = { gid: L.gid, si: L.si, li: L.li, dsId: _3dLDs.id, count: _3dLCount, assetLabel: L.name, type: L.type };
+        renderAll(true);
+      }
+      return;
+    }
   }
 
   // Detector: use Detector ability when clicking an enemy ship in LoS
@@ -8301,7 +8401,16 @@ function _handle3dClick(e) {
     }
     if (bestDs) {
       const did = bestDs.id;
-      const isActivating = state.dropsiteActivation && state.dropsiteActivation.dsId === did;
+      // DA picking phase: clicking a controlled dropsite activates it (same as 2D handler)
+      const _da3d = state.dropsiteActivation;
+      if (_da3d && !_da3d.dsId && dropsiteController(bestDs) === _da3d.side
+          && !_da3d.done.includes(did) && (!_netSide || _gs() === _da3d.side)) {
+        _da3d.dsId = did;
+        state.selectedDropsiteId = did;
+        state.selectedGroupId = null; state.selectedShipIdx = null;
+        renderAll(true); return;
+      }
+      const isActivating = _da3d && _da3d.dsId === did;
       state.selectedDropsiteId = (state.selectedDropsiteId === did && !isActivating) ? null : did;
       state.selectedGroupId = null;
       state.selectedShipIdx = null;
@@ -8648,7 +8757,7 @@ function init3d() {
     }
     if (state.assetMove) { state.assetMove = null; renderAll(); return; }
     if (state.extracting) { state.extracting = null; flashLaunchMsg('Extract cancelled'); renderAll(); return; }
-    if (state.featureAttack) { state.featureAttack = null; flashLaunchMsg('Targeting cancelled'); renderAll(); return; }
+    if (state.featureAttack) { state.featureAttack = null; flashLaunchMsg('Targeting cancelled'); renderAll(true); return; }
     if (state.aiming || state.vectoredSecondMove) {
       state.aiming = null; state.vectoredSecondMove = null; state.hoverPoint = null; renderAll(); return;
     }
@@ -9432,6 +9541,41 @@ function _sync3dGroundLaunchLines(group) {
   });
 }
 
+// Highlight activatable dropsites during DA picking phase with a solid colored ring.
+function _sync3dDropsiteActivationHighlights(group) {
+  const da = state.dropsiteActivation;
+  if (!da || !state.scenarioData) return;
+  const col = da.side === 'player1' ? 0x4ad6ff : 0xd4a647;
+  const dss = state.scenarioData.dropsites || [];
+  dss.forEach(ds => {
+    const isStation = DROPSITE_BASE[ds.type]?.category === 'station';
+    const wy = isStation ? _3D_LAYER_Y.orbit - (_3D_STATION_Y_DROP || 0) : 0;
+    const wx = ds.x * INCH - 288, wz = ds.y * INCH - 288;
+    const isActivating = da.dsId === ds.id;
+    const isActivatable = !da.dsId && dropsiteController(ds) === da.side && !da.done.includes(ds.id);
+    if (isActivatable) {
+      // Solid colored ring pulsing around the clickable dropsite
+      const ringGeo = new THREE.TorusGeometry(18, 1.2, 3, 32);
+      ringGeo.rotateX(Math.PI / 2);
+      const ringMesh = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85 }));
+      ringMesh.position.set(wx, wy + 1, wz);
+      group.add(ringMesh);
+      // Faint fill disc
+      const fillGeo = new THREE.CircleGeometry(18, 32);
+      fillGeo.rotateX(-Math.PI / 2);
+      fillGeo.translate(wx, wy + 0.5, wz);
+      group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false })));
+    } else if (isActivating) {
+      // Brighter solid ring for the currently-activating dropsite
+      const ringGeo = new THREE.TorusGeometry(20, 1.5, 3, 32);
+      ringGeo.rotateX(Math.PI / 2);
+      const ringMesh = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 1.0 }));
+      ringMesh.position.set(wx, wy + 1, wz);
+      group.add(ringMesh);
+    }
+  });
+}
+
 function sync3d() {
   if (!_3d) return;
   const { dyn } = _3d;
@@ -9460,6 +9604,7 @@ function sync3d() {
   _sync3dShips(dyn);
   _sync3dAssets(dyn);
   _sync3dGroundLaunchLines(dyn);
+  _sync3dDropsiteActivationHighlights(dyn);
   _sync3dOverlays(dyn);
 }
 
@@ -10565,6 +10710,30 @@ function renderAimHint() {
   board.appendChild(el);
 }
 
+function renderFeatureAttackHUD() {
+  const existing = document.getElementById('feature-attack-hud');
+  if (existing) existing.remove();
+  if (!state.featureAttack) return;
+  const fa = state.featureAttack;
+  const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === fa.dsId);
+  const f = ds && FEATURES[ds.features[fa.fi]];
+  if (!ds || !f || !f.weapon) return;
+  const sideKey = fa.side === 'player1' ? 'ucm' : 'shal';
+  const el = document.createElement('div');
+  el.id = 'feature-attack-hud';
+  el.className = 'hud-item';
+  el.style.cssText = 'pointer-events:auto; line-height:1.6;';
+  el.innerHTML = `<b style="color:var(--${sideKey})">${f.name}</b>: ${f.weapon.name}<br>
+    <span style="color:var(--text-mute);font-size:9px;">Click enemy ship · right-click cancels</span><br>
+    <button id="fa-hud-cancel" class="hud-btn" style="margin-top:4px;padding:2px 8px;font-size:9px;">CANCEL</button>`;
+  document.querySelector('.board-hud').appendChild(el);
+  document.getElementById('fa-hud-cancel').addEventListener('click', () => {
+    state.featureAttack = null;
+    flashLaunchMsg('Targeting cancelled');
+    renderAll(true);
+  });
+}
+
 function updateHUD() {
   const hud = document.getElementById('hud-active');
   const turnHud = document.getElementById('hud-turn-info');
@@ -11064,7 +11233,11 @@ document.addEventListener('click', (e) => {
         state.launching.fireships = Math.max(0, (state.launching.fireships||0) + parseInt(delta));
       } else {
         const other = which === 'fighters' ? 'bombers' : 'fighters';
-        const next = Math.max(0, (state.launching[which]||0) + parseInt(delta));
+        const _fbDs = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === state.launching.fromDropsite);
+        const _fbF = _fbDs && state.launching.fromFeature != null && FEATURES[_fbDs.features[state.launching.fromFeature]];
+        const _fbL = _fbF && _fbF.launch && _fbF.launch.find(x => x.type === state.launching.type);
+        const _fbLimit = _fbL ? _fbL.n : Infinity;
+        const next = Math.max(0, Math.min(_fbLimit, (state.launching[which]||0) + parseInt(delta)));
         if (!(next > 0 && (state.launching[other]||0) > 0)) state.launching[which] = next;
       }
     }
@@ -11093,6 +11266,11 @@ document.addEventListener('click', (e) => {
   // Asset Phase: START guided Battalion Combat.
   if (e.target.matches('#asset-start-battalions')) {
     dispatch({ type: 'startBattalionCombat' });
+    renderAll(); return;
+  }
+  // Asset Phase: no contested dropsites — skip battalion combat, go straight to next step.
+  if (e.target.matches('#asset-skip-battalions')) {
+    state.assetPhase = { ...state.assetPhase, resolved: true };
     renderAll(); return;
   }
   // Battalion Combat: initiative player picks a contested dropsite.
@@ -11317,7 +11495,7 @@ function resolveLaunchClick(e) {
       else { const f=L.fighters||0, b=L.bombers||0; count=f>0?f:b; kind=f>0?'fighter':(b>0?'bomber':null); kindLabel=kind==='fighter'?'Fighter':'Bomber'; }
       if (!kind || count <= 0) { flashLaunchMsg('Set Fighters or Bombers first'); return false; }
       flashLaunchMsg(`Dropsite launched ${count} ${kindLabel}${count>1?'s':''}`, true);
-      dispatch({ type: 'launchDropsiteAsset', kind, count, x: pt.x, y: pt.y, fromDropsite: L.fromDropsite });
+      dispatch({ type: 'launchDropsiteAsset', kind, count, x: pt.x, y: pt.y, fromDropsite: L.fromDropsite, fromFeature: L.fromFeature ?? null });
       return true;
     }
     // (Other dropsite launch types could be added here.)

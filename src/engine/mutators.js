@@ -678,8 +678,8 @@ export function rollInitiative(state, rng) {
     player2: sideHasCommsUplink(state, 'player2') ? 1 : 0,
   };
   const ap = {
-    player1: 1 + aLvl.player1 + comms.player1,
-    player2: 1 + aLvl.player2 + comms.player2,
+    player1: 1 + effectiveAdmiral.player1 + cmdBonus.player1 + comms.player1,
+    player2: 1 + effectiveAdmiral.player2 + cmdBonus.player2 + comms.player2,
   };
   // Pass Tokens: a side 2+ Groups fewer than the leader gets 1, +1 per further fewer.
   const groupCount = (side) => fleetForSide(state, side).filter(def => {
@@ -2531,7 +2531,7 @@ function advanceRoundInternal(state, rng) {
     g.moveTrail = [];
   });
   state.selectedShipIdx = null;
-  ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => { ds.firedFeatures = []; });
+  ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => { ds.firedFeatures = []; ds.launchedFeatures = []; });
   if (scoreLog.length) state._lastScoreLog = scoreLog;
   rollInitiative(state, rng);
   return state;
@@ -2635,6 +2635,19 @@ export function applyOrder(state, rng, gid, order) {
     const idx = pick(leadIdx) ? leadIdx : grp.ships.findIndex((s, i) => pick(i));
     if (idx >= 0) state.selectedShipIdx = idx;
   }
+  return state;
+}
+
+export function applyShipOrderMutator(state, gid, si, order) {
+  const grp = state.groups[gid];
+  if (!grp) return state;
+  const ship = grp.ships[si];
+  if (!ship) return state;
+  const def = getDef(state, gid);
+  ship.order = order;
+  logEvent(state, `${def.name} #${si + 1} → ${ORDERS[order].label}`);
+  // Auto-select the ship so its move cone shows immediately.
+  if (ORDERS[order] && ORDERS[order].moveMax > 0) state.selectedShipIdx = si;
   return state;
 }
 
@@ -3450,11 +3463,15 @@ function applyDaEnd(state) {
 }
 
 function applyLaunchDropsiteAsset(state, intent) {
-  const { kind, count, x, y, fromDropsite } = intent;
+  const { kind, count, x, y, fromDropsite, fromFeature } = intent;
   state.launchedAssets = state.launchedAssets || [];
   state._assetId = (state._assetId || 0) + 1;
   const side = (state.dropsiteActivation && state.dropsiteActivation.side) || 'player1';
   state.launchedAssets.push({ id: 'a' + state._assetId, kind, count, side, x, y, moved: false, fromDropsite });
+  if (fromFeature != null) {
+    const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === fromDropsite);
+    if (ds) { ds.launchedFeatures = ds.launchedFeatures || []; if (!ds.launchedFeatures.includes(fromFeature)) ds.launchedFeatures.push(fromFeature); }
+  }
   logEvent(state, `Dropsite launched ${count} ${kind}${count > 1 ? 's' : ''}`);
   state.launching = null;
   return state;
@@ -3511,7 +3528,8 @@ export function apply(state, intent, rng) {
     case 'useDetector':       return useDetector(state, rng, intent.gid, intent.si, intent.wi, intent.targetGid, intent.targetSi);
     case 'pass':         return passActivation(state);
     case 'endRound':     return beginEndRound(state);
-    case 'applyOrder':   return applyOrder(state, rng, intent.gid, intent.order);
+    case 'applyOrder':      return applyOrder(state, rng, intent.gid, intent.order);
+    case 'applyShipOrder':  return applyShipOrderMutator(state, intent.gid, intent.si, intent.order);
     case 'moveShip':     return commitMove(state, rng, intent.gid, intent.si, intent.x, intent.y, intent.layerToggle);
     case 'aimShip':      return aimShip(state, intent.x, intent.y);
     case 'vectoredMove': return commitVectoredSecondMove(state, intent.x, intent.y);
@@ -3554,7 +3572,6 @@ export function apply(state, intent, rng) {
       return state;
     }
     case 'holdPosition':
-    case 'applyShipOrder':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
@@ -3602,6 +3619,29 @@ export function apply(state, intent, rng) {
       state.assetPhase.assetType = null; state.assetActiveSide = null;
       advanceAssetStage(state, null);
       return state;
+    case 'assetStageDone': {
+      const { type: asdType, side: asdSide } = intent;
+      if (!state.assetPhase || state.assetPhase.step !== 'assets') return state;
+      if (state.assetActiveSide !== asdSide || state.assetPhase.assetType !== asdType) return state;
+      (state.launchedAssets || []).forEach(a => {
+        if (a.side === asdSide && kindsForAssetType(asdType).includes(a.kind)) a.moved = true;
+      });
+      state.assetMove = null;
+      const asdRes = advanceAssetStage(state, { type: asdType, side: asdSide });
+      state.assetPhase._pendingBomberResolve = asdRes.resolveAttacksFor
+        ? { side: asdRes.resolveAttacksFor, type: asdRes.resolveType || asdType } : null;
+      return state;
+    }
+    case 'assetPhaseDone': {
+      const { side: apdSide } = intent;
+      if (!state.assetPhase || state.assetPhase.step !== 'assets') return state;
+      if (state.assetActiveSide) return state; // still stages remaining
+      if (state.assetPhase._pendingBomberResolve) return state; // attacks unresolved
+      state.assetPhase.doneSides = state.assetPhase.doneSides || [];
+      if (!state.assetPhase.doneSides.includes(apdSide)) state.assetPhase.doneSides.push(apdSide);
+      if (state.assetPhase.doneSides.length >= 2) return advanceRound(state, rng);
+      return state;
+    }
     case 'assetT2T': {
       const at2t = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
       if (at2t) { at2t.moved = false; at2t.t2t = true; at2t._t2tRange = 6; }
@@ -3685,7 +3725,6 @@ export function apply(state, intent, rng) {
       return state;
     }
     case 'holdPosition':
-    case 'applyShipOrder':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':

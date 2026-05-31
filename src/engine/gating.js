@@ -13,7 +13,7 @@
 
 import { ORDERS, INCH } from './constants.js';
 import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, sideNeedsDeployPhase, transportValue } from './mutators.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, sideNeedsDeployPhase, transportValue, shipInNetwork } from './mutators.js';
 
 const INTENT_TYPES = ['pass', 'endRound', 'commitScenario'];
 
@@ -448,8 +448,19 @@ export function isLegal(state, intent, side) {
       return true;
     }
 
+    case 'applyShipOrder': {
+      if (state.phase !== 'play') return false;
+      const asGrp = state.groups[intent.gid];
+      if (!asGrp || asGrp.activated) return false;
+      const asDef = getDef(state, intent.gid);
+      if (!asDef || asDef.side !== side) return false;
+      if (!asDef.openNetwork) return false;
+      const asShip = asGrp.ships[intent.si];
+      if (!shipInNetwork(state, asDef, asShip)) return false;
+      if (!ORDERS[intent.order]) return false;
+      return true;
+    }
     case 'holdPosition':
-    case 'applyShipOrder':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
@@ -467,6 +478,21 @@ export function isLegal(state, intent, side) {
       const exDs = state.scenarioData?.dropsites?.find(d => d.id === exDsId);
       if (!exDs || !(exDs.reconOps > 0)) return false;
       if (Math.hypot(exShip.x - exDs.x * INCH, exShip.y - exDs.y * INCH) > 6 * INCH) return false;
+      return true;
+    }
+    case 'assetStageDone': {
+      if (!state.assetPhase || state.assetPhase.step !== 'assets') return false;
+      if (state.assetActiveSide !== intent.side || state.assetPhase.assetType !== intent.type) return false;
+      if (side && intent.side !== side) return false;
+      return true;
+    }
+    case 'assetPhaseDone': {
+      if (!state.assetPhase || state.assetPhase.step !== 'assets') return false;
+      if (state.assetActiveSide) return false;
+      if (state.assetPhase._pendingBomberResolve) return false;
+      if (side && intent.side !== side) return false;
+      const doneSides = state.assetPhase.doneSides || [];
+      if (doneSides.includes(intent.side)) return false; // already confirmed
       return true;
     }
     case 'startAssetMove':

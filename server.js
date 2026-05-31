@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { router as apiRouter, handleConnection } from './src/api.js';
+import { ensureSavesDir } from './src/saves.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,8 @@ wss.on('connection', handleConnection);
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
+
+await ensureSavesDir();
 
 server.listen(PORT, () => {
   console.log(`DFC Fleet Ops server listening on http://localhost:${PORT}`);

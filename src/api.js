@@ -1,9 +1,10 @@
 // REST routes and WebSocket connection handler.
 
 import { Router } from 'express';
-import { createRoom, getRoom, joinRoom, leaveRoom, broadcast, send, sideOf } from './rooms.js';
+import { createRoom, getRoom, joinRoom, leaveRoom, broadcast, send, sideOf, recordIntent } from './rooms.js';
 import { isLegal } from './engine/gating.js';
 import { apply } from './engine/mutators.js';
+import { saveRoom, loadSave, loadAllSaves } from './saves.js';
 
 export const router = Router();
 
@@ -23,6 +24,63 @@ router.get('/rooms/:id', (req, res) => {
     sides: { player1: !!room.sockets.player1, player2: !!room.sockets.player2 },
     phase: room.state.phase,
   });
+});
+
+// GET /api/saves — list all saved games (summary only).
+router.get('/saves', async (_req, res) => {
+  const saves = await loadAllSaves();
+  res.json(saves.map(s => ({
+    roomId:      s.roomId,
+    phase:       s.phase,
+    round:       s.round,
+    savedAt:     s.savedAt,
+    playerNames: s.playerNames,
+    factions:    s.factions,
+  })));
+});
+
+// GET /api/rooms/:id/replay — full replay data for a room (from its save file).
+router.get('/rooms/:id/replay', async (req, res) => {
+  try {
+    const save = await loadSave(req.params.id);
+    if (!save.playStartState) {
+      return res.status(404).json({ error: 'No replay data — game has not started yet.' });
+    }
+    res.json({
+      roomId:            save.roomId,
+      seed:              save.seed,
+      playerNames:       save.playerNames,
+      factions:          save.factions,
+      playStartState:    save.playStartState,
+      playStartRngState: save.playStartRngState,
+      intentLog:         save.intentLog,
+    });
+  } catch {
+    res.status(404).json({ error: 'Save not found.' });
+  }
+});
+
+// POST /api/rooms/resume — recreate a live room from a saved game.
+router.post('/rooms/resume', async (req, res) => {
+  const { saveId } = req.body || {};
+  if (!saveId) return res.status(400).json({ error: 'saveId required.' });
+  let save;
+  try {
+    save = await loadSave(saveId);
+  } catch {
+    return res.status(404).json({ error: 'Save not found.' });
+  }
+  const room = createRoom();
+  // Overwrite the blank room with saved state
+  room.state             = save.currentState;
+  room.seed              = save.seed;
+  room.rng.setState(save.currentRngState);
+  room.intentLog         = save.intentLog        || [];
+  room.playStartState    = save.playStartState    || null;
+  room.playStartRngState = save.playStartRngState ?? null;
+  room.createdAt         = save.createdAt         || room.createdAt;
+  console.log(`Room ${room.id} resumed from save ${save.roomId} (round ${save.round})`);
+  res.json({ roomId: room.id, seed: room.seed });
 });
 
 // Called by server.js when the WebSocket server emits 'connection'.
@@ -92,6 +150,7 @@ function onMessage(room, ws, side, msg) {
       // Relay-mode trust: in Phase 2 any connected player may push state.
       // Turn enforcement (activeSide check) is added when gating.js is ready.
       room.state = msg.state;
+      saveRoom(room).catch(err => console.error(`[${room.id}] save error:`, err.message));
       broadcast(room, { type: 'full', state: room.state }, ws);
       break;
     }
@@ -132,6 +191,14 @@ function onMessage(room, ws, side, msg) {
         room.endRoundVotes.clear();
       }
       apply(room.state, intent, room.rng);
+      // Checkpoint play start on first beginPlay
+      if (intent.type === 'beginPlay' && !room.playStartState) {
+        room.playStartState    = structuredClone(room.state);
+        room.playStartRngState = room.rng.getState();
+      }
+      // Log every play-phase intent
+      if (room.playStartState) recordIntent(room, side, intent);
+      saveRoom(room).catch(err => console.error(`[${room.id}] save error:`, err.message));
       broadcast(room, { type: 'full', state: room.state }); // to all, incl. sender
       break;
     }
