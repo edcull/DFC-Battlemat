@@ -13929,6 +13929,10 @@ async function showModeSelector() {
   function wire(view) {
     if (view === 'main') {
       overlay.querySelector('#ms-hotseat').onclick = () => {
+        if (_netSide || _netParams.get('room') || _netParams.get('replay')) {
+          location.href = location.pathname;
+          return;
+        }
         dismiss();
         Object.assign(state, createState());
         rebuildFleets();
