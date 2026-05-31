@@ -543,12 +543,12 @@ export const LAYOUTS = {
     scenery:{ micrometeor:'2-5', dense:'4-6', rings:0, largeObjects:0 },
     dropsites:[
       ds('ds1','medium_station', 24, 24),
-      ds('ds2','large_station',  40, 18),
-      ds('ds3','large_station',   8, 30),
-      ds('ds4','medium_city',    32, 30),
-      ds('ds5','medium_city',    16, 18),
-      ds('ds6','small_city',     16, 14),
-      ds('ds7','small_city',     32, 34)
+      ds('ds2','large_station',  40,  6),
+      ds('ds3','large_station',   8, 42),
+      ds('ds4','medium_city',    42, 18),
+      ds('ds5','medium_city',     6, 30),
+      ds('ds6','small_city',     16, 16),
+      ds('ds7','small_city',     32, 32)
     ],
     rings:[], largeObjects:[]
   }
