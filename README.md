@@ -22,6 +22,21 @@ Designed for **two players at the same screen** (hotseat), with full online two-
 
 ---
 
+## Save, resume, and replay
+
+Online games (Node server) are **auto-saved** to `saves/<ROOM_ID>.json` after every action. The mode selector (shown on first load) provides:
+
+- **↩ SAVED GAMES** — opens a list of all saves. Each entry shows the round and save time with two actions:
+  - **▶ RESUME** — creates a live room from the save (preserving the original room code), shows a side picker with coloured player buttons and an opponent share link, then connects you as the chosen player.
+  - **↺ REPLAY** — loads the full intent history and replays it step-by-step. Greyed out if the save pre-dates intent logging. While replaying, the URL updates to `?replay=<ROOM_ID>` and a control bar (◀ PREV / ▶ NEXT / RND ⟩⟩ / ▶ PLAY) appears at the top. **✕ EXIT REPLAY** returns to the mode selector.
+
+Save files contain:
+- `currentState` / `currentRngState` — full game snapshot used for resume
+- `playStartState` / `playStartRngState` — snapshot at the moment play began, used as the replay starting point
+- `intentLog` — ordered list of every server-authoritative action taken during play
+
+---
+
 ## Factions
 
 Six factions are fully modelled with correct stats, weapons, specials, and launch profiles. A full ship and weapon database (`src/fleet/db.js`) covers all published ships from all factions for the New Recruit import format.

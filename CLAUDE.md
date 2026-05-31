@@ -34,19 +34,31 @@ All engine functions take `state` (and `rng` where randomness is needed) as expl
 
 **Intent layer:** an "intent" is a small serialisable action `{ type, ...payload }`. `gating.js#isLegal` is the single legality gate (run by the server before applying, and by the client before mutating in hotseat); `mutators.js#apply` dispatches an intent to its mutator. Every intent type `apply()` handles must have a matching `isLegal` case.
 
-### Server (`server.js`, `src/api.js`, `src/rooms.js`)
+### Server (`server.js`, `src/api.js`, `src/rooms.js`, `src/saves.js`)
 
 The Node.js server hosts online two-player rooms. It is **optional**: the browser client works without it for hotseat play.
 
 | File | Contents |
 |---|---|
 | `server.js` | Express + WebSocket entry point. Serves the repo root as static files, mounts the `/api` router, and upgrades `/ws` requests to WebSocket. Listens on `PORT` (default 3000). |
-| `src/api.js` | REST routes (`POST /api/rooms`, `GET /api/rooms/:id`) and the WebSocket connection/message handler. |
-| `src/rooms.js` | In-memory room lifecycle: create/join/leave, side slots + spectators, broadcast/send helpers, and a 4-hour inactivity TTL. No persistence. |
+| `src/api.js` | REST routes (`POST /api/rooms`, `GET /api/rooms/:id`, `GET /api/saves`, `GET /api/saves/:id`, `POST /api/rooms/resume`, `GET /api/rooms/:id/replay`) and the WebSocket connection/message handler. |
+| `src/rooms.js` | In-memory room lifecycle: create/join/leave, side slots + spectators, broadcast/send helpers, and a 4-hour inactivity TTL. `createRoom(forceId?)` accepts an optional ID so resumed games keep their original room code. |
+| `src/saves.js` | File-based persistence to `saves/<ROOM_ID>.json`. `saveRoom` is called after every authoritative action (both intent and relay paths). |
 
 Each room holds the authoritative `state` and a seeded `rng`. The server runs two paths:
 - **Intent path (authoritative):** `{type:'intent', intent}` → `isLegal` → `apply` → broadcast `{type:'full'}`. The client does **not** mutate locally for these.
 - **Relay path (legacy):** `{type:'state'}` → store as authoritative → rebroadcast. Used by the few remaining un-migrated action families.
+
+### Save / Resume / Replay
+
+Games are auto-saved to `saves/<ROOM_ID>.json` after every server-side action. Each save contains:
+- `currentState` / `currentRngState` — full game snapshot for resume
+- `playStartState` / `playStartRngState` — snapshot captured the first time `room.state.phase` transitions to `'play'` (via `deployDone` when both sides finish, or directly via `beginPlay`)
+- `intentLog` — ordered list `[{ts, side, intent}]` of every server-authoritative play-phase action
+
+**Resume** (`POST /api/rooms/resume`) recreates a live room using `createRoom(save.roomId)` so the room code is preserved and subsequent saves overwrite the same file. The mode-selector shows a coloured side picker (player name + faction from `sideColors`) and an opponent share link.
+
+**Replay** (`GET /api/rooms/:id/replay`) returns `{seed, playStartState, playStartRngState, intentLog}`. `loadReplay(data)` in the client seeds a fresh RNG, sets state to `playStartState`, and replays intents via `replayGoTo(step)`. The URL becomes `?replay=<ROOM_ID>` via `history.pushState`. Saves without `playStartState` (pre-intent or relay-only games) show ↺ REPLAY disabled in the UI. Exiting replay navigates to `location.pathname` (full reload → mode selector).
 
 ### Fleet database (`src/fleet/`)
 
