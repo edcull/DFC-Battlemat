@@ -1123,6 +1123,7 @@ import {
   resolveBattalionCombat as _resolveBattalionCombat,
   aegisValueForGroup as _aegisValueForGroup,
   surveyableDropsite as _surveyableDropsite, extractableDropsite as _extractableDropsite,
+  objectiveForSide as _objectiveForSide, objAny as _objAny,
   eligibleEscort as _eligibleEscort, commandShipBonus as _commandShipBonus,
   sideHasCommsUplink as _sideHasCommsUplink, destroyFeature as _destroyFeature,
   contestedDropsites as _contestedDropsites,
@@ -1325,6 +1326,8 @@ function resolveBattalionCombat()                          { _resolveBattalionCo
 function aegisValueForGroup(targetGid)                     { return _aegisValueForGroup(state, targetGid); }
 function surveyableDropsite(ship, side)                    { return _surveyableDropsite(state, ship, side); }
 function extractableDropsite(ship, side)                   { return _extractableDropsite(state, ship, side); }
+function objectiveForSide(side)                            { return _objectiveForSide(state, side); }
+function objAny(key)                                       { return _objAny(state, key); }
 function eligibleEscort(tGid, tSi)                         { return _eligibleEscort(state, tGid, tSi); }
 function commandShipBonus(side)                            { return _commandShipBonus(state, side); }
 function sideHasCommsUplink(side)                          { return _sideHasCommsUplink(state, side); }
@@ -2980,8 +2983,7 @@ function renderDetail() {
   // forgo attacking/launching to Survey it (once per Dropsite per side per game).
   let surveyHTML = '';
   {
-    const objKey = state.scenario && state.scenario.objective;
-    const surveyActive = objKey === 'survey' || (state.secondaries && state.secondaries[def.side] && state.secondaries[def.side].includes('gather_intel'));
+    const surveyActive = objectiveForSide(def.side) === 'survey' || (state.secondaries && state.secondaries[def.side] && state.secondaries[def.side].includes('gather_intel'));
     const selShip = state.selectedShipIdx !== null ? grp.ships[state.selectedShipIdx] : null;
     if (surveyActive && selShip && !selShip.destroyed && !selShip.offTable && isCapital(def) && state.phase === 'play') {
       const near = surveyableDropsite(selShip, def.side);
@@ -3003,7 +3005,7 @@ function renderDetail() {
   let extractHTML = '';
   {
     const selShip = state.selectedShipIdx !== null ? grp.ships[state.selectedShipIdx] : null;
-    const canExtractObj = state.scenario && state.scenario.objective === 'extract';
+    const canExtractObj = objectiveForSide(def.side) === 'extract';
     const tv = transportValue(def);
     if (canExtractObj && tv > 0 && selShip && !selShip.destroyed && !selShip.offTable && state.phase === 'play' && !isOpponent && activeGroupIdForSide(def.side) === def.id) {
       const k = targetKey(state.selectedGroupId, state.selectedShipIdx);
@@ -6776,15 +6778,22 @@ function renderVPBreakdown() {
       ${lines}
     </div>`;
   };
+  const _scAsym = !!(state.scenario && state.scenario.objectives);
   const obj = state.scenario && state.scenario.objective ? OBJECTIVES[state.scenario.objective] : null;
   const objExpanded = !!state.vpObjOpen;
-  const objBlock = obj ? `<button id="vp-obj-toggle" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:${ucmRgba(0.06)};border:1px solid var(--ucm);border-radius:5px;padding:7px 11px;cursor:pointer;margin-bottom:12px;">
-      <span style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);">OBJECTIVE</span>
-      <b style="color:var(--ucm);flex:1;">${obj.name}</b>
+  const objTitle = _scAsym
+    ? `${OBJECTIVES[state.scenario.objectives.player1]?.name || '—'} / ${OBJECTIVES[state.scenario.objectives.player2]?.name || '—'}`
+    : (obj ? obj.name : '');
+  const objDetail = _scAsym
+    ? ['player1','player2'].map(s => { const o = OBJECTIVES[state.scenario.objectives[s]]; const col = s==='player1'?'var(--ucm)':'var(--shal)'; return o ? `<div style="margin-bottom:6px;"><b style="color:${col};">${factionName(s)} — ${o.name}:</b> ${o.desc}${o.bonus ? `<div style="margin-top:3px;color:var(--hull-good,#6ec97a);">▸ ${o.bonus}</div>` : ''}</div>` : ''; }).join('')
+    : (obj ? `${obj.desc}${obj.bonus ? `<div style="margin-top:6px;color:var(--hull-good,#6ec97a);">▸ ${obj.bonus}</div>` : ''}` : '');
+  const objBlock = (obj || _scAsym) ? `<button id="vp-obj-toggle" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:${ucmRgba(0.06)};border:1px solid var(--ucm);border-radius:5px;padding:7px 11px;cursor:pointer;margin-bottom:12px;">
+      <span style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);">OBJECTIVE${_scAsym?' (PER SIDE)':''}</span>
+      <b style="color:var(--ucm);flex:1;">${objTitle}</b>
       <span style="color:var(--text-mute);font-size:11px;">${objExpanded ? '▾' : '▸'}</span>
     </button>
     ${objExpanded ? `<div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin:-6px 0 12px;padding:0 4px;">
-      ${obj.desc}${obj.bonus ? `<div style="margin-top:6px;color:var(--hull-good,#6ec97a);">▸ ${obj.bonus}</div>` : ''}
+      ${objDetail}
     </div>` : ''}` : '';
 
   // Secondary objectives block
@@ -7140,6 +7149,8 @@ function renderProtectNomModal() {
   if (panel) panel.remove();
   if (state.phase !== 'protect') return;
   const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
+  // Only sides whose Objective is Protect nominate (asymmetric scenarios may have just one).
+  const protectSides = ['player1','player2'].filter(s => objectiveForSide(s) === 'protect');
   const renderRow = (side) => {
     if (_netSide && side !== _netSide) {
       const cur = state.protectNom && state.protectNom[side];
@@ -7161,22 +7172,19 @@ function renderProtectNomModal() {
       <div class="nom-hint">${isActive ? '← Click a dropsite on the map' : 'Click to activate'}</div>
     </button>`;
   };
-  // Default active pick to own side
-  if (!_nomPicking) _nomPicking = { side: _netSide || 'player1', key: '__protect__' };
+  // Default active pick to own side (or the first Protect side in hotseat).
+  if (!_nomPicking) _nomPicking = { side: _netSide || protectSides[0] || 'player1', key: '__protect__' };
 
-  // Build confirm button — waiting state per side.
+  // Build confirm button — waiting state per side (only Protect sides need to confirm).
   const protReady = state.protectNomReady || {};
   let protConfirmHtml;
   if (!_netSide) {
-    const p1Done = protReady.player1;
-    const p2Done = protReady.player2;
-    protConfirmHtml = `
-      ${p1Done
-        ? `<span class="btn" style="width:100%;margin-top:4px;padding:5px;font-size:10px;opacity:0.5;cursor:default;display:block;">✓ ${playerNameForSide('player1')}</span>`
-        : `<button class="btn-primary" data-protect-confirm="player1" style="width:100%;margin-top:4px;padding:5px;font-size:10px;">✓ ${playerNameForSide('player1')} CONFIRM</button>`}
-      ${p2Done
-        ? `<span class="btn" style="width:100%;margin-top:4px;padding:5px;font-size:10px;opacity:0.5;cursor:default;display:block;">✓ ${playerNameForSide('player2')}</span>`
-        : `<button class="btn-primary" data-protect-confirm="player2" style="width:100%;margin-top:4px;padding:5px;font-size:10px;">✓ ${playerNameForSide('player2')} CONFIRM</button>`}`;
+    protConfirmHtml = protectSides.map(side => protReady[side]
+      ? `<span class="btn" style="width:100%;margin-top:4px;padding:5px;font-size:10px;opacity:0.5;cursor:default;display:block;">✓ ${playerNameForSide(side)}</span>`
+      : `<button class="btn-primary" data-protect-confirm="${side}" style="width:100%;margin-top:4px;padding:5px;font-size:10px;">✓ ${playerNameForSide(side)} CONFIRM</button>`).join('');
+  } else if (!protectSides.includes(_netSide)) {
+    // Online: this player has no Protect objective — nothing to nominate.
+    protConfirmHtml = `<button class="btn-primary" style="width:100%;margin-top:8px;padding:5px;font-size:10px;opacity:0.5;cursor:not-allowed;" disabled>⏳ Waiting for opponent…</button>`;
   } else {
     const myConfirmed = protReady[_netSide];
     protConfirmHtml = myConfirmed
@@ -7189,8 +7197,8 @@ function renderProtectNomModal() {
   panel.className = 'nom-panel';
   panel.innerHTML = `
     <h3>PROTECT NOMINATION</h3>
-    <div style="font-size:8px;color:var(--text-mute);margin-bottom:6px;">Each player nominates a Dropsite to protect. Click a site on the map.</div>
-    ${renderRow('player1')}${renderRow('player2')}
+    <div style="font-size:8px;color:var(--text-mute);margin-bottom:6px;">Each Protecting player nominates a Dropsite to protect. Click a site on the map.</div>
+    ${protectSides.map(renderRow).join('')}
     ${protConfirmHtml}
   `;
   board.appendChild(panel);
@@ -7234,8 +7242,9 @@ function renderSetupOverlay() {
   const p1Ready = !!_sr.player1, p2Ready = !!_sr.player2;
   const anyReady = p1Ready || p2Ready;
   const readyCount = (p1Ready ? 1 : 0) + (p2Ready ? 1 : 0);
+  const objectiveSet = scen.objectives ? !!(scen.objectives.player1 && scen.objectives.player2) : !!scen.objective;
   const scenarioComplete = bothFleetsSelected && !payloadsLocked && state.scenario &&
-    ['deployment','approach','layout','variant','objective'].every(k => state.scenario[k]);
+    ['deployment','approach','layout','variant'].every(k => state.scenario[k]) && objectiveSet;
   // Fleet inputs: locked for opponent (online) OR if that player has already readied.
   const f1Lock = (_netSide && _netSide !== 'player1') || p1Ready;
   const f2Lock = (_netSide && _netSide !== 'player2') || p2Ready;
@@ -7291,6 +7300,34 @@ function renderSetupOverlay() {
     return html;
   };
 
+  // Scoring Objective section — supports asymmetric (per-side) scoring. When
+  // scen.objectives is set, each side picks its own objective (e.g. attacker
+  // Raze / defender Protect); otherwise a single shared objective applies.
+  const asym = !!scen.objectives;
+  const objOptionList = (selKey) => `<option value="" ${!selKey?'selected':''}>— select —</option>` +
+    Object.keys(OBJECTIVES).map(k => { const o = OBJECTIVES[k]; const d6 = o.d6 === 0 ? '—' : o.d6; return `<option value="${k}" ${k===selKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${o.name}</option>`; }).join('');
+  const asymToggleRow = `<div class="scen-row full-width" style="grid-template-rows:auto;padding:6px 14px;">
+      <label style="grid-column:1/-1;display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-dim);">
+        <input type="checkbox" data-asym-toggle ${asym?'checked':''}> ⇄ Asymmetric scoring — each side has its own Objective
+      </label>
+    </div>`;
+  const asymPickerRow = `<div class="scen-row full-width">
+      <div class="scen-roll none">⇄</div>
+      <div class="scen-label">Scoring Objective</div>
+      <div class="scen-helper">Per-side (asymmetric) scoring.</div>
+      <div class="scen-name" style="display:flex;gap:12px;width:100%;align-items:flex-end;">
+        <div style="flex:1;min-width:0;"><div style="color:var(--ucm);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player1')}</div><select class="scen-dropdown" data-asym-obj="player1">${objOptionList(scen.objectives.player1)}</select></div>
+        <div style="flex:1;min-width:0;"><div style="color:var(--shal);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player2')}</div><select class="scen-dropdown" data-asym-obj="player2">${objOptionList(scen.objectives.player2)}</select></div>
+      </div>
+    </div>`;
+  const objectiveSection = (asym ? asymPickerRow : makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)) + asymToggleRow;
+  // Extra-note descriptions for the chosen objective(s).
+  const noteFor = (o, label) => (o && o.d6 > 0) ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)"><b>${label?label+' — ':''}${o.name}:</b> ${o.desc}</div>` : '';
+  const objExtraNote = asym
+    ? noteFor(scen.objectives.player1 ? OBJECTIVES[scen.objectives.player1] : null, playerNameForSide('player1')) +
+      noteFor(scen.objectives.player2 ? OBJECTIVES[scen.objectives.player2] : null, playerNameForSide('player2'))
+    : noteFor(obj, '');
+
   overlay = document.createElement('div');
   overlay.id = 'setup-overlay';
   overlay.className = 'setup-overlay';
@@ -7344,14 +7381,12 @@ function renderSetupOverlay() {
           ${makeCard('approach',  'Approach',        APPROACHES,  scen.approach)}
           ${makeCard('layout',    'Layout',          LAYOUTS,     scen.layout)}
           ${makeCard('variant',   'Variant',         VARIANTS,    scen.variant)}
-          ${makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)}
+          ${objectiveSection}
         </div>
         ${vrn && vrn.d6 > 0 ? `<div class="scen-extra-note">
           <b>${vrn.name}:</b> ${vrn.desc}
         </div>` : ''}
-        ${obj && obj.d6 > 0 ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)">
-          <b>${obj.name}:</b> ${obj.desc}
-        </div>` : ''}
+        ${objExtraNote}
       </div>
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
@@ -7363,6 +7398,7 @@ function renderSetupOverlay() {
           <option value="power_grab">Power Grab</option>
           <option value="shock_and_yaw">Shock and Yaw</option>
           <option value="orbital_support">Orbital Support</option>
+          <option value="entrapmoont">Entrapmoont</option>
         </select>
         <button class="btn" data-preset="random" ${payloadsLocked || anyReady ? 'disabled' : ''} title="Apply a random standard scenario">⚄ RANDOM SCENARIO</button>
         ${(() => {
@@ -7396,10 +7432,12 @@ function renderSetupOverlay() {
       e.stopPropagation();
       const key = btn.dataset.reroll;
       if (key === 'all') {
-        state.scenario = generateScenario();
+        state.scenario = generateScenario(); // fresh object — clears any asymmetric objectives
       } else {
         const keys = Object.keys(SCEN_TABLES[key]);
-        state.scenario = { ...state.scenario, [key]: keys[Math.floor(Math.random() * keys.length)] };
+        const next = { ...state.scenario, [key]: keys[Math.floor(Math.random() * keys.length)] };
+        if (key === 'objective') delete next.objectives; // rerolling the shared objective drops asymmetric mode
+        state.scenario = next;
       }
       renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
     });
@@ -7410,12 +7448,16 @@ function renderSetupOverlay() {
     erupting_battlefront: { deployment:'line',         approach:'column', layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'      },
     power_grab:           { deployment:'from_corners', approach:'column', layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' },
     shock_and_yaw:        { deployment:'from_corners', approach:'column', layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   },
-    orbital_support:      { deployment:'line',         approach:'column', layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      }
+    orbital_support:      { deployment:'line',         approach:'column', layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      },
+    // Entrapmoont: asymmetric — attacker (player2/Red) Razes, defender (player1/Blue) Protects.
+    entrapmoont:          { deployment:'encirclement', approach:'home_fleet_disadvantage', layout:'entrapmoont', variant:'entrapmoont', objective:'raze', objectives:{ player1:'protect', player2:'raze' } }
   };
   const applyPreset = (key) => {
     const preset = SCEN_PRESETS[key];
     if (!preset) return;
-    state.scenario = { ...state.scenario, ...preset };
+    const next = { ...state.scenario, ...preset };
+    if (!preset.objectives) delete next.objectives; // presets without asymmetric scoring clear it
+    state.scenario = next;
     renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
   };
   // Dropdown: pick a named standard scenario.
@@ -7435,6 +7477,34 @@ function renderSetupOverlay() {
     sel.addEventListener('change', (e) => {
       const key = sel.dataset.scenSelect;
       state.scenario = { ...state.scenario, [key]: sel.value || null };
+      renderAll();
+    });
+  });
+  // Asymmetric-scoring toggle: switch between a single shared objective and per-side ones.
+  overlay.querySelectorAll('[data-asym-toggle]').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      if (cb.checked) {
+        // Seed both sides from the current shared objective.
+        const seed = state.scenario.objective || null;
+        state.scenario = { ...state.scenario, objectives: { player1: seed, player2: seed } };
+      } else {
+        const next = { ...state.scenario };
+        // Collapse back to a single shared objective (keep player1's pick).
+        next.objective = (next.objectives && (next.objectives.player1 || next.objectives.player2)) || next.objective || null;
+        delete next.objectives;
+        state.scenario = next;
+      }
+      renderAll();
+    });
+  });
+  // Per-side objective pickers (asymmetric mode).
+  overlay.querySelectorAll('[data-asym-obj]').forEach(sel => {
+    sel.addEventListener('change', (e) => {
+      const side = sel.dataset.asymObj; // 'player1' | 'player2'
+      const objectives = { ...(state.scenario.objectives || {}), [side]: sel.value || null };
+      // Keep the shared `objective` as a representative fallback for legacy reads.
+      state.scenario = { ...state.scenario, objectives, objective: objectives.player1 || objectives.player2 || state.scenario.objective || null };
       renderAll();
     });
   });
@@ -7777,23 +7847,25 @@ function renderScenBanner() {
   let bn = document.getElementById('scen-banner');
   if (bn) bn.remove();
   if (state.phase !== 'play' || !state.scenario) return;
+  const _bnAsym = !!state.scenario.objectives;
   const obj = OBJECTIVES[state.scenario.objective];
   // In online mode show only this player's info; in hotseat show both sides.
   const sides = _netSide ? [_netSide] : ['player1', 'player2'];
   const lines = sides.map(side => {
     const fName = FACTIONS[state.factions?.[side]]?.name || playerNameForSide(side);
     const col   = side === 'player1' ? 'var(--ucm)' : 'var(--shal)';
+    const sideObj = _bnAsym ? OBJECTIVES[objectiveForSide(side)] : null;
     const secKeys = (state.secondaries && state.secondaries[side]) || [];
     const secText = secKeys.map(k => SECONDARY_OBJECTIVES[k]?.name).filter(Boolean).join(', ');
     return `<div style="margin-bottom:1px;">
-      <span style="font-size:9px;font-weight:700;color:${col};">${fName}</span>
+      <span style="font-size:9px;font-weight:700;color:${col};">${fName}${sideObj ? ` · ${sideObj.name}` : ''}</span>
       ${secText ? `<div style="font-size:8px;color:${col};opacity:0.8;">${secText}</div>` : ''}
     </div>`;
   }).join('');
   bn = document.createElement('div');
   bn.id = 'scen-banner';
   bn.className = 'scen-banner';
-  bn.innerHTML = `<b>${obj.name}</b>${lines}`;
+  bn.innerHTML = `<b>${_bnAsym ? 'Asymmetric' : (obj ? obj.name : '')}</b>${lines}`;
   board.appendChild(bn);
 }
 

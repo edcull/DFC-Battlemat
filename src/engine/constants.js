@@ -565,6 +565,20 @@ export const LAYOUTS = {
       ds('ds7','small_city',  24, 36)
     ],
     rings:[], largeObjects:[]
+  },
+  entrapmoont: {
+    d6:0, name:'Entrapmoont',
+    scenery:{ micrometeor:6, dense:0, rings:0, largeObjects:1 },
+    dropsites:[
+      ds('ds1','large_station', 24, 12),
+      ds('ds2','large_station', 24, 36),
+      ds('ds3','small_city',    12, 18),
+      ds('ds4','small_city',    42, 18),
+      ds('ds5','small_city',     6, 30),
+      ds('ds6','small_city',    36, 30)
+    ],
+    rings:[],
+    largeObjects:[{ x:24, y:24, diameter:12 }]
   }
 };
 
@@ -799,6 +813,21 @@ export const VARIANTS = {
         if (d.type === 'small_city') features[d.id] = ['orbital_defence_gun','military_outpost'];
       });
       return { dropsites: base.map(d=>({...d})), features, scenery:{} };
+    }
+  },
+  entrapmoont: {
+    d6:0, name:'Entrapmoont',
+    short:'Large Stations +ODG. Blue may add 1 Military Outpost.',
+    desc:'Each Large Space Station gains an Orbital Defence Gun. Special: at the start of the first Planning Phase, the Blue (defending) team may place one additional Military Outpost on any Dropsite.',
+    apply:(base)=>{
+      const features = {};
+      base.forEach(d=>{ if (d.type === 'large_station') features[d.id] = ['orbital_defence_gun']; });
+      return {
+        dropsites: base.map(d=>({...d})),
+        features,
+        scenery:{},
+        note:'Blue (defending) team may place 1 additional Military Outpost on any Dropsite at the start of the first Planning Phase (add manually).'
+      };
     }
   }
 };
