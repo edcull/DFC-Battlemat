@@ -7362,6 +7362,7 @@ function renderSetupOverlay() {
           <option value="erupting_battlefront">Erupting Battlefront</option>
           <option value="power_grab">Power Grab</option>
           <option value="shock_and_yaw">Shock and Yaw</option>
+          <option value="orbital_support">Orbital Support</option>
         </select>
         <button class="btn" data-preset="random" ${payloadsLocked || anyReady ? 'disabled' : ''} title="Apply a random standard scenario">⚄ RANDOM SCENARIO</button>
         ${(() => {
@@ -7408,7 +7409,8 @@ function renderSetupOverlay() {
     take_and_hold:        { deployment:'line', approach:'close_enough', layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey' },
     erupting_battlefront: { deployment:'line',         approach:'column', layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'      },
     power_grab:           { deployment:'from_corners', approach:'column', layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' },
-    shock_and_yaw:        { deployment:'from_corners', approach:'column', layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   }
+    shock_and_yaw:        { deployment:'from_corners', approach:'column', layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   },
+    orbital_support:      { deployment:'line',         approach:'column', layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      }
   };
   const applyPreset = (key) => {
     const preset = SCEN_PRESETS[key];

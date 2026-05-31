@@ -551,6 +551,20 @@ export const LAYOUTS = {
       ds('ds7','small_city',     32, 32)
     ],
     rings:[], largeObjects:[]
+  },
+  orbital_support: {
+    d6:0, name:'Orbital Support',
+    scenery:{ micrometeor:'2-5', dense:'4-6', rings:0, largeObjects:0 },
+    dropsites:[
+      ds('ds1','medium_city', 24, 24),
+      ds('ds2','large_city',   6, 12),
+      ds('ds3','large_city',  42, 12),
+      ds('ds4','large_city',   6, 36),
+      ds('ds5','large_city',  42, 36),
+      ds('ds6','small_city',  24, 12),
+      ds('ds7','small_city',  24, 36)
+    ],
+    rings:[], largeObjects:[]
   }
 };
 
@@ -772,6 +786,19 @@ export const VARIANTS = {
         scenery:{},
         note:'Power Plant destruction: no extra damage to the Medium Station; all Groups within 6" gain 2 Spikes and all Ships within 6" gain Scanners Offline (adjudicate manually).'
       };
+    }
+  },
+  orbital_support: {
+    d6:0, name:'Orbital Support',
+    short:'Med/Large Cities +2 Mil Outposts. Small Cities +ODG & Mil Outpost.',
+    desc:'Each Medium City and Large City gains two Military Outposts; each Small City gains an Orbital Defence Gun and a Military Outpost.',
+    apply:(base)=>{
+      const features = {};
+      base.forEach(d=>{
+        if (d.type === 'medium_city' || d.type === 'large_city') features[d.id] = ['military_outpost','military_outpost'];
+        if (d.type === 'small_city') features[d.id] = ['orbital_defence_gun','military_outpost'];
+      });
+      return { dropsites: base.map(d=>({...d})), features, scenery:{} };
     }
   }
 };
