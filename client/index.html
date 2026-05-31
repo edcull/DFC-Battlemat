@@ -7406,7 +7406,7 @@ function renderSetupOverlay() {
   const SCEN_PRESETS = {
     take_and_hold:        { deployment:'line', approach:'close_enough', layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey' },
     erupting_battlefront: { deployment:'line',         approach:'column', layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'      },
-    power_grab:           { deployment:'from_corners', approach:'column', layout:'power_grab',           variant:'none',                 objective:'attrition' }
+    power_grab:           { deployment:'from_corners', approach:'column', layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' }
   };
   const applyPreset = (key) => {
     const preset = SCEN_PRESETS[key];
