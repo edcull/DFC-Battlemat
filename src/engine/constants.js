@@ -524,6 +524,19 @@ export const LAYOUTS = {
     ],
     rings:[{ axis:'horizontal', y:24 }],
     largeObjects:[]
+  },
+  power_grab: {
+    d6:0, name:'Power Grab',
+    scenery:{ micrometeor:6, dense:4, rings:0, largeObjects:0 },
+    dropsites:[
+      ds('ds1','large_city',    42,  6),
+      ds('ds2','medium_city',   24, 18),
+      ds('ds3','small_station', 12, 24),
+      ds('ds4','small_station', 36, 24),
+      ds('ds5','medium_city',   24, 30),
+      ds('ds6','large_city',     6, 42)
+    ],
+    rings:[], largeObjects:[]
   }
 };
 

@@ -7360,6 +7360,7 @@ function renderSetupOverlay() {
           <option value="">⚑ STANDARD SCENARIO…</option>
           <option value="take_and_hold">Take and Hold</option>
           <option value="erupting_battlefront">Erupting Battlefront</option>
+          <option value="power_grab">Power Grab</option>
         </select>
         <button class="btn" data-preset="random" ${payloadsLocked || anyReady ? 'disabled' : ''} title="Apply a random standard scenario">⚄ RANDOM SCENARIO</button>
         ${(() => {
@@ -7404,7 +7405,8 @@ function renderSetupOverlay() {
   // Standard-scenario presets — set every scenario row at once.
   const SCEN_PRESETS = {
     take_and_hold:        { deployment:'line', approach:'close_enough', layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey' },
-    erupting_battlefront: { deployment:'line', approach:'column',       layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'   }
+    erupting_battlefront: { deployment:'line',         approach:'column', layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'      },
+    power_grab:           { deployment:'from_corners', approach:'column', layout:'power_grab',           variant:'none',                 objective:'attrition' }
   };
   const applyPreset = (key) => {
     const preset = SCEN_PRESETS[key];
