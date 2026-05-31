@@ -1898,7 +1898,7 @@ function renderPanels() {
       payloadDefs.forEach(def => { pts += def.pts; });
       const anyDetached = payloadDefs.some(def => {
         const g = state.groups[def.id];
-        return g && g.ships.some(s => !s.destroyed && !s.offTable && !s.attachedTo);
+        return g && g.ships.some(s => !s.destroyed && !s.offTable && !s.attachedTo && !s.deployedByGid);
       });
       if (anyDetached) {
         grpCount++;
@@ -2061,6 +2061,47 @@ function makeGroupCard(def) {
       renderAll(true);
     }
   });
+
+  // Launched-cell sub-items: cells with deployedByGid === this group are shown
+  // here so the player can select and activate them without leaving the Porter's context.
+  const launchedCells = [];
+  Object.entries(state.groups).forEach(([cgid, cgrp]) => {
+    cgrp.ships.forEach((cs, csi) => {
+      if (cs.deployedByGid === def.id && !cs.destroyed) launchedCells.push({ cgid, csi, cs });
+    });
+  });
+  if (launchedCells.length) {
+    const divider = document.createElement('div');
+    divider.style.cssText = 'border-top:1px solid rgba(255,255,255,0.07);margin:6px -2px 4px;';
+    card.appendChild(divider);
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'font-size:8px;letter-spacing:0.1em;color:var(--text-mute);text-transform:uppercase;padding:0 4px 3px;';
+    hdr.textContent = 'Launched this activation';
+    card.appendChild(hdr);
+    launchedCells.forEach(({ cgid, csi, cs }) => {
+      const acted = cs.movedThisRound || cs.firedThisActivation || (cs.launchedThisRound > 0);
+      const cellDef = getDef(cgid);
+      const isSelCell = state.selectedGroupId === cgid && state.selectedShipIdx === csi;
+      const row = document.createElement('div');
+      row.style.cssText = `display:flex;align-items:center;gap:5px;padding:3px 4px;border-radius:3px;cursor:pointer;${isSelCell ? 'background:rgba(255,255,255,0.07);' : ''}`;
+      row.innerHTML = `
+        <span style="color:var(--text-mute);font-size:11px;">⬡</span>
+        <span style="flex:1;font-size:9.5px;text-transform:uppercase;letter-spacing:0.04em;color:${acted ? 'var(--text-mute)' : 'var(--text-dim)'};">${cellDef ? cellDef.name : 'Cell'}</span>
+        <span class="gc-badge reserve" style="font-size:7.5px;padding:0 4px;">GQ</span>
+        ${acted ? '<span style="color:var(--text-mute);font-size:9px;min-width:10px;text-align:right;">✓</span>' : '<span style="color:var(--hull-warn);font-size:9px;min-width:10px;text-align:right;">!</span>'}
+      `;
+      row.addEventListener('click', e => {
+        e.stopPropagation();
+        selectGroup(cgid);
+        if (state.selectedGroupId === cgid) {
+          state.selectedShipIdx = csi;
+          renderAll(true);
+        }
+      });
+      card.appendChild(row);
+    });
+  }
+
   return card;
 }
 
@@ -2076,7 +2117,7 @@ function makeCellsCard(side, payloadDefs) {
   payloadDefs.forEach(def => {
     const g = state.groups[def.id];
     if (!g) return;
-    g.ships.forEach((s, si) => { if (!s.destroyed && !s.offTable && !s.attachedTo) detached.push({ def, si, ship: s }); });
+    g.ships.forEach((s, si) => { if (!s.destroyed && !s.offTable && !s.attachedTo && !s.deployedByGid) detached.push({ def, si, ship: s }); });
   });
   const first = detached.length ? detached[0] : null;
   if (first && state.selectedGroupId === first.def.id) card.classList.add('active');
@@ -2131,8 +2172,13 @@ function selectGroup(gid) {
       const midActDef = getDef(midActGid);
       const midActIsMine = !_netSide || (midActDef && midActDef.side === _netSide);
       if (midActIsMine) {
-        flashLaunchMsg('Finish the current activation before selecting another Group');
-        return;
+        // Allow switching to a cell group whose ships were deployed by the mid-act Porter.
+        const tGrp = state.groups[gid];
+        const isCellOfMidAct = tGrp && tGrp.ships.some(cs => cs.deployedByGid === midActGid);
+        if (!isCellOfMidAct) {
+          flashLaunchMsg('Finish the current activation before selecting another Group');
+          return;
+        }
       }
     }
   }
@@ -3145,12 +3191,16 @@ function renderDetail() {
       });
     }
     // Reattach: free capacity + a detached same-size payload within 3" of this Porter.
+    // Cannot reattach in the same round a payload was deployed from this group.
     if (freeCap > 0) {
       const candidates = detachedReattachCandidates(def.side, selShip, def.porter.size);
-      if (state.phase === 'play' && launchOk && candidates.length) {
+      const deployedThisRound = payloadShips(def.side).some(p =>
+        !p.ship.attachedTo && p.ship.deployedByGid === gid && p.ship.deployedRound === state.round
+      );
+      if (state.phase === 'play' && launchOk && candidates.length && !deployedThisRound) {
         payloadHTML += `<button class="btn ${sideClass==='shal'?'shal':''}" data-payload-reattach="${gid}|${state.selectedShipIdx}" style="width:100%;margin-top:6px;">⊕ REATTACH ▸ pick within 3"</button>`;
       } else if (state.phase === 'play') {
-        payloadHTML += `<div style="font-size:9px;color:var(--text-mute);margin-top:6px;">Reattach: ${!launchOk ? 'needs a launch-capable Order' : 'no detached payload within 3"'}.</div>`;
+        payloadHTML += `<div style="font-size:9px;color:var(--text-mute);margin-top:6px;">Reattach: ${deployedThisRound ? 'cannot reattach in the same round as deploy' : !launchOk ? 'needs a launch-capable Order' : 'no detached payload within 3"'}.</div>`;
       }
     }
     payloadHTML += `</div>`;
@@ -3296,7 +3346,7 @@ function renderDetail() {
             ${ship.justArrived && !grp.ships.some(s => s.movedThisRound || s.firedThisActivation || (s.launchedThisRound>0) || s.detectorUsed) ? '<br><b style="color:var(--'+sideClass+')">Just deployed:</b> click in your Zone to re-place this ship and re-aim, until the Group acts.' : ''}
           </div>
           <div class="move-actions" style="margin-top:6px;">
-            ${!isOpponent && !grp.activated && !moved && o.moveMax > 0 && (selEffOrder === 'CC' || selEffOrder === 'DC') ? `<button class="btn" data-hold-position="${gid}|${state.selectedShipIdx}" style="width:100%;">⏸ HOLD POSITION (move 0")</button>` : ''}
+            ${!isOpponent && !grp.activated && !moved && !ship.firedThisActivation && !(ship.launchedThisRound > 0) && o.moveMax > 0 && (selEffOrder === 'CC' || selEffOrder === 'DC') ? `<button class="btn" data-end-move="${gid}|${state.selectedShipIdx}" style="width:100%;">END MOVE</button>` : ''}
             ${!isOpponent && objectivesBeyondEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Objectives Beyond)</button>` : ''}
             ${!isOpponent && breakthroughFlyoffEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-bt-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Breakthrough · ${shipPoints(def)} pts)</button>` : ''}
           </div>
@@ -4529,7 +4579,9 @@ function renderAttackModal() {
     const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
     // Damage type, base save, and modified save info for the header/label.
     const _wtype = s.w.type;
-    const _saveTypeHdr = _wtype === 'E' ? 'E Saves' : _wtype === 'K' ? 'K Saves' : 'Core Saves';
+    const _tKey = targetKey(s.targetGid, s.targetSi);
+    const _shieldUp = M.shieldsUp && !!M.shieldsUp[_tKey];
+    const _saveTypeHdr = _shieldUp ? 'Shield Saves' : (_wtype === 'E' ? 'E Saves' : _wtype === 'K' ? 'K Saves' : 'Core Saves');
     const _baseSvStr = _wtype === 'E' ? td.es : _wtype === 'K' ? td.ks : null;
     const _baseSv = (_baseSvStr && _baseSvStr !== '—') ? parseInt(_baseSvStr) : null;
     const _firstWithSv = sr.hitsList.find(h => h.sv != null);
@@ -4538,7 +4590,13 @@ function renderAttackModal() {
     const _mods = [sp.scald ? `Scald-${sp.scald}` : '', sp.reave ? `Reave-${sp.reave}` : '',
       sp.burnthrough && M.hitResult && M.hitResult.crits > 0 ? `Burnthrough-${sp.burnthrough}` : ''].filter(Boolean);
     let _saveInfo = '';
-    if (_baseSv != null) {
+    if (_shieldUp) {
+      const _rawShieldSv = shieldSaveVal(td);
+      _saveInfo = `Shield ${_rawShieldSv}+`;
+      if (_modSv != null && _rawShieldSv != null && _modSv !== _rawShieldSv) {
+        _saveInfo += ` → ${_modSv}+ (Boosted)`;
+      }
+    } else if (_baseSv != null) {
       const _lbl = _wtype === 'E' ? 'ES' : 'KS';
       _saveInfo = `${_lbl} ${_baseSvStr}`;
       if (_modSv != null && _modSv !== _baseSv) {
@@ -7298,7 +7356,7 @@ function renderSetupOverlay() {
     <div class="setup-card">
       <div class="setup-header">
         <h2 class="setup-title">SCENARIO SETUP</h2>
-        <div class="setup-sub">D6 · 6-Round Game</div>
+        <div class="setup-sub">D6 · 6-Round Game${_netRoom ? ` · <span style="font-family:var(--mono);letter-spacing:0.08em;">${_netRoom}</span>` : ''}</div>
       </div>
       <div class="setup-body">
         <div class="faction-select">
@@ -8723,8 +8781,8 @@ function _handle3dClick(e) {
   })();
 
   // Dropsite selection — project onto orbit (station) or ground (city) plane and pick nearest.
-  // Suppressed during arrival/deployment placement and while a ship is ready to move.
-  if (!_inArrivalMode && !_inMoveMode && state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
+  // Suppressed during arrival/deployment placement, while a ship is ready to move, and during payload cell placement.
+  if (!_inArrivalMode && !_inMoveMode && !state.payloadDetach && state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
     const dss = state.scenarioData.dropsites;
     let bestDs = null, bestDist = Infinity;
     const HIT_PX = 8 * INCH; // generous radius — cities/stations are large and camera angle shifts projection
@@ -9116,9 +9174,12 @@ function init3d() {
     if (state.assetMove) { state.assetMove = null; renderAll(true); return; } // deselect is local-only
     if (state.extracting) { state.extracting = null; flashLaunchMsg('Extract cancelled'); renderAll(); return; }
     if (state.featureAttack) { state.featureAttack = null; flashLaunchMsg('Targeting cancelled'); renderAll(true); return; }
-    if (state.aiming || state.vectoredSecondMove) {
-      state.aiming = null; state.vectoredSecondMove = null; state.hoverPoint = null; renderAll(); return;
+    if (state.aiming) {
+      if (state.aiming.mode === 'course_change') { dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si }); }
+      else { state.aiming = null; state.hoverPoint = null; renderAll(); }
+      return;
     }
+    if (state.vectoredSecondMove) { dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid }); return; }
     if (state.battalionDeploy) { state.battalionDeploy = null; renderAll(); return; }
     if (state.payloadDetach) { state.payloadDetach = null; flashLaunchMsg('Detach cancelled'); renderAll(true); return; }
     if (state.payloadReattach) { state.payloadReattach = null; flashLaunchMsg('Reattach cancelled'); renderAll(); return; }
@@ -9133,7 +9194,7 @@ function init3d() {
       const _rTrail = _rGrp && (_rGrp.moveTrail || []);
       const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
       if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
-      else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
+      else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(true); }
       return;
     }
   });
@@ -9581,14 +9642,16 @@ function _sync3dWeaponArc(group, ship, def, w, wy, dimFactor = 1) {
 
 // Main overlay pass: scan rings, weapon arcs, sig auras, coherency, launch radius.
 function _sync3dOverlays(group) {
-  const selGid = state.selectedGroupId;
+  // When no local selection, fall back to opponent's peerView so the movement
+  // overlay (coherency rings, sig auras) shows on both clients after applyShipOrder.
+  const selGid = state.selectedGroupId || (state.peerView && state.peerView.gid) || null;
   if (!selGid) return;
   const def = getDef(selGid);
   const grp = state.groups[selGid];
   if (!def || !grp) return;
 
   const sideColHex = def.side === 'player1' ? 0x4488ff : 0xff8844;
-  const selSi      = state.selectedShipIdx;
+  const selSi      = state.selectedGroupId ? state.selectedShipIdx : (state.peerView ? state.peerView.si : null);
   const selOrd     = effectiveOrder(def, grp, selSi);
   const movingActive = (selSi !== null && selOrd && ORDERS[selOrd] && ORDERS[selOrd].moveMax > 0)
     || (state.aiming && state.aiming.gid === selGid)
@@ -11194,21 +11257,34 @@ function renderAimHint() {
   const board = document.querySelector('.board-wrap');
   let el = document.getElementById('aim-hint');
   if (el) el.remove();
-  let msg = '';
+  let msg = '', showEndMoveBtn = false;
   if (state.aiming) {
     if (state.aiming.mode === 'deploy') msg = 'Move mouse to aim · click to set facing (any angle)';
     else if (state.aiming.mode === 'vectored') msg = 'Vectored pivot — aim (±45°) · click to set, then move again';
-    else if (state.aiming.mode === 'course_change') msg = 'Course Change — bonus turn (±45°) · click to set facing';
+    else if (state.aiming.mode === 'course_change') { msg = 'Course Change — bonus turn (±45°) · click to set facing'; showEndMoveBtn = true; }
   } else if (state.vectoredSecondMove) {
-    msg = 'Vectored — click ahead to move with remaining thrust (no further turn) · right-click or press Esc to skip';
+    msg = 'Vectored — click ahead to use remaining thrust (no further turn)';
+    showEndMoveBtn = true;
   }
   if (!msg) return;
   el = document.createElement('div');
   el.id = 'aim-hint';
   el.className = 'deploy-hint';
   el.style.bottom = '12px';
-  el.innerHTML = `<span><b>${msg}</b></span>`;
+  const endMoveBtn = showEndMoveBtn
+    ? `<button class="hud-btn" id="end-move-btn" style="padding:3px 10px;white-space:nowrap;">END MOVE</button>`
+    : '';
+  el.innerHTML = `<span><b>${msg}</b></span>${endMoveBtn}`;
   board.appendChild(el);
+  if (showEndMoveBtn) {
+    document.getElementById('end-move-btn').addEventListener('click', () => {
+      if (state.vectoredSecondMove) {
+        dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid });
+      } else if (state.aiming && state.aiming.mode === 'course_change') {
+        dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si });
+      }
+    });
+  }
 }
 
 function renderFeatureAttackHUD() {
@@ -11616,10 +11692,10 @@ document.addEventListener('click', (e) => {
     if (def) flashLaunchMsg(`${def.name} returned off-table`);
     return;
   }
-  if (e.target.matches('[data-hold-position]')) {
-    const [gid, si] = e.target.dataset.holdPosition.split('|');
+  if (e.target.matches('[data-end-move]')) {
+    const [gid, si] = e.target.dataset.endMove.split('|');
     dispatch({ type: 'holdPosition', gid, si: parseInt(si) });
-    renderAll(); return;
+    return;
   }
   if (e.target.matches('[data-clear-trail]')) {
     const [gid, si] = e.target.dataset.clearTrail.split('|');
@@ -12320,11 +12396,15 @@ board.addEventListener('contextmenu', (e) => {
     renderAll();
     return;
   }
-  if (state.aiming || state.vectoredSecondMove) {
+  if (state.aiming) {
     e.preventDefault();
-    state.aiming = null;
-    state.vectoredSecondMove = null;
-    renderAll();
+    if (state.aiming.mode === 'course_change') { dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si }); }
+    else { state.aiming = null; renderAll(); }
+    return;
+  }
+  if (state.vectoredSecondMove) {
+    e.preventDefault();
+    dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid });
     return;
   }
   if (state.battalionDeploy) {
@@ -12376,7 +12456,7 @@ board.addEventListener('contextmenu', (e) => {
     const _rTrail = _rGrp && (_rGrp.moveTrail || []);
     const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
     if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
-    else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
+    else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(true); }
     return;
   }
 });
@@ -13379,6 +13459,7 @@ function _netApplyRemote(remoteState) {
     detector:          state.detector,              // local-only detector targeting cursor
     extracting:        state.extracting,            // local-only extract targeting cursor
     featureAttack:     state.featureAttack,          // local-only dropsite weapon targeting
+    peerView:          state.peerView,               // preserve opponent's view state through intent broadcasts
     // Preserve fromDropsite launches — committed via intent, must survive relay responses
     launching:         (state.launching && (state.launching.fromDropsite || state.launching.type === 'gate_dropship')) ? state.launching : (remoteState.launching || null),
     // Preserve the locally-selected dsId inside dropsiteActivation — it's UI-only
@@ -13528,7 +13609,7 @@ function dispatch(intent) {
     _apply(state, intent, rng);
     renderAll();
     // Bug 4: after a ship action, auto-finish the activation if all ships have acted.
-    const autoFinishTriggers = ['moveShip', 'holdPosition', 'fireWeapons', 'launchAsset', 'surveySite'];
+    const autoFinishTriggers = ['moveShip', 'holdPosition', 'endVectoredMove', 'fireWeapons', 'launchAsset', 'surveySite'];
     if (autoFinishTriggers.includes(intent.type)) maybeAutoFinish(intent.gid);
   }
 }

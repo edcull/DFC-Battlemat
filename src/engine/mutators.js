@@ -2698,7 +2698,7 @@ export function shipInNetwork(state, def, ship) {
 }
 export function onIndividualOrders(state, def, grp) {
   if (def.openNetwork) return grp && grp.ships.some(s => shipInNetwork(state, def, s));
-  if (def.payload) return state.round >= 2;
+  if (def.payload) return state.round >= 2 || (grp && grp.ships.some(s => s.deployedByGid));
   return false;
 }
 /* The ship arc/range measurement originates from the lead ship (when explicitly
@@ -3592,6 +3592,16 @@ export function apply(state, intent, rng) {
     case 'moveShip':     return commitMove(state, rng, intent.gid, intent.si, intent.x, intent.y, intent.layerToggle);
     case 'aimShip':      return aimShip(state, intent.x, intent.y);
     case 'vectoredMove': return commitVectoredSecondMove(state, intent.x, intent.y);
+    case 'endVectoredMove': state.vectoredSecondMove = null; state.hoverPoint = null; return state;
+    case 'holdPosition': {
+      const hpShip = state.groups[intent.gid] && state.groups[intent.gid].ships[intent.si];
+      if (hpShip) hpShip.movedThisRound = true;
+      if (state.aiming && state.aiming.mode === 'course_change' && state.aiming.gid === intent.gid) {
+        state.aiming = null;
+        state.hoverPoint = null;
+      }
+      return state;
+    }
     case 'attackStep':         return advanceAttack(state, rng, state.attackModal, intent.to);
     case 'attackReroll':       return attackReroll(state, rng, state.attackModal, intent.which);
     case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
@@ -3633,7 +3643,6 @@ export function apply(state, intent, rng) {
       logEvent(state, `${exDef.name} extracted ${exTake} Operative${exTake > 1 ? 's' : ''} from ${exDs.base.name}`);
       return state;
     }
-    case 'holdPosition':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
@@ -3823,7 +3832,6 @@ export function apply(state, intent, rng) {
       logEvent(state, `${def.name || gid} #${si + 1} HP ${delta > 0 ? '+1' : '−1'} → ${newHull}/${ship.maxHull}${ship.destroyed ? ' (destroyed)' : ''}`);
       return state;
     }
-    case 'holdPosition':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
