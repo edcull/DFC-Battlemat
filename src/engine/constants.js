@@ -817,11 +817,14 @@ export const VARIANTS = {
   },
   entrapmoont: {
     d6:0, name:'Entrapmoont',
-    short:'Large Stations +Military Outpost & ODG. Blue may add 1 Military Outpost.',
-    desc:'Each Large Space Station gains a Military Outpost and an Orbital Defence Gun. Special: at the start of the first Planning Phase, the Blue (defending) team may place one additional Military Outpost on any Dropsite.',
+    short:'Large Stations +Military Outpost & ODG. Small Cities +Military Outpost. Blue may add 1 Military Outpost.',
+    desc:'Each Large Space Station gains a Military Outpost and an Orbital Defence Gun; each Small City gains a Military Outpost. Special: at the start of the first Planning Phase, the Blue (defending) team may place one additional Military Outpost on any Dropsite.',
     apply:(base)=>{
       const features = {};
-      base.forEach(d=>{ if (d.type === 'large_station') features[d.id] = ['military_outpost','orbital_defence_gun']; });
+      base.forEach(d=>{
+        if (d.type === 'large_station') features[d.id] = ['military_outpost','orbital_defence_gun'];
+        if (d.type === 'small_city')    features[d.id] = ['military_outpost'];
+      });
       return {
         dropsites: base.map(d=>({...d})),
         features,
