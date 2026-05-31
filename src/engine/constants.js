@@ -501,7 +501,7 @@ export const LAYOUTS = {
     largeObjects:[{ x:24, y:24, diameter:12 }]
   },
   take_and_hold: {
-    d6:0, name:'Take and Hold',
+    d6:0, bespoke:true, name:'Take and Hold',
     scenery:{ micrometeor:4, dense:4, rings:0, largeObjects:0 },
     dropsites:[
       ds('ds1','medium_city',    24, 24),
@@ -513,7 +513,7 @@ export const LAYOUTS = {
     rings:[], largeObjects:[]
   },
   erupting_battlefront: {
-    d6:0, name:'Erupting Battlefront',
+    d6:0, bespoke:true, name:'Erupting Battlefront',
     scenery:{ micrometeor:4, dense:0, rings:1, largeObjects:0 },
     dropsites:[
       ds('ds1','medium_city', 12, 12),
@@ -526,7 +526,7 @@ export const LAYOUTS = {
     largeObjects:[]
   },
   power_grab: {
-    d6:0, name:'Power Grab',
+    d6:0, bespoke:true, name:'Power Grab',
     scenery:{ micrometeor:6, dense:4, rings:0, largeObjects:0 },
     dropsites:[
       ds('ds1','large_city',    42,  6),
@@ -539,7 +539,7 @@ export const LAYOUTS = {
     rings:[], largeObjects:[]
   },
   shock_and_yaw: {
-    d6:0, name:'Shock and Yaw',
+    d6:0, bespoke:true, name:'Shock and Yaw',
     scenery:{ micrometeor:'2-5', dense:'4-6', rings:0, largeObjects:0 },
     dropsites:[
       ds('ds1','medium_station', 24, 24),
@@ -553,7 +553,7 @@ export const LAYOUTS = {
     rings:[], largeObjects:[]
   },
   orbital_support: {
-    d6:0, name:'Orbital Support',
+    d6:0, bespoke:true, name:'Orbital Support',
     scenery:{ micrometeor:'2-5', dense:'4-6', rings:0, largeObjects:0 },
     dropsites:[
       ds('ds1','medium_station', 24, 24),
@@ -567,7 +567,7 @@ export const LAYOUTS = {
     rings:[], largeObjects:[]
   },
   entrapmoont: {
-    d6:0, name:'Entrapmoont',
+    d6:0, bespoke:true, name:'Entrapmoont',
     scenery:{ micrometeor:6, dense:0, rings:0, largeObjects:1 },
     dropsites:[
       ds('ds1','large_station', 24, 12),
@@ -771,7 +771,7 @@ export const VARIANTS = {
     }
   },
   civic_infrastructure: {
-    d6:0, name:'Civic Infrastructure',
+    d6:0, bespoke:true, name:'Civic Infrastructure',
     short:'Each Medium City +Power Plant, Hangar & Comms.',
     desc:'Each Medium City gains a Power Plant, a Hangar and a Comms Station.',
     apply:(base)=>{
@@ -783,7 +783,7 @@ export const VARIANTS = {
     }
   },
   shock_and_yaw: {
-    d6:0, name:'Shock and Yaw',
+    d6:0, bespoke:true, name:'Shock and Yaw',
     short:'Sm City +Hangar · Med City +Mil Outpost · Med Station +2 Power Plants · Lg Station +Comms & ODG.',
     desc:'Each Small City gains a Hangar; each Medium City a Military Outpost; the central Medium Space Station two Power Plants; each Large Space Station a Comms Station and an Orbital Defence Gun. Special: destroying a Power Plant deals no extra damage to the Medium Space Station, but instead all Groups within 6" gain two Spikes and all Ships within 6" gain a Scanners Offline token.',
     apply:(base)=>{
@@ -803,7 +803,7 @@ export const VARIANTS = {
     }
   },
   orbital_support: {
-    d6:0, name:'Orbital Support',
+    d6:0, bespoke:true, name:'Orbital Support',
     short:'Med Station/Large Cities +2 Mil Outposts. Small Cities +ODG & Mil Outpost.',
     desc:'The central Medium Space Station and each Large City gain two Military Outposts; each Small City gains an Orbital Defence Gun and a Military Outpost.',
     apply:(base)=>{
@@ -816,7 +816,7 @@ export const VARIANTS = {
     }
   },
   entrapmoont: {
-    d6:0, name:'Entrapmoont',
+    d6:0, bespoke:true, name:'Entrapmoont',
     short:'Large Stations +Military Outpost & ODG. Small Cities +Military Outpost. Blue may add 1 Military Outpost.',
     desc:'Each Large Space Station gains a Military Outpost and an Orbital Defence Gun; each Small City gains a Military Outpost. Special: at the start of the first Planning Phase, the Blue (defending) team may place one additional Military Outpost on any Dropsite.',
     apply:(base)=>{

@@ -7288,7 +7288,7 @@ function renderSetupOverlay() {
       <div class="scen-controls">
         <select class="scen-dropdown" data-scen-select="${key}">
           <option value="" ${!currentKey?'selected':''}>— select —</option>
-          ${Object.keys(table).map(optKey => {
+          ${Object.keys(table).filter(optKey => !table[optKey].bespoke || optKey === currentKey).map(optKey => {
             const opt = table[optKey];
             const d6 = opt.d6 === 0 ? '—' : opt.d6;
             return `<option value="${optKey}" ${optKey===currentKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${opt.name}</option>`;
@@ -7487,7 +7487,8 @@ function renderSetupOverlay() {
       if (key === 'all') {
         state.scenario = generateScenario(); // fresh object — clears any asymmetric objectives
       } else {
-        const keys = Object.keys(SCEN_TABLES[key]);
+        // Exclude bespoke standard-scenario-only entries from generator rerolls.
+        const keys = Object.keys(SCEN_TABLES[key]).filter(k => !SCEN_TABLES[key][k].bespoke);
         const next = { ...state.scenario, [key]: keys[Math.floor(Math.random() * keys.length)] };
         if (key === 'objective') delete next.objectives; // rerolling the shared objective drops asymmetric mode
         state.scenario = next;
