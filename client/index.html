@@ -7329,7 +7329,8 @@ function renderSetupOverlay() {
     : noteFor(obj, '');
 
   // ---- Two-tab layout: Standard scenarios vs Custom generation ----
-  const setupTab = (_setupTab === 'custom') ? 'custom' : 'standard';
+  // Tab is shared (relayed) state so both clients stay on the same tab.
+  const setupTab = (state.setupTab === 'custom') ? 'custom' : 'standard';
   const lockStyle = (payloadsLocked || anyReady) ? 'opacity:0.4;pointer-events:none;filter:grayscale(0.6);' : '';
   const lockAttr  = (payloadsLocked || anyReady) ? 'disabled' : '';
   const tabBtn = (key, label) => `<button data-setup-tab="${key}" style="flex:1;padding:8px 6px;font:inherit;font-size:11px;font-weight:700;letter-spacing:0.04em;cursor:pointer;background:none;border:none;border-bottom:2px solid ${setupTab===key?'var(--ucm)':'transparent'};color:${setupTab===key?'var(--ucm)':'var(--text-mute)'};">${label}</button>`;
@@ -7441,8 +7442,7 @@ function renderSetupOverlay() {
             : 'Complete fleet setup (admiral &amp; payload assignment) before choosing a scenario. Use <b>⚠ SETUP / VIEW FLEET</b> above.'}
         </div>` : ''}
         ${tabsBar}
-        <div id="setup-tab-standard" style="display:${setupTab==='standard'?'block':'none'};">${standardTab}</div>
-        <div id="setup-tab-custom" style="display:${setupTab==='custom'?'block':'none'};">${customTab}</div>
+        ${setupTab === 'custom' ? customTab : standardTab}
       </div>
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
@@ -7470,22 +7470,14 @@ function renderSetupOverlay() {
   `;
   board.appendChild(overlay);
 
-  // Tab switching is purely local UI: toggle pane visibility directly without
-  // calling renderAll(), so it never mutates state, never relays, and never
-  // disturbs the current selections or the other client.
+  // Switching tabs resets the scenario selections (keeps each mode simple) and
+  // relays — so the opponent follows to the same tab with a cleared scenario.
   overlay.querySelectorAll('[data-setup-tab]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      _setupTab = (btn.dataset.setupTab === 'custom') ? 'custom' : 'standard';
-      const stdPane = overlay.querySelector('#setup-tab-standard');
-      const cusPane = overlay.querySelector('#setup-tab-custom');
-      if (stdPane) stdPane.style.display = _setupTab === 'standard' ? 'block' : 'none';
-      if (cusPane) cusPane.style.display = _setupTab === 'custom' ? 'block' : 'none';
-      overlay.querySelectorAll('[data-setup-tab]').forEach(b => {
-        const active = b.dataset.setupTab === _setupTab;
-        b.style.borderBottom = '2px solid ' + (active ? 'var(--ucm)' : 'transparent');
-        b.style.color = active ? 'var(--ucm)' : 'var(--text-mute)';
-      });
+      state.setupTab = (btn.dataset.setupTab === 'custom') ? 'custom' : 'standard';
+      state.scenario = { deployment: null, approach: null, layout: null, variant: null, objective: null };
+      renderAll(); // relays in setup phase → opponent's view follows
     });
   });
 
