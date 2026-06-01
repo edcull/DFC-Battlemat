@@ -1,6 +1,6 @@
 # DFC Fleet Ops
 
-**App v0.1.1** &nbsp;·&nbsp; Rulebook v2.3.1 &nbsp;·&nbsp; Errata v1.3
+**App v0.2.0** &nbsp;·&nbsp; Rulebook v2.3.1 &nbsp;·&nbsp; Errata v1.3 &nbsp;·&nbsp; Scenario Expansion 1
 
 A browser-based tactical assistant for **Dropfleet Commander**. The client (`client/index.html`) requires a small static server to load ES modules; an optional Node.js server adds online two-player rooms.
 
@@ -112,7 +112,14 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 - **Raze** — double standard scoring for Levelled/Ruined Dropsites ≥24" from own zone; pts-destroyed
 - **Asymmetric scoring** — each side can score against its own objective (e.g. attacker Raze / defender Protect), resolved per-side throughout
 - All seven **secondary objectives** with manual nomination and ★ markers
-- VP toasts on every award; clicking the faction/VP topbar display opens full breakdown with objective description
+- VP toasts on every award; clicking the faction/VP topbar display opens full breakdown with objective description, Kill Points projection, Assess tracker, and live Focal Points values
+
+**Scenario Expansion 1 scoring (all engine-scored):**
+- **Normal** — identical VP table to Standard Scoring (Small 2/0, Medium 3/1, Large 4/2 for Control/Contest), scored on R4 & R6
+- **Demolish** — immediate High VP when you Level a Dropsite (2/3/4 by size), immediate Low VP when you Ruin it (0/1/2); no R4/R6 dropsite scoring. Dropsites track a two-stage Ruin → Level lifecycle
+- **Kill Points** — +2 VP per 500 pts of Ships & Admirals destroyed at game end
+- **Focal Points** — ship value totals (Light 1/Medium 4/Heavy 7/Colossal 11; Low values 0/1/3/5) checked per focal point on R4 & R6; highest value wins 3 VP, ≥ half wins 1 VP. Fires for any scenario that defines focal points, alongside any other objective
+- **Assess** — Capital Ship on General Quarters within 6" of an eligible Dropsite (marked in the layout) may Assess it instead of attacking/launching; 1 VP (or 2 VP for `double_assess` dropsites). Engine-gated and server-authoritative
 
 ### Admiral abilities (core four)
 | Cost | Ability |
@@ -124,12 +131,18 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 
 ### Scenarios
 - **Standard scenarios** (one-click presets): Take and Hold, Erupting Battlefront, Power Grab, Shock and Yaw, Orbital Support, Entrapmoont — pick from a dropdown or roll a random one
+- **Scenario Expansion 1** (one-click presets): all 14 official SE1 scenarios with faithful layouts, deployment approach timing, and engine-scored objectives — Ready Salted Earth, Erupting Quarters, Latitudinal Lanes, Lagrange Points, When Backfields Meet, Very Important Moon, Moonshot, Moonwreck, Moonbreaker, Moonguard, Moonswipe, Moonskipper, One With (Almost) Nothing, (Almost) Nothing At All
 - Or build a **custom** scenario from the generator:
   - 7 **Deployment types**: Line, Table Corners, Midboard, From Corners, Attacker/Defender, Encirclement + more
   - 6 **Approaches**: Standoff, Close Enough, Column, Counterattack, Delayed Response, Home Fleet Disadvantage
   - 6 **Layouts**: Diagonal, Edge Case, Eruption, Gatecrash, Moonlight, Moonstruck
   - 7 **Variants**: None, Guarded Sectors, Secure Comms Array, Battlescarred, Gridlocked, Expansive Atmosphere, Orbital Complex
   - 7 **Scoring objectives** (see above), with an optional per-side (asymmetric) mode
+
+**SE1 approach types (engine-enforced):**
+- **Imminent** — R1: L & M tonnage only · R2: also H · R3+: any group
+- **Backline** — R1: H & C tonnage only · R2+: any group · Vanguard-X used as normal
+- **Staggered** — X groups of your choice per round (R1: X, R2: X more, R3+: all remaining). X = 1 (≤1000 pts) / 2 (≤2000) / 3 (≤3000) / 4+ (3001+). Engine-enforced per side based on fleet points
 
 ---
 
@@ -193,6 +206,13 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 - A few §12 Dropsite interactions (Collateral Damage, attack-damage → feature removal) are partially implemented and worth confirming in play.
 - **Standard-scenario variant features** (Military Outposts, ODGs, Power Plants, Hangars, Comms) are placed on dropsites, but their in-game effects and any bespoke special rules are adjudicated manually.
 - **Team scenarios** (e.g. Entrapmoont, 2–4 players) are modelled as standard 2-player.
+- **SE1 scenarios — still manually adjudicated** (surfaced as Special Rules notes in the scenario summary):
+  - Moving/breaking moons: Moonskipper (moon path + ship destruction), Moonbreaker (moon breaks apart, expanding Micrometeor Cloud), Moonswipe (pre-deployment Large Object repositioning)
+  - Orbital Decay damage (both "(Almost) Nothing" scenarios)
+  - Asymmetric colour-city ownership scoring (When Backfields Meet)
+  - Board-quarter focal value scoring (Erupting Quarters, (Almost) Nothing At All)
+  - Very Important Moon: end-game +1 VP per Group containing a Crippled Ship outside the Focal Point's range
+  - Moonguard bonus Secondary Objective slot
 
 ---
 

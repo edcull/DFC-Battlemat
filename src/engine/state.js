@@ -204,7 +204,7 @@ export function buildScenarioState(scen) {
   const result = variant.apply(layout.dropsites, scen.deployment);
   const dropsites = result.dropsites.map(d => {
     const base = DROPSITE_BASE[d.type];
-    const features = (result.features[d.id] || []).slice();
+    const features = [...(result.features[d.id] || []), ...(d.layoutFeatures || [])];
     return {
       id: d.id,
       type: d.type,
@@ -213,7 +213,8 @@ export function buildScenarioState(scen) {
       y: d.y,
       features,
       damage: 0,
-      maxHull: base.hull
+      maxHull: base.hull,
+      ...(d.siteRules ? { siteRules: d.siteRules } : {})
     };
   });
   // Resolve scenery target counts (a count may be a range like '4-6' → take max).
@@ -232,6 +233,7 @@ export function buildScenarioState(scen) {
     dropsites,
     rings: layout.rings || [],
     largeObjects: layout.largeObjects || [],
+    focalPoints: layout.focalPoints || [],
     scenery: layout.scenery,
     sceneryBonus: result.scenery || {},
     sceneryTargets,         // {micrometeor, dense} — how many to place

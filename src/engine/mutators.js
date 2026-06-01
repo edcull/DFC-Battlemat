@@ -1,7 +1,7 @@
 // Pure game-logic mutators and read-only helpers.
 // No DOM calls — rendering is the caller's responsibility.
 
-import { FEATURES, ORDERS, INCH, BOARD_PX, BOARD_IN, ASSET_PROFILES, DROPSITE_BASE, DEPLOYMENTS, APPROACHES, SECONDARY_OBJECTIVES, OBJECTIVES } from './constants.js';
+import { FEATURES, ORDERS, INCH, BOARD_PX, BOARD_IN, ASSET_PROFILES, DROPSITE_BASE, DEPLOYMENTS, APPROACHES, SECONDARY_OBJECTIVES, OBJECTIVES, FOCAL_HIGH, FOCAL_LOW, LAYOUTS } from './constants.js';
 import { rollD6, rollDie } from './rng.js';
 import { fleetForSide, redFleet, blueFleet, factionName, payloadShips, porterShips, allDefs, getDef, getGroup, assetProfile, fighterRerolls, rebuildFleets, buildScenarioState } from './state.js';
 
@@ -331,6 +331,7 @@ export function recordKill(state, def, killerSide, captured, killedShipKey) {
   // Decapitate: flag the victim side if this ship carried its admiral.
   if (def.flagship || (def.special && /Command Ship/i.test(def.special)) || (def.admiralLevel)) {
     if (state.admiralKilled) state.admiralKilled[def.side] = true;
+    if (killerSide && state.admiralKillCount) state.admiralKillCount[killerSide] = (state.admiralKillCount[killerSide] || 0) + 1;
   }
 }
 
@@ -379,15 +380,26 @@ export function computeStandardScoring(state) {
       rows.push({ name: ds.base.name, sz, status: 'Levelled' + (statusNote?' · '+statusNote:''), ctrl: null, player1: ucmGain, player2: shalGain });
       return;
     }
+    // score_north / score_south: only the specified zone's player gets Normal Scoring from this dropsite.
+    const sr = ds.siteRules || [];
+    const dZone = state.deployZone || {};
+    const northSide = dZone.player1 === 'north' ? 'player1' : 'player2';
+    const southSide = northSide === 'player1' ? 'player2' : 'player1';
+    const restrictTo = sr.includes('score_north') ? northSide : sr.includes('score_south') ? southSide : null;
     if (ctrl) {
-      let gain = vp.control;
-      if (objectiveForSide(state, ctrl) === 'protect' && noms[ctrl] === ds.id) { gain *= 2; statusNote = 'Protected ×2'; }
-      out[ctrl] += gain;
-      if (ctrl === 'player1') ucmGain += gain; else shalGain += gain;
+      if (!restrictTo || ctrl === restrictTo) {
+        let gain = vp.control;
+        if (objectiveForSide(state, ctrl) === 'protect' && noms[ctrl] === ds.id) { gain *= 2; statusNote = 'Protected ×2'; }
+        out[ctrl] += gain;
+        if (ctrl === 'player1') ucmGain += gain; else shalGain += gain;
+      } else {
+        statusNote = 'Score-restricted';
+      }
       rows.push({ name: ds.base.name, sz, status: 'Controlled' + (statusNote?' · '+statusNote:''), ctrl, player1: ucmGain, player2: shalGain });
     } else if (dropsiteContested(ds)) {
-      out.player1 += vp.contest; out.player2 += vp.contest;
-      rows.push({ name: ds.base.name, sz, status: 'Contested', ctrl: null, player1: ucmGain + vp.contest, player2: shalGain + vp.contest });
+      if (!restrictTo || restrictTo === 'player1') { out.player1 += vp.contest; ucmGain += vp.contest; }
+      if (!restrictTo || restrictTo === 'player2') { out.player2 += vp.contest; shalGain += vp.contest; }
+      rows.push({ name: ds.base.name, sz, status: 'Contested', ctrl: null, player1: ucmGain, player2: shalGain });
     } else {
       rows.push({ name: ds.base.name, sz, status: 'Uncontrolled', ctrl: null, player1: ucmGain, player2: shalGain });
     }
@@ -396,12 +408,88 @@ export function computeStandardScoring(state) {
   return out;
 }
 
+/* Is a ship in range of a focal point? Supports circle {x,y,diameter} and rect {x,y,width,height}. */
+function shipInFocalPoint(xIn, yIn, fp) {
+  if (fp.diameter != null) return Math.hypot(xIn - fp.x, yIn - fp.y) <= fp.diameter / 2;
+  if (fp.width != null)    return xIn >= fp.x && xIn <= fp.x + fp.width && yIn >= fp.y && yIn <= fp.y + fp.height;
+  return false;
+}
+
+function focalPointCenter(fp) {
+  if (fp.diameter != null) return { cx: fp.x, cy: fp.y };
+  return { cx: fp.x + fp.width / 2, cy: fp.y + fp.height / 2 };
+}
+
+/* Score Focal Points on rounds 4 & 6.
+   Assigns each ship to at most one focal point (nearest when in range of multiple).
+   special tags: 'low_crippled', 'low_north', 'low_south'. */
+export function computeFocalPointsScoring(state) {
+  const fps = (state.scenarioData && state.scenarioData.focalPoints) || [];
+  if (!fps.length) return [];
+  const log = [];
+  // Collect all alive on-table ships.
+  const allShips = [];
+  Object.keys(state.groups).forEach(gid => {
+    const def = getDef(state, gid);
+    if (!def) return;
+    state.groups[gid].ships.forEach((ship, si) => {
+      if (ship.destroyed || ship.offTable) return;
+      allShips.push({ def, ship, xIn: ship.x / INCH, yIn: ship.y / INCH });
+    });
+  });
+  // Assign each ship to its nearest in-range focal point.
+  const fpBuckets = fps.map(() => []);
+  allShips.forEach(entry => {
+    const { xIn, yIn } = entry;
+    const inRange = fps.reduce((acc, fp, i) => { if (shipInFocalPoint(xIn, yIn, fp)) acc.push(i); return acc; }, []);
+    if (!inRange.length) return;
+    let chosen = inRange[0];
+    if (inRange.length > 1) {
+      let best = Infinity;
+      inRange.forEach(i => {
+        const { cx, cy } = focalPointCenter(fps[i]);
+        const d = Math.hypot(xIn - cx, yIn - cy);
+        if (d < best) { best = d; chosen = i; }
+      });
+    }
+    fpBuckets[chosen].push(entry);
+  });
+  // Score each focal point.
+  fps.forEach((fp, fi) => {
+    const special = fp.special || [];
+    const totals = { player1: 0, player2: 0 };
+    fpBuckets[fi].forEach(({ def, ship }) => {
+      const zone = state.deployZone && state.deployZone[def.side];
+      // 'north'/'south': only that zone's side scores this focal point
+      if (zone && (special.includes('north') || special.includes('south')) && !special.includes(zone)) return;
+      const isCrippled = ship.hull <= ship.maxHull / 2;
+      const useLow = (special.includes('low_crippled') && isCrippled)
+                  || (zone && special.includes(`low_${zone}`))
+                  || (zone && special.includes(`low_${zone}_crippled`) && isCrippled);
+      const t = def.tonnage || 'L';
+      totals[def.side] += useLow ? (FOCAL_LOW[t] || 0) : (FOCAL_HIGH[t] || 1);
+    });
+    const maxVal = Math.max(totals.player1, totals.player2);
+    if (maxVal <= 0) return;
+    const fpLabel = fp.label || `Focal Point ${fi + 1}`;
+    ['player1','player2'].forEach(s => {
+      const opp = s === 'player1' ? 'player2' : 'player1';
+      if (totals[s] === maxVal) {
+        log.push(awardVP(state, s, 3, `${fpLabel}: highest value (${totals[s]})`, state.round));
+      } else if (totals[s] > 0 && totals[s] >= maxVal / 2) {
+        log.push(awardVP(state, s, 1, `${fpLabel}: ≥half value (${totals[s]} vs ${totals[opp]})`, state.round));
+      }
+    });
+  });
+  return log.filter(Boolean);
+}
+
 /* Run end-of-round Victory Point scoring (rounds 4 & 6 for standard scoring),
    plus the scenario's scoring-variant bonuses where computable. */
 export function runScoring(state, rng, round) {
   const log = [];
   state.lastScoring = null; // set below for the R4/R6 standard-scoring modal
-  if ((round === 4 || round === 6) && !state.scoredRounds.includes(round)) {
+  if ((round === 4 || round === 6) && !state.scoredRounds.includes(round) && !objAny(state, 'demolish') && !objAny(state, 'focal_points')) {
     state.scoredRounds.push(round);
     const std = computeStandardScoring(state);
     const l1 = awardVP(state, 'player1', std.player1, `Standard Scoring R${round}`, round);
@@ -410,6 +498,11 @@ export function runScoring(state, rng, round) {
     if (!l1 && !l2) log.push(`Standard Scoring (R${round}): no VP scored`);
     // Stash the per-dropsite breakdown for the scoring modal.
     state.lastScoring = { round, rows: std.rows, player1: std.player1, player2: std.player2 };
+  }
+  // Focal Points scoring (R4 & R6) — runs whenever focal points are defined in the layout,
+  // regardless of objective (focal points coexist alongside kill_points, normal, demolish, etc.).
+  if ((round === 4 || round === 6) && (state.scenarioData?.focalPoints?.length > 0)) {
+    computeFocalPointsScoring(state).forEach(l => log.push(l));
   }
   // Scoring variant bonuses applied at game end (round 6). Each side scores against
   // its OWN Objective (which may differ in asymmetric scenarios).
@@ -421,6 +514,13 @@ export function runScoring(state, rng, round) {
     sides.forEach(s => { if (objectiveForSide(state, s) === 'attrition') push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objNameOf(s)}: pts destroyed`, round)); });
     // Kill Points (Scenario Expansion 1): 2 VP per 500 pts of Ships/Admirals destroyed.
     sides.forEach(s => { if (objectiveForSide(state, s) === 'kill_points') push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objNameOf(s)}: pts destroyed`, round)); });
+    // One With (Almost) Nothing: +1 VP per enemy Admiral destroyed.
+    if (state.scenario?.layout === 'se1_one_with_almost_nothing') {
+      sides.forEach(s => {
+        const kills = (state.admiralKillCount && state.admiralKillCount[s]) || 0;
+        if (kills > 0) push(awardVP(state, s, kills, `Admirals destroyed: ${kills}`, round));
+      });
+    }
     // Raze: +2 VP per 500 pts destroyed, PLUS double Standard Scoring value for each
     // Dropsite Levelled or Ruined that lies ≥24" from the scoring side's own Zone.
     sides.forEach(s => {
@@ -464,6 +564,69 @@ export function runScoring(state, rng, round) {
     }
     // Secondary Objectives (each side scores its one chosen scoring secondary).
     log.push(...scoreSecondaries(state, rng));
+    // Scenario-specific end-game bonuses.
+    const layKey = state.scenario && state.scenario.layout;
+    // VIM: 1VP per Group on the table containing a Crippled Ship outside the Focal Point range.
+    if (layKey === 'se1_very_important_moon') {
+      const vimFPs = (state.scenarioData && state.scenarioData.focalPoints) || [];
+      sides.forEach(s => {
+        let vimVP = 0;
+        Object.keys(state.groups).forEach(gid => {
+          const def = getDef(state, gid);
+          if (!def || def.side !== s) return;
+          const g = state.groups[gid];
+          const hasCrippled = g.ships.some(sh => !sh.destroyed && !sh.offTable && sh.hull <= sh.maxHull / 2);
+          if (!hasCrippled) return;
+          const anyOutside = g.ships.some(sh => {
+            if (sh.destroyed || sh.offTable) return false;
+            const xIn = sh.x / INCH, yIn = sh.y / INCH;
+            return vimFPs.every(fp => !shipInFocalPoint(xIn, yIn, fp));
+          });
+          if (anyOutside) vimVP++;
+        });
+        push(awardVP(state, s, vimVP, 'VIM: Groups with Crippled outside Focal Point', round));
+      });
+    }
+    // Moonbreaker: Normal Scoring at game end if controlling majority of moon dropsites.
+    if (layKey === 'se1_moonbreaker') {
+      const mbLay = LAYOUTS['se1_moonbreaker'];
+      const moonDsSet = new Set(mbLay.moonDropsites || []);
+      const moonDsList = ((state.scenarioData && state.scenarioData.dropsites) || []).filter(d => moonDsSet.has(d.id));
+      if (moonDsList.length > 0) {
+        const ctrl = { player1: 0, player2: 0 };
+        moonDsList.forEach(d => { const c = dropsiteController(d); if (c) ctrl[c]++; });
+        const majority = Math.floor(moonDsList.length / 2) + 1;
+        sides.forEach(s => {
+          if (ctrl[s] < majority) return;
+          let moonVP = 0;
+          moonDsList.forEach(d => { if (dropsiteController(d) === s) moonVP += (DROPSITE_VP[dropsiteSizeKey(d)] || DROPSITE_VP.M).control; });
+          push(awardVP(state, s, moonVP, 'Moonbreaker: moon majority control', round));
+        });
+      }
+    }
+    // One With (Almost) Nothing: +1VP per enemy Admiral destroyed.
+    if (layKey === 'se1_one_with_almost_nothing') {
+      sides.forEach(s => {
+        const kills = (state.admiralKillCount && state.admiralKillCount[s]) || 0;
+        push(awardVP(state, s, kills, 'Admiral kills', round));
+      });
+    }
+    // Moonguard: score each player's chosen bonus secondary at game end (independently of main secondary).
+    if (layKey === 'se1_moonguard' && state.moonguardSecondaries) {
+      const scoreOneMgSec = (s, key) => {
+        if (!key) return;
+        let vp = 0;
+        if (key === 'annihilate') vp = Math.min(3, Math.floor((state.score[s].kp || 0) / 500));
+        else if (key === 'take_prizes') vp = Math.min(3, Math.floor(((state.captured && state.captured[s]) || 0) / 100));
+        else if (key === 'decapitate') {
+          const enemy = s === 'player1' ? 'player2' : 'player1';
+          vp = (state.admiralKilled && state.admiralKilled[enemy]) ? 2 : 0;
+        }
+        if (vp > 0) push(awardVP(state, s, vp, `Moonguard bonus: ${SECONDARY_OBJECTIVES[key] ? SECONDARY_OBJECTIVES[key].name : key}`, round));
+      };
+      scoreOneMgSec('player1', state.moonguardSecondaries.player1);
+      scoreOneMgSec('player2', state.moonguardSecondaries.player2);
+    }
   }
   return log;
 }
@@ -859,6 +1022,22 @@ export function surveyableDropsite(state, ship, side) {
   return null;
 }
 
+/* A Dropsite within 6" that this side can Assess (once per dropsite per game).
+   Eligible if ds.siteRules contains 'assess' (both sides) or 'assess_<zone>' for this side. */
+export function assessableDropsite(state, ship, side) {
+  const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
+  const zone = state.deployZone && state.deployZone[side];
+  const assessed = (state.assessedDropsites && state.assessedDropsites[side]) || [];
+  for (const ds of dss) {
+    if (ds.destroyed) continue;
+    if (assessed.includes(ds.id)) continue;
+    const sr = ds.siteRules || [];
+    if (!(sr.includes('assess') || (zone && sr.includes(`assess_${zone}`)))) continue;
+    if (Math.hypot(ship.x - inchToPx(ds.x), ship.y - inchToPx(ds.y)) <= 6 * INCH) return ds;
+  }
+  return null;
+}
+
 /* Transport VALUE of a ship — largest launch `n` among ground-transport assets. */
 export function transportValue(def) {
   if (!def.launch) return 0;
@@ -965,6 +1144,18 @@ export function destroyFeature(state, rng, ds, fi) {
     const extra = (Math.ceil(rollDie(rng)/2) + Math.ceil(rollDie(rng)/2)); // 2D3
     ds.damage = (ds.damage || 0) + extra;
     if (ds.maxHull && ds.damage >= ds.maxHull) ds.destroyed = true;
+    // RSE: check if the linked station loses its BS save when this city's last power plant falls.
+    const layKey = state.scenario && state.scenario.layout;
+    const layout = layKey && LAYOUTS[layKey];
+    if (layout && layout.stationCityLinks) {
+      const stId = Object.keys(layout.stationCityLinks).find(k => layout.stationCityLinks[k] === ds.id);
+      if (stId) {
+        const remainingPlants = (ds.features || []).filter((fk2, fi2) => fk2 === 'power_plant' && !(ds.destroyedFeatures||[]).includes(fi2)).length;
+        const stDs = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === stId);
+        const stName = (stDs && stDs.base && stDs.base.name) || stId;
+        if (remainingPlants === 0) logEvent(state, `${ds.base ? ds.base.name : ds.id}: last Power Plant destroyed — ${stName} loses BS 5+ save`);
+      }
+    }
   }
 }
 
@@ -1226,13 +1417,13 @@ export function isInVanguardZone(state, xIn, yIn, def, baseZone) {
   let z = {};
   if (depKey === 'line' && baseZone.edgeLines) {
     z.polygon = stripFromEdgeLine(baseZone.edgeLines[0], X);
-  } else if (depKey === 'attacker_defender') {
+  } else if (depKey === 'attacker_defender' || depKey === 'defender_edge') {
     if (baseZone.edgeLines) {
       z.polygon = stripFromEdgeLine(baseZone.edgeLines[0], X);
     } else if (baseZone.polygon) {
       z.polygon = expandStripPolygon(baseZone.polygon, X);
     }
-  } else if (depKey === 'table_corners' && baseZone.edgeLines) {
+  } else if ((depKey === 'table_corners' || depKey === 'diagonal_corners') && baseZone.edgeLines) {
     const polys = baseZone.edgeLines.map(seg => stripFromEdgeLine(seg, X));
     return polys.some(p => pointInPolygon(xIn, yIn, p));
   } else if (depKey === 'midboard' && baseZone.edgeSemicircle) {
@@ -1471,9 +1662,23 @@ export function canActivateOffTable(state, def) {
     const tName = t === 'L' ? 'Light' : 'Medium';
     return { eligible: false, reason: `Backline ${tName}: available from Round 2` };
   }
-  // Staggered: a fixed number of Groups of the player's choice each round. The
-  // per-round count is tracked manually, so any off-table Group may arrive.
+  // Staggered: X Groups per round (R1: X, R2: X more, R3+: rest). Vanguard-X as normal.
   if (app === 'staggered') {
+    if (def.vanguard) return { eligible: true };
+    if (r >= 3) return { eligible: true };
+    const sideDefs = fleetForSide(state, def.side);
+    const totalPts = sideDefs.reduce((sum, d) => sum + (d.pts || 0), 0);
+    const X = totalPts <= 1000 ? 1
+            : totalPts <= 2000 ? 2
+            : totalPts <= 3000 ? 3
+            : 4 + Math.floor((totalPts - 3001) / 1000);
+    const arrivedCount = sideDefs.filter(d => {
+      if (d.vanguard) return false;
+      const grp = state.groups[d.id];
+      return grp && grp.ships.some(s => !s.offTable);
+    }).length;
+    const limit = r * X;
+    if (arrivedCount >= limit) return { eligible: false, reason: `Staggered: ${arrivedCount}/${limit} groups deployed (X=${X})` };
     return { eligible: true };
   }
   return { eligible: false, reason: 'Unknown approach' };
@@ -1919,6 +2124,21 @@ export function rollHits(state, rng, M) {
   }
 }
 
+/* Returns 5 (for 5+) if a dropsite station has an active BS save via paired city power plants,
+   null otherwise. Used by Ready Salted Earth's conditional BS rule. */
+function stationBSVal(state, ds) {
+  if (!ds || !ds.base || ds.base.category !== 'station') return null;
+  const layKey = state.scenario && state.scenario.layout;
+  const layout = layKey && LAYOUTS[layKey];
+  if (!layout || !layout.stationCityLinks) return null;
+  const cityId = layout.stationCityLinks[ds.id];
+  if (!cityId) return null;
+  const city = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === cityId);
+  if (!city || city.destroyed) return null;
+  const hasPlant = (city.features || []).some((fk, fi) => fk === 'power_plant' && !(city.destroyedFeatures || []).includes(fi));
+  return hasPlant ? 5 : null;
+}
+
 export function rollSaves(state, rng, M) {
   const s = M.shots[M.shotIdx];
   // Bombardment vs dropsite: roll ES/KS saves based on weapon type.
@@ -1959,10 +2179,22 @@ export function rollSaves(state, rng, M) {
       _primDice.push({ r, ok, sv: h.sv, crit: h.isCrit });
       if (ok) h.saved = true;
     });
+    // Station BS save: conditional on paired city having surviving power plants (Ready Salted Earth).
+    const _bsVal = stationBSVal(state, _ds);
+    const _bsDice = [];
+    if (_bsVal != null) {
+      _hitsList.forEach(h => {
+        if (h.saved) return;
+        const r = rollDie(rng);
+        const ok = r >= _bsVal;
+        _bsDice.push({ r, ok });
+        if (ok) { h.saved = true; h.savedBy = 'bs'; }
+      });
+    }
     const _dmg = _hitsList.filter(h => !h.saved).reduce((a, h) => a + h.dmg, 0);
     const _unsaved = _hitsList.filter(h => !h.saved).length;
     M.saveResult = {
-      hitsList: _hitsList, primDice: _primDice, backDice: [], aegisDice: [],
+      hitsList: _hitsList, primDice: _primDice, bsDice: _bsDice, bsVal: _bsVal, backDice: [], aegisDice: [],
       backupVal: null, aegisY: 0, backupRolled: true,
       unsaved: _unsaved, dmg: _dmg, dsId: s.dsId,
       flash: 0, crippling: false, penetrator: false, status: false, corruptor: 0,
@@ -2125,15 +2357,85 @@ export function resolveAttackDamage(state, M) {
   // Bombardment: apply hull damage; queue collateral battalion-removal choices.
   if (M.pendingBombardDamage) {
     M.bombardCollateralQueue = M.bombardCollateralQueue || [];
+    const bombarderSide = M.attackerGid ? getDef(state, M.attackerGid).side : (M.bomberSide || null);
     Object.keys(M.pendingBombardDamage).forEach(dsId => {
       const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
       if (!ds) return;
       const dmg = M.pendingBombardDamage[dsId];
       if (dmg <= 0) return;
       ds.damage = (ds.damage || 0) + dmg;
-      if (ds.maxHull && ds.damage >= ds.maxHull) ds.destroyed = true;
       const dsName = (ds.base && ds.base.name) || dsId;
-      M.log.push(`${dsName}: ${dmg} hull damage${ds.destroyed ? ' · LEVELLED' : ''}`);
+      const sz = dropsiteSizeKey(ds);
+      const vp = DROPSITE_VP[sz] || DROPSITE_VP.M;
+      const bombarderZone = bombarderSide && state.deployZone && state.deployZone[bombarderSide];
+      const sr = ds.siteRules || [];
+      const hasDemolishObj = bombarderSide && objectiveForSide(state, bombarderSide) === 'demolish';
+      const hasDemolishSite = sr.some(r => r.startsWith('demolish_'));
+      // Fire Demolish VP when: (a) objective is demolish AND zone matches any site restriction,
+      // OR (b) dropsite has an explicit demolish_<zone> siteRule (e.g. Moonwreck with normal obj).
+      const isDemolish = bombarderSide && (
+        (hasDemolishObj && (!hasDemolishSite || !bombarderZone || sr.includes(`demolish_${bombarderZone}`))) ||
+        (!hasDemolishObj && hasDemolishSite && bombarderZone && sr.includes(`demolish_${bombarderZone}`))
+      );
+      // Ruin / Level resolution with overflow. A single salvo can Ruin then Level.
+      let statusNote = '';
+      while (ds.maxHull && ds.damage >= ds.maxHull && !ds.destroyed) {
+        if (ds.ruined) {
+          ds.destroyed = true;
+          statusNote = ' · LEVELLED';
+          if (isDemolish) awardVP(state, bombarderSide, vp.control, `Demolish: ${dsName} Levelled`, state.round);
+        } else {
+          const overflow = ds.damage - ds.maxHull;
+          ds.ruined = true;
+          ds.damage = overflow;
+          statusNote = ' · RUINED';
+          if (isDemolish && vp.contest > 0) awardVP(state, bombarderSide, vp.contest, `Demolish: ${dsName} Ruined`, state.round);
+        }
+      }
+      M.log.push(`${dsName}: ${dmg} hull damage${statusNote}`);
+      // RSE: city levelled → linked station permanently loses BS save.
+      if (ds.destroyed && ds.base && ds.base.category !== 'station') {
+        const _lk2 = state.scenario && state.scenario.layout;
+        const _lay2 = _lk2 && LAYOUTS[_lk2];
+        if (_lay2 && _lay2.stationCityLinks) {
+          const stId2 = Object.keys(_lay2.stationCityLinks).find(k => _lay2.stationCityLinks[k] === ds.id);
+          if (stId2) {
+            const stDs2 = state.scenarioData.dropsites.find(d => d.id === stId2);
+            const stName2 = (stDs2 && stDs2.base && stDs2.base.name) || stId2;
+            logEvent(state, `${dsName} levelled — ${stName2} loses BS 5+ save`);
+          }
+        }
+      }
+      // RSE Event 1: station levelled → place 4" debris field, spike ships/assets inside it.
+      if (ds.destroyed && !ds._debrisPlaced && ds.base && ds.base.category === 'station') {
+        const layKey = state.scenario && state.scenario.layout;
+        const layout = layKey && LAYOUTS[layKey];
+        if (layout && layout.stationCityLinks && ds.id in layout.stationCityLinks) {
+          ds._debrisPlaced = true;
+          const dsx = inchToPx(ds.x), dsy = inchToPx(ds.y);
+          const debrisR = 2 * INCH;
+          const spiked = [];
+          Object.keys(state.groups).forEach(gid => {
+            const g = state.groups[gid];
+            if (g.ships.some(sh => !sh.destroyed && !sh.offTable && Math.hypot(sh.x - dsx, sh.y - dsy) <= debrisR)) {
+              g.spikes = (g.spikes || 0) + 1;
+              spiked.push((getDef(state, gid) || {}).name || gid);
+            }
+          });
+          (state.launchedAssets || []).forEach(a => {
+            if (a.count > 0 && Math.hypot(a.x - dsx, a.y - dsy) <= debrisR) {
+              a.spikes = (a.spikes || 0) + 1;
+            }
+          });
+          state.scenarioData.dynamicDebris = state.scenarioData.dynamicDebris || [];
+          state.scenarioData.dynamicDebris.push({ x: ds.x, y: ds.y, diameter: 4, fromStation: ds.id });
+          state.scenarioData.focalPoints = state.scenarioData.focalPoints || [];
+          state.scenarioData.focalPoints.push({ x: ds.x, y: ds.y, diameter: 4, label: `Debris (${dsName})`, special: ['low_crippled'], dynamic: true });
+          const spNote = spiked.length ? ` — ${[...new Set(spiked)].join(', ')} gain 1 Spike` : '';
+          M.log.push(`${dsName} LEVELLED → 4" Debris Field placed (now a Focal Point)${spNote}`);
+          logEvent(state, `${dsName} levelled: debris field placed at (${ds.x}", ${ds.y}")`);
+        }
+      }
       // Queue 1 collateral choice per hull point per player that has battalions.
       const b = dsBattalions(ds);
       const p1Total = Object.values(b).reduce((s, loc) => s + (loc.player1 || 0), 0);
@@ -2584,6 +2886,21 @@ export function anyRepairWork(state) {
   );
 }
 
+/* Minimum distance from point (px, py) to line segment (ax,ay)→(bx,by), in same units. */
+function pointSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/* Roll a save die and return 1 hull damage if it fails, 0 if it saves. */
+function rollHullHit(rng, saveSv) {
+  if (saveSv == null) return 1;
+  return rollDie(rng) < saveSv ? 1 : 0;
+}
+
 function advanceRoundInternal(state, rng) {
   // Status tokens are automatically removed at the start of the End Phase.
   Object.values(state.groups).forEach(g => g.ships.forEach(s => {
@@ -2610,6 +2927,85 @@ function advanceRoundInternal(state, rng) {
     return state;
   }
   if (state.lastScoring) state.scoringModal = { ...state.lastScoring, log: scoreLog };
+
+  // ── SCENARIO END-PHASE EVENTS ──
+  const _layKey = state.scenario && state.scenario.layout;
+
+  // Moonskipper: moon moves diagonally (bottom-left → top-right) each End Phase;
+  // ships in orbit within 6" of the swept path are destroyed.
+  if (_layKey === 'se1_moonskipper' && completedRound <= 4) {
+    const prevX = state.moonPos ? state.moonPos.x : 0;
+    const prevY = state.moonPos ? state.moonPos.y : 48;
+    const newX = completedRound * 12;
+    const newY = 48 - completedRound * 12;
+    state.moonPos = { x: newX, y: newY };
+    if (state.scenarioData && state.scenarioData.largeObjects && state.scenarioData.largeObjects.length > 0) {
+      state.scenarioData.largeObjects[0].x = newX;
+      state.scenarioData.largeObjects[0].y = newY;
+    }
+    const sweepR = 6 * INCH; // half the 12" path width
+    const px0 = inchToPx(prevX), py0 = inchToPx(prevY);
+    const px1 = inchToPx(newX),  py1 = inchToPx(newY);
+    const destroyed = [];
+    Object.keys(state.groups).forEach(gid => {
+      const def = getDef(state, gid);
+      if (!def) return;
+      const g = state.groups[gid];
+      g.ships.forEach((s, si) => {
+        if (s.destroyed || s.offTable) return;
+        if (pointSegDist(s.x, s.y, px0, py0, px1, py1) <= sweepR) {
+          s.destroyed = true;
+          recordKill(state, def, def.side === 'player1' ? 'player2' : 'player1', false, `${gid}#${si}`);
+          destroyed.push(def.name);
+        }
+      });
+    });
+    const moonNote = destroyed.length ? ` — ${destroyed.join(', ')} destroyed in moon's path` : '';
+    logEvent(state, `Moonskipper: moon moves to (${newX}", ${newY}")${moonNote}`);
+  }
+
+  // Moonbreaker: check if all moon dropsites are levelled → moon breaks.
+  // Each subsequent round the cloud deals 1K + 1E hit (with saves) to ships in the zone.
+  if (_layKey === 'se1_moonbreaker') {
+    const mbLay = LAYOUTS['se1_moonbreaker'];
+    const moonDsSet = new Set(mbLay.moonDropsites || []);
+    const moonDsList = ((state.scenarioData && state.scenarioData.dropsites) || []).filter(d => moonDsSet.has(d.id));
+    // Detect moon breaking (first time all moon dropsites are levelled).
+    if (state.moonBrokenRound == null && moonDsList.length > 0 && moonDsList.every(d => d.destroyed)) {
+      state.moonBrokenRound = completedRound;
+      logEvent(state, `Moonbreaker: moon breaks! Cloud zone active next round.`);
+    }
+    // Apply cloud damage to ships in zone (starts the round AFTER the break).
+    if (state.moonBrokenRound != null && completedRound > state.moonBrokenRound) {
+      const roundsAfterBreak = completedRound - state.moonBrokenRound;
+      const cloudR = inchToPx(6 + 3 * roundsAfterBreak); // radius: starts 6" (12" diam), +3" per round
+      const cx = inchToPx(24), cy = inchToPx(24);
+      const cloudHit = [];
+      Object.keys(state.groups).forEach(gid => {
+        const def = getDef(state, gid);
+        if (!def) return;
+        const g = state.groups[gid];
+        g.ships.forEach((s, si) => {
+          if (s.destroyed || s.offTable) return;
+          if (Math.hypot(s.x - cx, s.y - cy) > cloudR) return;
+          const kDmg = rollHullHit(rng, saveVal(def.ks));
+          const eDmg = rollHullHit(rng, saveVal(def.es));
+          const dmg = kDmg + eDmg;
+          if (dmg > 0) {
+            s.hull = Math.max(0, s.hull - dmg);
+            if (s.hull <= 0) {
+              s.destroyed = true;
+              recordKill(state, def, def.side === 'player1' ? 'player2' : 'player1', false, `${gid}#${si}`);
+            }
+            cloudHit.push(`${def.name} −${dmg}`);
+          }
+        });
+      });
+      const diam = 12 + 6 * roundsAfterBreak;
+      logEvent(state, `Moonbreaker cloud (${diam}" diam): ${cloudHit.length ? cloudHit.join(', ') : 'no ships hit'}`);
+    }
+  }
+
   state.round = state.round + 1;
   logEvent(state, `── Round ${state.round} begins ──`);
   Object.values(state.groups).forEach(g => {
@@ -3023,6 +3419,8 @@ export function finishActivation(state, rng, gid) {
   const variantKey = state.scenario && state.scenario.variant;
   const expansiveAtmo = variantKey === 'expansive_atmosphere';
   const orbitalComplex = variantKey === 'orbital_complex';
+  const layKey = state.scenario && state.scenario.layout;
+  const isOrbitalDecayScen = layKey === 'se1_one_with_almost_nothing' || layKey === 'se1_almost_nothing_at_all';
   const d3 = () => Math.ceil(rollDie(rng) / 2);
   const is2D3 = def.tonnage === 'C';
   const dmgLog = [];
@@ -3040,6 +3438,14 @@ export function finishActivation(state, rng, gid) {
       const a = d3() + (is2D3 ? d3() : 0);
       dmg += a;
       dmgLog.push(`${def.name}: ${a} (orbital decay)`);
+    }
+    // Orbital Decay tokens (One With/Almost Nothing scenarios): each token deals D3 (2D3 for Colossal).
+    // No atmosphere layer in these scenarios — decay tokens are the only source of end-of-activation damage.
+    if (isOrbitalDecayScen && s.orbitalDecayTokens > 0) {
+      let a = 0;
+      for (let t = 0; t < s.orbitalDecayTokens; t++) a += d3() + (is2D3 ? d3() : 0);
+      dmg += a;
+      dmgLog.push(`${def.name}: ${a} (${s.orbitalDecayTokens}× Orbital Decay)`);
     }
     const effOrd = openNet ? s.order : grp.order;
     if (expansiveAtmo && (effOrd === 'CC' || effOrd === 'MT')) {
@@ -3151,8 +3557,19 @@ function applyCommitScenario(state, rng) {
   };
   state.captured = { player1: 0, player2: 0 };
   state.admiralKilled = { player1: false, player2: false };
+  state.admiralKillCount = { player1: 0, player2: 0 };
+  state.moonguardSecondaries = { player1: state.moonguardSecondaryChoice && state.moonguardSecondaryChoice.f1 || null, player2: state.moonguardSecondaryChoice && state.moonguardSecondaryChoice.f2 || null };
   const scenData = buildScenarioState(state.scenario);
   state.scenarioData = scenData;
+  // Moonswipe: apply pre-deployment large object repositioning from setup.
+  if (state.moonswipe && state.moonswipe.done && state.moonswipe.positions) {
+    state.moonswipe.positions.forEach((pos, i) => {
+      if (scenData.largeObjects && scenData.largeObjects[i]) {
+        scenData.largeObjects[i].x = pos.x;
+        scenData.largeObjects[i].y = pos.y;
+      }
+    });
+  }
   // Extract objective: seed Recon Operative tokens on each Dropsite.
   if (objAny(state, 'extract')) {
     scenData.dropsites.forEach(ds => {
@@ -3880,6 +4297,17 @@ export function apply(state, intent, rng) {
       logEvent(state, `${def.name || gid} spike ${delta > 0 ? '+1' : '−1'} → ${newVal}`);
       return state;
     }
+    case 'adjustOrbitalDecay': {
+      const { gid: odGid, si: odSi, delta: odDelta } = intent;
+      const odGrp = state.groups[odGid];
+      if (!odGrp) return state;
+      const odShip = odGrp.ships[odSi];
+      if (!odShip || odShip.destroyed) return state;
+      odShip.orbitalDecayTokens = Math.max(0, (odShip.orbitalDecayTokens || 0) + odDelta);
+      const odDef = getDef(state, odGid);
+      logEvent(state, `${odDef ? odDef.name : odGid}: Orbital Decay ${odDelta > 0 ? '+1' : '−1'} → ${odShip.orbitalDecayTokens} token${odShip.orbitalDecayTokens !== 1 ? 's' : ''}`);
+      return state;
+    }
     case 'adjustHull': {
       const { gid, si, delta } = intent;
       const grp = state.groups[gid];
@@ -3893,6 +4321,28 @@ export function apply(state, intent, rng) {
       }
       const def = grp.def || {};
       logEvent(state, `${def.name || gid} #${si + 1} HP ${delta > 0 ? '+1' : '−1'} → ${newHull}/${ship.maxHull}${ship.destroyed ? ' (destroyed)' : ''}`);
+      return state;
+    }
+    case 'assessDropsite': {
+      const { gid: asGid, si: asSi, dsId: asDsId } = intent;
+      const asDef = getDef(state, asGid);
+      if (!asDef) return state;
+      const asSide = asDef.side;
+      state.assessedDropsites = state.assessedDropsites || { player1: [], player2: [] };
+      state.assessedDropsites[asSide] = state.assessedDropsites[asSide] || [];
+      if (!state.assessedDropsites[asSide].includes(asDsId)) {
+        state.assessedDropsites[asSide].push(asDsId);
+        const asDs = state.scenarioData?.dropsites?.find(d => d.id === asDsId);
+        const asDsName = asDs?.base?.name || asDsId;
+        const asZone = state.deployZone && state.deployZone[asSide];
+        const asSr = asDs?.siteRules || [];
+        const asVp = (asZone && asSr.includes(`double_assess_${asZone}`)) ? 2 : 1;
+        awardVP(state, asSide, asVp, `Assess: ${asDsName}${asVp > 1 ? ' ×2' : ''}`, state.round);
+        logEvent(state, `${asDef.name} assessed ${asDsName}`);
+      }
+      const asShip = state.groups[asGid].ships[asSi];
+      asShip.firedThisActivation = true;
+      asShip.hasAssessed = true;
       return state;
     }
     case 'surveySite':

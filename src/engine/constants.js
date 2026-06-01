@@ -73,8 +73,18 @@ export const FEATURES = {
     note:'When enemy Battalions here are removed, place 2 friendly Battalions on this Dropsite.' }
 };
 
-// Helper to compose a dropsite descriptor (id, type, inch-x, inch-y).
-export const ds = (id, type, x, y) => ({ id, type, x, y });
+// Helper to compose a dropsite descriptor.
+// features: optional initial feature array e.g. ['power_plant','military_outpost']
+// siteRules: optional zone-specific scoring rules, any combination of:
+//   'assess'                            — both players may Assess (1 VP each, Assess objective)
+//   'assess_south' / 'assess_north'     — only that zone's player may Assess
+//   'double_assess_south' / '_north'    — that zone's player scores 2 VP for Assessing instead of 1
+//   'demolish_south' / 'demolish_north' — only that zone's player scores Demolish VP (Ruin/Level)
+export const ds = (id, type, x, y, features, siteRules) => ({
+  id, type, x, y,
+  ...(features   ? { layoutFeatures: features } : {}),
+  ...(siteRules  ? { siteRules }                : {})
+});
 
 export const LAYOUTS = {
   diagonal: {
@@ -249,61 +259,88 @@ export const LAYOUTS = {
     d6:0, bespoke:true, name:'Ready Salted Earth',
     scenery:{ micrometeor:4, dense:2, rings:0, largeObjects:0 },
     dropsites:[
-      ds('ds1','medium_station', 12, 24),
-      ds('ds2','medium_station', 36, 24),
-      ds('ds3','small_city',      9, 39),
-      ds('ds4','small_city',     39,  9)
+      ds('ds1','medium_station', 12, 24, ['comms_station','military_outpost']),
+      ds('ds2','medium_station', 36, 24, ['comms_station','military_outpost']),
+      ds('ds3','large_city',      9, 39),
+      ds('ds4','large_city',     39,  9),
+      ds('ds5','small_city',     24, 18, ['power_plant','power_plant']),
+      ds('ds6','small_city',     24, 30, ['power_plant','power_plant'])
     ],
-    rings:[], largeObjects:[]
+    rings:[], largeObjects:[],
+    focalPoints:[
+      { x:12, y:24, diameter:8 , special:['low_crippled'], label:'Station Focal Point'},
+      { x:36, y:24, diameter:8 , special:['low_crippled'], label:'Station Focal Point'}
+    ],
+    stationCityLinks: { ds1: 'ds5', ds2: 'ds6' }
   },
   se1_erupting_quarters: {
     d6:0, bespoke:true, name:'Erupting Quarters',
     scenery:{ micrometeor:4, dense:4, rings:0, largeObjects:0 },
     dropsites:[
-      ds('ds1','medium_station', 24, 24),
-      ds('ds2','medium_city',    12, 12),
-      ds('ds3','medium_city',    36, 12),
-      ds('ds4','medium_city',    12, 36),
-      ds('ds5','medium_city',    36, 36)
+      ds('ds1','medium_station', 24, 24, ['hangar','military_outpost','orbital_defence_gun']),
+      ds('ds2','medium_city',    12, 12, ['power_plant','comms_station']),
+      ds('ds3','medium_city',    36, 12, ['power_plant','military_outpost','orbital_defence_gun']),
+      ds('ds4','medium_city',    12, 36, ['power_plant','military_outpost','orbital_defence_gun']),
+      ds('ds5','medium_city',    36, 36, ['power_plant','comms_station'])
     ],
-    rings:[], largeObjects:[]
+    rings:[], largeObjects:[],
+    focalPoints:[
+      { x:0, y:0, width:24, height:24, special:['low_crippled','low_north']},
+      { x:24, y:0, width:24, height:24,special:['low_crippled','low_north']}, 
+      { x:0, y:24, width:24, height:24, special:['low_crippled','low_south']}, 
+      { x:24, y:24, width:24, height:24, special:['low_crippled','low_south']},
+    ]
   },
   se1_latitudinal_lanes: {
     d6:0, bespoke:true, name:'Latitudinal Lanes',
     scenery:{ micrometeor:6, dense:2, rings:0, largeObjects:0 },
     dropsites:[
-      ds('ds1','medium_city',     9, 12),
-      ds('ds2','medium_station', 24, 12),
-      ds('ds3','medium_city',    39, 12),
-      ds('ds4','medium_city',     9, 36),
-      ds('ds5','medium_station', 24, 36),
-      ds('ds6','medium_city',    39, 36)
+      ds('ds1','medium_city',     9, 12, ['military_outpost','orbital_defence_gun'], ['assess_south']),
+      ds('ds2','medium_station', 24, 12, ['power_plant','comms_station'], ['assess_south']),
+      ds('ds3','medium_city',    39, 12, ['military_outpost','orbital_defence_gun'], ['assess_south']),
+      ds('ds4','medium_city',     9, 36, ['military_outpost','orbital_defence_gun'], ['assess_north']),
+      ds('ds5','medium_station', 24, 36, ['power_plant','comms_station'], ['assess_north']),
+      ds('ds6','medium_city',    39, 36, ['military_outpost','orbital_defence_gun'], ['assess_north'])
     ],
-    rings:[], largeObjects:[]
+    rings:[], largeObjects:[],
+    focalPoints:[
+      { x:9, y:12, diameter:6, special:['low_north']},
+      { x:24, y:12, diameter:6, special:['low_north']},
+      { x:39, y:12, diameter:6, special:['low_north']},
+      { x:9, y:36, diameter:6, special:['low_south']},
+      { x:24, y:36, diameter:6, special:['low_south']},
+      { x:39, y:36, diameter:6, special:['low_south']},
+    ]
   },
   se1_lagrange_points: {
     d6:0, bespoke:true, name:'Lagrange Points',
     scenery:{ micrometeor:6, dense:2, rings:0, largeObjects:0 },
-    dropsites:[
-      ds('ds1','large_station', 12, 24),
-      ds('ds2','large_station', 36, 24),
+    dropsites:[      
+      ds('ds1','large_station', 12, 24, ['military_outpost','orbital_defence_gun']),
+      ds('ds2','large_station', 36, 24, ['military_outpost','orbital_defence_gun']),
       ds('ds3','medium_city',   24, 18),
-      ds('ds4','medium_city',   24, 30)
+      ds('ds4','medium_city',   24, 30),
+      ds('ds5','small_city',     9, 39, ['comms_station','comms_station']),
+      ds('ds6','small_city',    39,  9, ['comms_station','comms_station'])
     ],
-    rings:[], largeObjects:[]
+    rings:[], largeObjects:[],
+    focalPoints:[
+      { x:12, y:24, diameter:8, special:['low_crippled'] },
+      { x:36, y:24, diameter:8, special:['low_crippled'] }
+    ]
   },
   se1_when_backfields_meet: {
     d6:0, bespoke:true, name:'When Backfields Meet',
     scenery:{ micrometeor:2, dense:6, rings:0, largeObjects:0 },
     dropsites:[
-      ds('ds1','small_station', 12, 12),
-      ds('ds2','small_station', 36, 36),
-      ds('ds3','medium_city',   24,  9),
-      ds('ds4','medium_city',    9, 21),
-      ds('ds5','medium_city',   24, 24),
-      ds('ds6','medium_city',   39, 27),
-      ds('ds7','medium_city',   24, 39),
-      ds('ds8','medium_city',   36, 12)
+      ds('ds1','small_station', 12, 12, ['power_plant','comms_station'], ['assess','double_assess_south','demolish_south','score_north']),
+      ds('ds2','small_station', 36, 36, ['power_plant','comms_station'], ['assess','double_assess_north','demolish_north','score_south']),
+      ds('ds3','medium_city',   24, 9,  ['hangar'], ['assess','double_assess_south','demolish_south','score_north']),
+      ds('ds4','medium_city',   24, 39, ['hangar'], ['assess','double_assess_north','demolish_north','score_south']),
+      ds('ds5','medium_city',    9, 24, ['hangar'], ['assess','double_assess_south','demolish_south','score_north']),
+      ds('ds6','medium_city',   39, 24, ['hangar'], ['assess','double_assess_north','demolish_north','score_south']),
+      ds('ds7','small_city',     9, 39),
+      ds('ds8','small_city',    39, 9)
     ],
     rings:[], largeObjects:[]
   },
@@ -311,62 +348,78 @@ export const LAYOUTS = {
     d6:0, bespoke:true, name:'Very Important Moon',
     scenery:{ micrometeor:2, dense:2, rings:0, largeObjects:1 },
     dropsites:[
-      ds('ds1','large_station', 24, 12),
-      ds('ds2','large_station', 24, 36),
-      ds('ds3','medium_city',   12, 21),
-      ds('ds4','medium_city',   39, 21),
-      ds('ds5','medium_city',    9, 30),
-      ds('ds6','medium_city',   36, 30)
+      ds('ds1','large_station', 24, 12, ['hangar','comms_station']),
+      ds('ds2','large_station', 24, 36, ['hangar','comms_station']),
+      ds('ds3','small_city',   12, 18, ['military_outpost','orbital_defence_gun']),
+      ds('ds4','small_city',   36, 30, ['military_outpost','orbital_defence_gun']),
+      ds('ds5','medium_city',    9, 30, ['military_outpost','orbital_defence_gun']),
+      ds('ds6','medium_city',   39, 18, ['military_outpost','orbital_defence_gun'])
     ],
-    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }]
+    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }],
+    focalPoints:[
+      { x:24, y:24, diameter:24 }
+    ]
   },
   se1_moonshot: {
     d6:0, bespoke:true, name:'Moonshot',
     scenery:{ micrometeor:2, dense:3, rings:0, largeObjects:1 },
     dropsites:[
-      ds('ds1','medium_city',    12, 12),
-      ds('ds2','medium_station', 36, 12),
-      ds('ds3','medium_station', 12, 36),
-      ds('ds4','medium_city',    36, 36)
+      ds('ds1','medium_city',    12, 12, ['military_outpost','orbital_defence_gun']),
+      ds('ds2','medium_station', 36, 12, ['military_outpost','orbital_defence_gun']),
+      ds('ds3','medium_station', 12, 36, ['military_outpost','orbital_defence_gun']),
+      ds('ds4','medium_city',    36, 36, ['military_outpost','orbital_defence_gun'])
     ],
-    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }]
+    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }],
+    focalPoints:[
+      { x:12, y:12, diameter:6 },
+      { x:36, y:12, diameter:6 },
+      { x:12, y:36, diameter:6 },
+      { x:36, y:36, diameter:6 }
+    ]
   },
   se1_moonwreck: {
     d6:0, bespoke:true, name:'Moonwreck',
     scenery:{ micrometeor:6, dense:8, rings:0, largeObjects:1 },
     dropsites:[
-      ds('ds1','large_station', 14, 12),
-      ds('ds2','large_station', 34, 12),
-      ds('ds3','large_station', 14, 36),
-      ds('ds4','large_station', 34, 36)
+      ds('ds1','large_station', 24, 12, ['military_outpost','orbital_defence_gun'], ['demolish_south']),
+      ds('ds2','large_station', 44, 12, ['military_outpost','orbital_defence_gun']),
+      ds('ds3','large_station',  4, 36, ['military_outpost','orbital_defence_gun']),
+      ds('ds4','large_station', 24, 36, ['military_outpost','orbital_defence_gun'], ['demolish_north'])
     ],
-    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }]
+    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }],
+    focalPoints:[
+      { x:24, y:12, diameter:6 },
+      { x:44, y:12, diameter:6 },
+      { x:4, y:36, diameter:6 },
+      { x:24, y:36, diameter:6 }
+    ]
   },
   se1_moonbreaker: {
     d6:0, bespoke:true, name:'Moonbreaker',
     scenery:{ micrometeor:1, dense:3, rings:0, largeObjects:1 },
     dropsites:[
-      ds('ds1','large_station', 10,  6),
-      ds('ds2','large_station', 38,  6),
-      ds('ds3','large_station', 24, 36),
+      ds('ds1','large_station', 12,  12, ['military_outpost','orbital_defence_gun']),
+      ds('ds2','large_station', 36,  12, ['military_outpost','orbital_defence_gun']),
+      ds('ds3','large_station', 24, 36, ['military_outpost','orbital_defence_gun']),
       // The four "yellow locations" — Small Cities on the Large Object.
-      ds('ds4','small_city',    24, 16),
-      ds('ds5','small_city',    32, 24),
-      ds('ds6','small_city',    24, 32),
-      ds('ds7','small_city',    16, 24)
+      ds('ds4','small_city',    24, 17.7, [], ['demolish_south']),
+      ds('ds5','small_city',    29.7, 24, [], ['demolish_south']),
+      ds('ds6','small_city',    24, 30.3, [], ['demolish_south']),
+      ds('ds7','small_city',    18.3, 24, [], ['demolish_south']),
     ],
-    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }]
+    rings:[], largeObjects:[{ x:24, y:24, diameter:12 }],
+    moonDropsites: ['ds4','ds5','ds6','ds7']
   },
   se1_moonguard: {
     d6:0, bespoke:true, name:'Moonguard',
     scenery:{ micrometeor:1, dense:3, rings:0, largeObjects:1 },
     dropsites:[
-      ds('ds1','medium_city',     8, 10),
-      ds('ds2','medium_station', 24, 12),
-      ds('ds3','medium_city',    40, 12),
-      ds('ds4','medium_station', 24, 24)
+      ds('ds1','medium_city',     8, 8, ['power_plant','military_outpost','orbital_defence_gun']),
+      ds('ds2','medium_station', 24, 8, ['military_outpost','orbital_defence_gun']),
+      ds('ds3','medium_city',    40, 8, ['power_plant','military_outpost','orbital_defence_gun']),
+      ds('ds4','medium_station', 24, 24, ['military_outpost','orbital_defence_gun'])
     ],
-    rings:[], largeObjects:[{ x:24, y:34, diameter:12 }]
+    rings:[], largeObjects:[{ x:24, y:36, diameter:12 }]
   },
   se1_moonswipe: {
     d6:0, bespoke:true, name:'Moonswipe',
@@ -374,8 +427,8 @@ export const LAYOUTS = {
     dropsites:[
       ds('ds1','medium_station', 24, 12),
       ds('ds2','medium_station', 24, 36),
-      ds('ds3','medium_city',    12, 24),
-      ds('ds4','medium_city',    36, 24)
+      ds('ds3','medium_city',    12, 24, ['military_outpost','orbital_defence_gun']),
+      ds('ds4','medium_city',    36, 24, ['military_outpost','orbital_defence_gun'])
     ],
     rings:[],
     largeObjects:[
@@ -383,6 +436,12 @@ export const LAYOUTS = {
       { x:36, y:12, diameter:6 },
       { x:12, y:36, diameter:6 },
       { x:36, y:36, diameter:6 }
+    ],
+    focalPoints:[
+      { x:24, y:12, diameter:6 },
+      { x:24, y:36, diameter:6 },
+      { x:12, y:24, diameter:6 },
+      { x:36, y:24, diameter:6 }
     ]
   },
   se1_moonskipper: {
@@ -393,12 +452,16 @@ export const LAYOUTS = {
       ds('ds2','small_station', 24, 12),
       ds('ds3','small_station', 24, 36),
       ds('ds4','small_station', 36, 36),
-      ds('ds5','medium_city',   12, 24),
-      ds('ds6','medium_city',   36, 24)
+      ds('ds5','medium_city',   12, 24, ['military_outpost','orbital_defence_gun']),
+      ds('ds6','medium_city',   36, 24, ['military_outpost','orbital_defence_gun'])
     ],
     rings:[],
     // The moon begins in the bottom-left corner and tracks across the board (manual).
-    largeObjects:[{ x:12, y:36, diameter:12 }]
+    largeObjects:[{ x:0, y:48, diameter:12 }],
+    focalPoints:[
+      { x:12, y:12, diameter:6, special:['south']},
+      { x:36, y:36, diameter:6, special:['north']}
+    ]
   },
   se1_one_with_almost_nothing: {
     d6:0, bespoke:true, name:'One With (Almost) Nothing',
@@ -411,9 +474,12 @@ export const LAYOUTS = {
     scenery:{ micrometeor:4, dense:4, rings:0, largeObjects:2 },
     dropsites:[],
     rings:[],
-    largeObjects:[
-      { x:16, y:24, diameter:8 },
-      { x:32, y:24, diameter:8 }
+    largeObjects:[],
+    focalPoints:[
+      { x:0, y:0, width:24, height:24, special:['south','low_south_crippled']},
+      { x:24, y:0, width:24, height:24, special:['south','low_south_crippled']},
+      { x:0, y:24, width:24, height:24, special:['north','low_north_crippled']},
+      { x:24, y:24, width:24, height:24, special:['north','low_north_crippled']},
     ]
   }
 };
@@ -465,6 +531,28 @@ export const DEPLOYMENTS = {
       south: { edgeLines:[{x1:0, y1:48, x2:48, y2:48}] }
     }
   },
+  defender_edge: {
+    d6:0, bespoke:true, name:'Defender Edge', short:'South 12" zone, North edge',
+    desc:'Attackers (South) up to 12" from bottom edge. Defenders (North) in base contact with opposite edge.',
+    zones:{
+      north:{ edgeLines:[{x1:0, y1:0, x2:48, y2:0}] },
+      south: { polygon:[{x:0,y:36},{x:48,y:36},{x:48,y:48},{x:0,y:48}] }
+    }
+  },
+  diagonal_corners: {
+    d6:0, bespoke:true, name:'Diagonal Corners', short:'12" from diagonal corners',
+    desc:'Each side deploys in two diagonally-opposite corners (12" from corner along each edge).',
+    zones:{
+      north:{ edgeLines:[
+        { x1:0,  y1:0,  x2:12, y2:0  }, { x1:0,  y1:0,  x2:0,  y2:12 },
+        { x1:48, y1:48, x2:36, y2:48 }, { x1:48, y1:48, x2:48, y2:36 }
+      ]},
+      south: { edgeLines:[
+        { x1:48, y1:0,  x2:36, y2:0  }, { x1:48, y1:0,  x2:48, y2:12 },
+        { x1:0,  y1:48, x2:12, y2:48 }, { x1:0,  y1:48, x2:0,  y2:36 }
+      ]}
+    }
+  },
   encirclement: {
     d6:6, name:'Encirclement', short:'South corners, North centre',
     desc:'Attackers (South) 6" from all board corners. Defenders (North) 9" from board centre.',
@@ -493,7 +581,7 @@ export const APPROACH_BEHAVIOURS = {
   backline:       { name:'Backline',        short:'Backline',
     desc:'R1 — H & C tonnage only · R2+ — any Group. Vanguard-X used as normal.' },
   staggered:      { name:'Staggered',       short:'Staggered',
-    desc:'R1 — activate/deploy X Groups · R2 — X more · R3 — the rest. X = 1 (Skirmish) / 2 (Clash) / 3 (Battle) / 4+ (Reconquest). The X-per-round limit is tracked manually.' }
+    desc:'R1 — activate/deploy X Groups · R2 — X more · R3 — the rest. X = 1 (≤1000 pts) / 2 (≤2000) / 3 (≤3000) / 4+ (3001+). Engine-enforced.' }
 };
 
 export const APPROACHES = {
@@ -686,6 +774,11 @@ export const VARIANTS = {
   }
 };
 
+// Focal Points ship values by tonnage.
+// special tags on a focal point: 'low_crippled', 'low_north', 'low_south'
+export const FOCAL_HIGH = { L: 1, M:  4, H:  7, C: 11 };
+export const FOCAL_LOW  = { L: 0, M:  1, H:  3, C:  5 };
+
 export const SECONDARY_OBJECTIVES = {
   annihilate:   { name:'Annihilate',   desc:'1 VP per 500 pts of Ships/Admirals you destroyed (max 3).' },
   take_prizes:  { name:'Take Prizes',  desc:'1 VP per 100 pts of captured Ships (max 3).' },
@@ -725,11 +818,11 @@ export const OBJECTIVES = {
   normal:       { d6:0, bespoke:true, name:'Normal', short:'Control/Contest Dropsites (R4 & R6)',
     desc:'Normal Scoring: High Scoring when you Control a Dropsite, Low Scoring when you Contest it (Small 2/0, Medium 3/1, Large 4/2). Scored on Rounds 4 and 6.',
     bonus:null, scoring:'control_contest' },
-  // Demolish — High when Levelled, Low when Ruined. Approximated via Standard dropsite
-  // scoring; the immediate-on-levelling award is tracked manually.
+  // Demolish — High when Levelled, Low when Ruined. Engine-scored immediately on breach.
+  // No R4/R6 dropsite scoring for Demolish games.
   demolish:     { d6:0, bespoke:true, name:'Demolish', short:'Score for Levelling / Ruining Dropsites',
-    desc:'Demolish Scoring: immediately gain High Scoring when you Level a Dropsite, Low Scoring when you Ruin it. Engine awards via Standard dropsite scoring on R4/R6 — immediate-on-Level awards are tracked manually.',
-    bonus:'High when Levelled · Low when Ruined (immediate award tracked manually)', scoring:'control_contest' },
+    desc:'Demolish Scoring: immediately gain High Scoring when you Level a Dropsite (Small 2/Medium 3/Large 4), Low Scoring when you Ruin it (Small 0/Medium 1/Large 2). No R4/R6 dropsite scoring.',
+    bonus:'High when Levelled (2/3/4) · Low when Ruined (0/1/2)', scoring:'none' },
   // Focal Points — sum of ship value within range; no engine machinery, adjudicated manually.
   focal_points: { d6:0, bespoke:true, name:'Focal Points', short:'Ship value within range (manual)',
     desc:'Focal Points Scoring: total your Ships’ value within range of each Focal Point. Highest combined value scores 3 VP; any other player with ≥ half scores 1 VP. Scored on R4 & R6. Adjudicated manually — the scenario summary lists each Focal Point.',
@@ -738,10 +831,10 @@ export const OBJECTIVES = {
   kill_points:  { d6:0, bespoke:true, name:'Kill Points', short:'+2 VP per 500 pts destroyed (game end)',
     desc:'Kill Points Scoring: 2 VP at the end of the game for every 500 points of Ships and Admirals you have destroyed.',
     bonus:'+2 VP per 500 pts of Ships & Admirals destroyed at game end', scoring:'none' },
-  // Assess — Capital Ship on General Quarters within 6" of a Dropsite may Assess it; manual.
-  assess:       { d6:0, bespoke:true, name:'Assess', short:'Assess Dropsites for 1 VP each (manual)',
-    desc:'Assess Scoring: while on General Quarters, a Capital Ship within 6" of a Scenario Dropsite may Assess it instead of attacking/launching. Each Dropsite may be Assessed once per player for 1 VP. Adjudicated manually.',
-    bonus:'+1 VP per Dropsite Assessed (manual)', scoring:'none' }
+  // Assess — Capital Ship on GQ within 6" of an eligible Dropsite may Assess it instead of attacking/launching.
+  assess:       { d6:0, bespoke:true, name:'Assess', short:'1–2 VP per Dropsite Assessed',
+    desc:'Assess Scoring: while on General Quarters, a Capital Ship within 6" of an eligible Dropsite (marked assess/assess_south/assess_north) may Assess it instead of attacking/launching. Each Dropsite assessed once per player. 1 VP, or 2 VP if the dropsite has double_assess for that zone.',
+    bonus:'+1 VP per Dropsite Assessed (2 VP on double_assess dropsites)', scoring:'none' }
 };
 
 export const ASSET_PROFILES = {
