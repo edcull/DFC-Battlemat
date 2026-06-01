@@ -7305,7 +7305,7 @@ function renderSetupOverlay() {
   // Raze / defender Protect); otherwise a single shared objective applies.
   const asym = !!scen.objectives;
   const objOptionList = (selKey) => `<option value="" ${!selKey?'selected':''}>— select —</option>` +
-    Object.keys(OBJECTIVES).map(k => { const o = OBJECTIVES[k]; const d6 = o.d6 === 0 ? '—' : o.d6; return `<option value="${k}" ${k===selKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${o.name}</option>`; }).join('');
+    Object.keys(OBJECTIVES).filter(k => !OBJECTIVES[k].bespoke || k === selKey).map(k => { const o = OBJECTIVES[k]; const d6 = o.d6 === 0 ? '—' : o.d6; return `<option value="${k}" ${k===selKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${o.name}</option>`; }).join('');
   const asymToggleRow = `<div class="scen-row full-width" style="grid-template-rows:auto;padding:6px 14px;">
       <label style="grid-column:1/-1;display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-dim);">
         <input type="checkbox" data-asym-toggle ${asym?'checked':''}> ⇄ Asymmetric scoring — each side has its own Objective
@@ -7328,14 +7328,14 @@ function renderSetupOverlay() {
       noteFor(scen.objectives.player2 ? OBJECTIVES[scen.objectives.player2] : null, playerNameForSide('player2'))
     : noteFor(obj, '');
 
-  // ---- Two-tab layout: Standard scenarios vs Custom generation ----
+  // ---- Three-tab layout: Standard scenarios · Scenario Expansion 1 · Custom generation ----
   // Tab is shared (relayed) state so both clients stay on the same tab.
-  const setupTab = (state.setupTab === 'custom') ? 'custom' : 'standard';
+  const setupTab = ['custom','expansion'].includes(state.setupTab) ? state.setupTab : 'standard';
   const lockStyle = (payloadsLocked || anyReady) ? 'opacity:0.4;pointer-events:none;filter:grayscale(0.6);' : '';
   const lockAttr  = (payloadsLocked || anyReady) ? 'disabled' : '';
   const tabBtn = (key, label) => `<button data-setup-tab="${key}" style="flex:1;padding:8px 6px;font:inherit;font-size:11px;font-weight:700;letter-spacing:0.04em;cursor:pointer;background:none;border:none;border-bottom:2px solid ${setupTab===key?'var(--ucm)':'transparent'};color:${setupTab===key?'var(--ucm)':'var(--text-mute)'};">${label}</button>`;
   const tabsBar = `<div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);">
-      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('custom','⚙ CUSTOM / GENERATE')}
+      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('expansion','⊕ SCENARIO EXPANSION 1')}${tabBtn('custom','⚙ CUSTOM / GENERATE')}
     </div>`;
 
   // Standard tab: dropdown + random button + a read-only summary of the chosen scenario
@@ -7375,6 +7375,67 @@ function renderSetupOverlay() {
         <button class="btn" data-preset="random" ${lockAttr} title="Apply a random standard scenario">⚄ RANDOM</button>
       </div>
       ${standardSummary()}
+    </div>`;
+
+  // Scenario Expansion 1 tab — behaves like the Standard tab (dropdown + RANDOM +
+  // read-only summary), driven by EXPANSION_PRESETS. The summary adds a Scenery row
+  // and a Special Rules note (several expansion effects are adjudicated manually).
+  const SE1_SCENARIOS = [
+    ['ready_salted_earth','Ready Salted Earth'], ['erupting_quarters','Erupting Quarters'],
+    ['latitudinal_lanes','Latitudinal Lanes'], ['lagrange_points','Lagrange Points'],
+    ['when_backfields_meet','When Backfields Meet'], ['very_important_moon','Very Important Moon'],
+    ['moonshot','Moonshot'], ['moonwreck','Moonwreck'], ['moonbreaker','Moonbreaker'],
+    ['moonguard','Moonguard'], ['moonswipe','Moonswipe'], ['moonskipper','Moonskipper'],
+    ['one_with_almost_nothing','One With (Almost) Nothing'], ['almost_nothing_at_all','(Almost) Nothing At All']
+  ];
+  // Special-rules briefings, keyed by layout. These cover the bespoke effects that are
+  // adjudicated manually (focal points, moving moons, orbit-only decay, etc.).
+  const SE1_NOTES = {
+    se1_ready_salted_earth: 'Scenario Space Stations are Focal Points (range 8"); Ships below half Hull use Low Value. A destroyed Station leaves a 4" Debris Field that becomes a Focal Point. Each Station is paired with a Small City and has 5+ BS while that City keeps a Power Plant. <i>Focal-point scoring is manual.</i>',
+    se1_erupting_quarters: 'Each board quarter is a Focal Point. Friendly Crippled Ships, and friendly Ships in the board quarter containing your deployment zone, use their Low Value. <i>Board-quarter focal scoring is manual.</i>',
+    se1_latitudinal_lanes: 'Each Dropsite is a Focal Point (range 6"). You may Assess the three Dropsites closest to your opponent. Ships within range of the three Dropsites closest to your own zone use Low Value. <i>Focal-point and Assess scoring are manual.</i>',
+    se1_lagrange_points: 'Each Large Station is a Focal Point (range 8"); Crippled Ships use Low Value. <i>Focal-point scoring is manual; VP via Kill Points are engine-scored.</i>',
+    se1_when_backfields_meet: 'Asymmetric: Red scores Normal from blue &amp; unmarked Cities; Blue from red &amp; unmarked Cities. All players Assess; double from your own colour. Each player may Demolish their own colour. <i>Colour ownership, Assess and Demolish-on-level are tracked manually.</i>',
+    se1_very_important_moon: 'The Large Object (moon) is a Focal Point (range 6" from its edge). At game end, score 1 VP for each of your Groups containing a Crippled Ship outside the Focal Point’s range. <i>The end-game Crippled bonus is manual.</i>',
+    se1_moonshot: 'Each Scenario Dropsite is a Focal Point (range 6") scoring Normal Scoring, in addition to Kill Points. <i>Focal-point scoring is manual; Kill Points are engine-scored.</i>',
+    se1_moonwreck: 'Each Dropsite is a Focal Point (range 6"). You may Demolish the highlighted Dropsites in your opponent’s board half. <i>Demolish-on-level and focal scoring are manual.</i>',
+    se1_moonbreaker: 'Each yellow location on the moon is a separate Small City (no features). Control the majority of moon Dropsites at game end for Normal Scoring. Red may Demolish the yellow Dropsites; once all are Levelled the moon breaks apart and the central 12" becomes a Micrometeor Cloud, widening 6"/round. <i>The breaking-moon hazard is manual.</i>',
+    se1_moonguard: 'Defender has 25% more points (game size unchanged). Each player adds one of Annihilate, Take Prizes or Decapitate as an extra Secondary Objective, and may score one additional Secondary at game end (duplicates must be completed separately). <i>The bonus Secondary is tracked manually.</i>',
+    se1_moonswipe: '2–4 players (modelled as 2). Each Dropsite is a Focal Point (range 6"). Before deployment, players alternate moving each Large Object up to 6" (not onto a City or Station). <i>Large-object repositioning and focal scoring are manual.</i>',
+    se1_moonskipper: 'The marked Space Station closest to your opponent is a Focal Point (range 6"). The moon starts bottom-left and tracks across the board each End Phase; Ships in Orbit within its 12" path are destroyed. <i>The moving moon is manual.</i>',
+    se1_one_with_almost_nothing: 'Only the Orbit layer is used. Orbital Decay tokens deal D3 damage at the end of a Ship’s activation (Colossal 2D3). +1 VP per enemy Admiral destroyed, in addition to Kill Points. <i>Orbital Decay and the Admiral bonus are manual; Kill Points are engine-scored.</i>',
+    se1_almost_nothing_at_all: 'Only the Orbit layer is used. Orbital Decay tokens deal D3 damage at end of activation (Colossal 2D3). Your opponent’s board quarter is a Focal Point; friendly Crippled Ships use Low Value. Scenery is placed ≥8" from any deployment zone. <i>Focal scoring and Orbital Decay are manual.</i>'
+  };
+  const expansionSummary = () => {
+    if (!scen.deployment && !scen.approach && !scen.objective) {
+      return `<div class="scen-extra-note" style="text-align:center;color:var(--text-mute);">Pick an expansion scenario above, or roll a random one.</div>`;
+    }
+    const dep = scen.deployment ? DEPLOYMENTS[scen.deployment] : null;
+    const ap  = scen.approach ? APPROACHES[scen.approach] : null;
+    const objTitle = scen.objective ? OBJECTIVES[scen.objective].name : '';
+    const objSub = scen.objective ? OBJECTIVES[scen.objective].short : '';
+    const lay = scen.layout ? LAYOUTS[scen.layout] : null;
+    let scenerySub = '';
+    if (lay) {
+      const lo = (lay.largeObjects || []).length;
+      scenerySub = `${lay.scenery.micrometeor} Micrometeor Cloud${lay.scenery.micrometeor==1?'':'s'} · ${lay.scenery.dense} Debris Field${lay.scenery.dense==1?'':'s'}${lo?` · ${lo} Large Object${lo==1?'':'s'}`:''} · ${lay.dropsites.length} Dropsite${lay.dropsites.length==1?'':'s'}`;
+    }
+    const note = (scen.layout && SE1_NOTES[scen.layout]) ? `<div class="scen-extra-note"><b>Special Rules:</b> ${SE1_NOTES[scen.layout]}</div>` : '';
+    return sumRow('Deployment Type', dep ? dep.name : '', dep ? (dep.short || dep.desc) : '') +
+           sumRow('Approach', ap ? ap.name : '', cardSummary.approach()) +
+           sumRow('Scoring Objective', objTitle, objSub) +
+           (lay ? sumRow('Scenery &amp; Dropsites', lay.name, scenerySub) : '') +
+           note;
+  };
+  const expansionTab = `<div style="${lockStyle}">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+        <select class="btn" data-exp-preset-select style="flex:1;" ${lockAttr} title="Apply a Scenario Expansion 1 scenario">
+          <option value="">⊕ Select expansion scenario…</option>
+          ${SE1_SCENARIOS.map(([k,n]) => `<option value="${k}">${n}</option>`).join('')}
+        </select>
+        <button class="btn" data-exp-preset="random" ${lockAttr} title="Apply a random expansion scenario">⚄ RANDOM</button>
+      </div>
+      ${expansionSummary()}
     </div>`;
 
   // Custom tab: the full generation grid + RANDOMISE ALL.
@@ -7442,7 +7503,7 @@ function renderSetupOverlay() {
             : 'Complete fleet setup (admiral &amp; payload assignment) before choosing a scenario. Use <b>⚠ SETUP / VIEW FLEET</b> above.'}
         </div>` : ''}
         ${tabsBar}
-        ${setupTab === 'custom' ? customTab : standardTab}
+        ${setupTab === 'custom' ? customTab : setupTab === 'expansion' ? expansionTab : standardTab}
       </div>
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
@@ -7475,7 +7536,7 @@ function renderSetupOverlay() {
   overlay.querySelectorAll('[data-setup-tab]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      state.setupTab = (btn.dataset.setupTab === 'custom') ? 'custom' : 'standard';
+      state.setupTab = ['custom','expansion'].includes(btn.dataset.setupTab) ? btn.dataset.setupTab : 'standard';
       state.scenario = { deployment: null, approach: null, layout: null, variant: null, objective: null };
       renderAll(); // relays in setup phase → opponent's view follows
     });
@@ -7527,6 +7588,41 @@ function renderSetupOverlay() {
       e.stopPropagation();
       const keys = Object.keys(SCEN_PRESETS);
       applyPreset(keys[Math.floor(Math.random() * keys.length)]);
+    });
+  });
+  // Scenario Expansion 1 presets — set every scenario row at once (no asymmetric objectives).
+  const EXPANSION_PRESETS = {
+    ready_salted_earth:      { deployment:'line',             approach:'all_imminent',           layout:'se1_ready_salted_earth',     variant:'none', objective:'demolish'     },
+    erupting_quarters:       { deployment:'from_corners',     approach:'all_imminent',           layout:'se1_erupting_quarters',      variant:'none', objective:'kill_points'  },
+    latitudinal_lanes:       { deployment:'line',             approach:'all_staggered',          layout:'se1_latitudinal_lanes',      variant:'none', objective:'assess'       },
+    lagrange_points:         { deployment:'midboard',         approach:'close_enough',           layout:'se1_lagrange_points',        variant:'none', objective:'kill_points'  },
+    when_backfields_meet:    { deployment:'table_corners',    approach:'all_backline',           layout:'se1_when_backfields_meet',   variant:'none', objective:'normal'       },
+    very_important_moon:     { deployment:'table_corners',    approach:'all_imminent',           layout:'se1_very_important_moon',    variant:'none', objective:'normal'       },
+    moonshot:                { deployment:'table_corners',    approach:'close_enough',           layout:'se1_moonshot',               variant:'none', objective:'kill_points'  },
+    moonwreck:               { deployment:'line',             approach:'column',                 layout:'se1_moonwreck',              variant:'none', objective:'demolish'     },
+    moonbreaker:             { deployment:'attacker_defender',approach:'exp_attacker_staggered', layout:'se1_moonbreaker',            variant:'none', objective:'normal'       },
+    moonguard:               { deployment:'attacker_defender',approach:'exp_defender_imminent',  layout:'se1_moonguard',              variant:'none', objective:'normal'       },
+    moonswipe:               { deployment:'table_corners',    approach:'standoff',               layout:'se1_moonswipe',              variant:'none', objective:'normal'       },
+    moonskipper:             { deployment:'table_corners',    approach:'all_staggered',          layout:'se1_moonskipper',            variant:'none', objective:'normal'       },
+    one_with_almost_nothing: { deployment:'line',             approach:'all_staggered',          layout:'se1_one_with_almost_nothing',variant:'none', objective:'kill_points'  },
+    almost_nothing_at_all:   { deployment:'table_corners',    approach:'all_staggered',          layout:'se1_almost_nothing_at_all',  variant:'none', objective:'focal_points' }
+  };
+  const applyExpansionPreset = (key) => {
+    const preset = EXPANSION_PRESETS[key];
+    if (!preset) return;
+    const next = { ...state.scenario, ...preset };
+    delete next.objectives; // expansion presets use a single shared objective
+    state.scenario = next;
+    renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
+  };
+  overlay.querySelectorAll('[data-exp-preset-select]').forEach(sel => {
+    sel.addEventListener('change', (e) => { e.stopPropagation(); applyExpansionPreset(sel.value); });
+  });
+  overlay.querySelectorAll('[data-exp-preset="random"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const keys = Object.keys(EXPANSION_PRESETS);
+      applyExpansionPreset(keys[Math.floor(Math.random() * keys.length)]);
     });
   });
   // Picker dropdown — change (or clear) the chosen option for a scenario row.

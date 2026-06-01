@@ -419,6 +419,8 @@ export function runScoring(state, rng, round) {
     const objNameOf = (s) => { const o = objectiveForSide(state, s); return (o && OBJECTIVES[o]) ? OBJECTIVES[o].name : ''; };
     // Attrition: +2 VP per 500 pts destroyed.
     sides.forEach(s => { if (objectiveForSide(state, s) === 'attrition') push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objNameOf(s)}: pts destroyed`, round)); });
+    // Kill Points (Scenario Expansion 1): 2 VP per 500 pts of Ships/Admirals destroyed.
+    sides.forEach(s => { if (objectiveForSide(state, s) === 'kill_points') push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objNameOf(s)}: pts destroyed`, round)); });
     // Raze: +2 VP per 500 pts destroyed, PLUS double Standard Scoring value for each
     // Dropsite Levelled or Ruined that lies ≥24" from the scoring side's own Zone.
     sides.forEach(s => {
@@ -1424,6 +1426,32 @@ export function canActivateOffTable(state, def) {
     const tName = t === 'L' ? 'Light' : t === 'M' ? 'Medium' : t === 'H' ? 'Heavy' : 'Colossal';
     const arriveR = t === 'M' ? 2 : 3;
     return { eligible: false, reason: `Distant ${tName}: available from Round ${arriveR}` };
+  }
+  // ── Scenario Expansion 1 approaches ──
+  // Imminent: R1 L & M only · R2 also H · R3+ any.
+  if (app === 'imminent') {
+    if (def.vanguard) return { eligible: true };
+    const t = def.tonnage;
+    if (r >= 3) return { eligible: true };
+    if (r === 2 && (t === 'L' || t === 'M' || t === 'H')) return { eligible: true };
+    if (r === 1 && (t === 'L' || t === 'M')) return { eligible: true };
+    const tName = t === 'H' ? 'Heavy' : 'Colossal';
+    const arriveR = t === 'H' ? 2 : 3;
+    return { eligible: false, reason: `Imminent ${tName}: available from Round ${arriveR}` };
+  }
+  // Backline: R1 H & C only · R2+ any. Vanguard-X used as normal.
+  if (app === 'backline') {
+    if (def.vanguard) return { eligible: true };
+    const t = def.tonnage;
+    if (r >= 2) return { eligible: true };
+    if (r === 1 && (t === 'H' || t === 'C')) return { eligible: true };
+    const tName = t === 'L' ? 'Light' : 'Medium';
+    return { eligible: false, reason: `Backline ${tName}: available from Round 2` };
+  }
+  // Staggered: a fixed number of Groups of the player's choice each round. The
+  // per-round count is tracked manually, so any off-table Group may arrive.
+  if (app === 'staggered') {
+    return { eligible: true };
   }
   return { eligible: false, reason: 'Unknown approach' };
 }
