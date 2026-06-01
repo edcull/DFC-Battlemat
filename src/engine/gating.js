@@ -357,7 +357,10 @@ export function isLegal(state, intent, side) {
       const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
       if (!ds) return false;
       const fk = ds.features && ds.features[fi];
-      return !!(fk && FEATURES[fk] && (FEATURES[fk].weapon || FEATURES[fk].launch) && !(ds.destroyedFeatures || []).includes(fi));
+      if (!fk || !FEATURES[fk] || !(FEATURES[fk].weapon || FEATURES[fk].launch)) return false;
+      if ((ds.destroyedFeatures || []).includes(fi)) return false;
+      if (FEATURES[fk].weapon && (ds.firedFeatures || []).includes(fi)) return false;
+      return true;
     }
     case 'daPickDropsite': {
       if (state.phase !== 'da') return false;

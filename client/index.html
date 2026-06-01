@@ -8714,7 +8714,9 @@ function renderAll(localOnly = false) {
   // Selection-only renders skip the relay — both clients manage their own view state.
   // Replay mode never relays — we're rendering a historical state copy.
   if (!localOnly && !_replayMode) {
-    if (state.phase === 'setup' || state.phase === 'scenery' || state.phase === 'nominations') netRelaySetup(); else netAfterRender();
+    if (state.phase === 'setup' || state.phase === 'scenery' || state.phase === 'nominations') netRelaySetup();
+    else console.log('[relay] netAfterRender called and not acted on');
+    // else netAfterRender();
   }
   // Hotseat only: auto-activate ineligible off-table groups. In online mode the
   // server pre-activates them inside rollInitiative so no client dispatch needed.

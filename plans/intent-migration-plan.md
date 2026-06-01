@@ -100,7 +100,7 @@ These are UI-mode indicators that lead to a server-authoritative intent later, o
 
 **Problem:** The relay-path branch of battalion deployment (when it falls through the DA phase for non-intent-migrated flows) directly mutates `ds.battalions` and selection state without an intent. This is the last significant relay-mode game mutation.
 
-**Action:** Migrate to the intent path (`bcPickDropsite`, `bcAssignGround` etc. already exist). Audit which branch still uses the relay path and wire it to the existing intents.
+**Action:** The gate_dropship (Voidgate) relay path was wired to `adjustBattalion` with a multi-unit delta (gating relaxed from ±1 to any non-zero integer). `bcPickDropsite`/`bcAssignGround` are for battalion *combat*, not Voidgate landing — `adjustBattalion` is the correct intent here.
 
 ---
 

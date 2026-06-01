@@ -864,6 +864,7 @@ export function rollInitiative(state, rng) {
   // Count groups with at least one alive ship on the table, OR groups eligible to
   // arrive/deploy this turn (canActivateOffTable handles play-phase reserve rules).
   const groupCount = (side) => fleetForSide(state, side).filter(def => {
+    if (def.payload) return false;
     const g = state.groups[def.id];
     if (!g) return false;
     const hasOnTable = g.ships.some(s => !s.destroyed && !s.offTable);
