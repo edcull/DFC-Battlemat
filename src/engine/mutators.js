@@ -696,9 +696,14 @@ export function rollInitiative(state, rng) {
     player2: 1 + effectiveAdmiral.player2 + cmdBonus.player2 + comms.player2,
   };
   // Pass Tokens: a side 2+ Groups fewer than the leader gets 1, +1 per further fewer.
+  // Count groups with at least one alive ship on the table, OR groups eligible to
+  // arrive/deploy this turn (canActivateOffTable handles play-phase reserve rules).
   const groupCount = (side) => fleetForSide(state, side).filter(def => {
     const g = state.groups[def.id];
-    return g && g.ships.some(s => !s.destroyed && (!s.offTable || canDeployNow(state, def)));
+    if (!g) return false;
+    const hasOnTable = g.ships.some(s => !s.destroyed && !s.offTable);
+    if (hasOnTable) return true;
+    return canActivateOffTable(state, def).eligible;
   }).length;
   const gc = { player1: groupCount('player1'), player2: groupCount('player2') };
   const most = Math.max(gc.player1, gc.player2);
@@ -715,6 +720,19 @@ export function rollInitiative(state, rng) {
     holder: red > blue ? 'player1' : 'player2',
     round: state.round
   };
+  // Pre-activate groups that have no ships eligible to act this round so they
+  // are never presented to players and never need a finishActivation intent.
+  // Done here (server-authoritative) rather than on each client to avoid races.
+  ['player1', 'player2'].forEach(side => {
+    fleetForSide(state, side).forEach(def => {
+      const grp = state.groups[def.id];
+      if (!grp || grp.activated) return;
+      const hasOffTable = grp.ships.some(s => !s.destroyed && s.offTable && !s.attachedTo);
+      const hasActive   = grp.ships.some(s => !s.destroyed && (!s.offTable || s.justArrived))
+                        || (hasOffTable && canActivateOffTable(state, def).eligible);
+      if (!hasActive) grp.activated = true;
+    });
+  });
 }
 
 // ── SECTION C: ASSET AND DROPSITE LOGIC ──
