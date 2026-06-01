@@ -529,6 +529,60 @@
     border-top: 1px solid var(--border-bright);
     background: rgba(8,12,11,0.6);
   }
+  #event-log-dock.chat-dock-float {
+    position: fixed; bottom: 0; right: 0; width: 280px;
+    visibility: visible; z-index: 55;
+    border-left: 1px solid var(--border-bright);
+    background: var(--bg-elev);
+    max-height: 44vh;
+    display: flex; flex-direction: column;
+  }
+  .log-tab-bar {
+    display: flex; align-items: stretch; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.25);
+  }
+  .log-tab-btn {
+    flex: 1; background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 5px 8px; cursor: pointer; font-family: var(--mono);
+    font-size: 8.5px; letter-spacing: 0.12em; color: var(--text-mute);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+  }
+  .log-tab-btn.active { color: var(--text); border-bottom-color: var(--ucm); }
+  .log-tab-btn:hover:not(.active) { color: var(--text-dim); }
+  .chat-unread {
+    background: var(--ucm); color: #000; font-size: 7.5px; font-weight: 700;
+    border-radius: 8px; padding: 1px 5px; line-height: 1.4;
+  }
+  .chat-body {
+    flex: 1; overflow-y: auto; padding: 4px 0; min-height: 48px;
+  }
+  .chat-msg {
+    padding: 3px 11px; display: flex; flex-direction: column; gap: 1px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+  }
+  .chat-msg-header { display: flex; gap: 6px; align-items: baseline; }
+  .chat-msg-user { font-size: 8px; font-family: var(--mono); font-weight: 700; color: var(--text-dim); }
+  .chat-msg-user.player1 { color: var(--ucm); }
+  .chat-msg-user.player2 { color: var(--shal); }
+  .chat-msg-time { font-size: 7.5px; font-family: var(--mono); color: var(--text-mute); }
+  .chat-msg-text { font-size: 10px; color: var(--text); line-height: 1.4; word-break: break-word; }
+  .chat-input-row {
+    display: flex; gap: 4px; padding: 6px 8px; flex-shrink: 0;
+    border-top: 1px solid var(--border); background: rgba(0,0,0,0.2);
+  }
+  .chat-input {
+    flex: 1; background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 10px;
+    padding: 5px 7px; border-radius: 3px; min-width: 0;
+  }
+  .chat-input:focus { outline: none; border-color: var(--ucm); }
+  .chat-send-btn {
+    padding: 5px 9px; font-size: 10px; background: var(--ucm);
+    color: #000; border: none; border-radius: 3px; cursor: pointer; font-weight: 700;
+  }
+  .chat-send-btn:hover { filter: brightness(1.15); }
+  .chat-empty { padding: 8px 11px; font-size: 9.5px; font-family: var(--mono); color: var(--text-mute); }
   .panel-section {
     padding: 8px 12px;
     border-bottom: 1px solid var(--border);
@@ -1402,39 +1456,121 @@ function renderEventLog() {
   const dock = document.getElementById('event-log-dock');
   if (!dock) return;
   const isOnline = !!_netRoom;
-  const netPrefix = isOnline
-    ? `<span id="log-net-room" style="font-size:8px;font-family:var(--mono);color:var(--text-mute);letter-spacing:0.06em;">${_netRoom}</span>` +
-      `<span id="log-net-dot" style="width:6px;height:6px;border-radius:50%;background:${_netConnected ? '#4ad66d' : '#ff5252'};display:inline-block;flex-shrink:0;"></span>`
-    : '';
+
+  // Float above the setup overlay during non-play phases (setup overlay covers the panel)
+  if (isOnline && state.phase !== 'play') {
+    dock.classList.add('chat-dock-float');
+  } else {
+    dock.classList.remove('chat-dock-float');
+  }
+
   dock.style.display = '';
-  if (state.phase !== 'play') {
+
+  // Non-online, non-play: minimal header only
+  if (!isOnline && state.phase !== 'play') {
     dock.innerHTML = `<div style="display:flex;align-items:center;gap:6px;padding:6px 11px;font-family:var(--mono);">
-      ${netPrefix}
       <span style="font-size:8px;letter-spacing:0.14em;color:var(--text-mute);">EVENT LOG</span>
     </div>`;
     return;
   }
-  const log = state.eventLog || [];
-  const expanded = !!state.logExpanded;
-  const shown = expanded ? log.slice().reverse() : log.slice(-3).reverse();
-  const rows = shown.length
-    ? shown.map(e => `<div style="padding:3px 11px;border-top:1px solid rgba(255,255,255,0.04);display:flex;gap:7px;font-size:9.5px;font-family:var(--mono);">
-        <span style="color:var(--text-mute);flex-shrink:0;">R${e.round}</span>
-        <span style="color:var(--text-dim);">${e.text}</span></div>`).join('')
-    : `<div style="padding:6px 11px;color:var(--text-mute);font-size:9.5px;font-family:var(--mono);">No events yet.</div>`;
-  dock.innerHTML = `
-    <button id="event-log-toggle" style="display:flex;align-items:center;gap:6px;width:100%;text-align:left;
-      background:rgba(255,255,255,0.03);border:none;border-bottom:1px solid var(--border);padding:6px 11px;cursor:pointer;font-family:var(--mono);">
-      ${netPrefix}
-      <span style="font-size:8px;letter-spacing:0.14em;color:var(--text-mute);">EVENT LOG</span>
-      <span style="color:var(--text-mute);font-size:8px;">${log.length}</span>
-      <span style="margin-left:auto;color:var(--text-mute);font-size:10px;">${expanded ? '▾ collapse' : '▴ expand'}</span>
-    </button>
-    <div id="event-log-body" style="${expanded ? 'max-height:240px;' : 'max-height:none;'}overflow-y:auto;">${rows}</div>`;
-  const toggle = dock.querySelector('#event-log-toggle');
-  if (toggle) toggle.addEventListener('click', () => { state.logExpanded = !state.logExpanded; renderEventLog(); });
+
+  const netDot = isOnline
+    ? `<span style="width:6px;height:6px;border-radius:50%;background:${_netConnected ? '#4ad66d' : '#ff5252'};display:inline-block;flex-shrink:0;"></span>
+       <span style="font-size:8px;font-family:var(--mono);color:var(--text-mute);letter-spacing:0.06em;">${_netRoom}</span>`
+    : '';
+
+  const badge = _chatUnread > 0 ? `<span class="chat-unread">${_chatUnread}</span>` : '';
+  const inSetup = state.phase !== 'play';
+  // During setup, force chat tab and default-expanded; event log tab is hidden
+  if (inSetup && _activeLogTab === 'log') _activeLogTab = 'chat';
+  const expanded = inSetup ? _setupChatExpanded : _logExpanded;
+  const tabBar = `<div class="log-tab-bar">
+    ${netDot ? `<div style="display:flex;align-items:center;gap:4px;padding:0 7px;border-right:1px solid var(--border);">${netDot}</div>` : ''}
+    <button class="log-tab-btn${_activeLogTab === 'chat' ? ' active' : ''}" id="log-tab-chat">CHAT ${badge}</button>
+    ${inSetup ? '' : `<button class="log-tab-btn${_activeLogTab === 'log' ? ' active' : ''}" id="log-tab-log">EVENT LOG <span style="font-size:7.5px;color:var(--text-mute);">${(state.eventLog||[]).length}</span></button>`}
+    <button class="log-tab-btn" id="log-expand" style="flex:0 0 auto;padding:4px 9px;margin-left:auto;" title="${expanded ? 'Collapse' : 'Expand'}">${expanded ? '▾' : '▴'}</button>
+  </div>`;
+
+  let content = '';
+  if (_activeLogTab === 'log') {
+    if (state.phase !== 'play') {
+      content = `<div class="chat-empty">Game not started.</div>`;
+    } else {
+      const log = state.eventLog || [];
+      const shown = expanded ? log.slice().reverse() : log.slice(-3).reverse();
+      const rows = shown.length
+        ? shown.map(e => `<div style="padding:3px 11px;border-top:1px solid rgba(255,255,255,0.04);display:flex;gap:7px;font-size:9.5px;font-family:var(--mono);">
+            <span style="color:var(--text-mute);flex-shrink:0;">R${e.round}</span>
+            <span style="color:var(--text-dim);">${e.text}</span></div>`).join('')
+        : `<div class="chat-empty">No events yet.</div>`;
+      content = `<div id="event-log-body" style="max-height:${expanded ? '280px' : '72px'};overflow-y:auto;">${rows}</div>`;
+    }
+  } else {
+    // Chat tab
+    const msgs = _chatMessages.length
+      ? _chatMessages.map(m => {
+          const t = new Date(m.ts);
+          const time = `${t.getHours().toString().padStart(2,'0')}:${t.getMinutes().toString().padStart(2,'0')}`;
+          const escaped = m.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return `<div class="chat-msg">
+            <div class="chat-msg-header">
+              <span class="chat-msg-user ${m.side}">${m.username.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>
+              <span class="chat-msg-time">${time}</span>
+            </div>
+            <div class="chat-msg-text">${escaped}</div>
+          </div>`;
+        }).join('')
+      : `<div class="chat-empty">No messages yet.</div>`;
+    const canSend = isOnline && !!_netSide;
+    const inputRow = canSend
+      ? `<div class="chat-input-row">
+           <input class="chat-input" id="chat-input" type="text" maxlength="500" placeholder="Message…" autocomplete="off"/>
+           <button class="chat-send-btn" id="chat-send">↑</button>
+         </div>`
+      : '';
+    content = `<div class="chat-body" id="chat-body" style="max-height:${expanded ? '280px' : '72px'};overflow-y:auto;">${msgs}</div>${inputRow}`;
+  }
+
+  dock.innerHTML = tabBar + content;
+
+  // Wire tabs
+  const tabLog  = dock.querySelector('#log-tab-log');
+  const tabChat = dock.querySelector('#log-tab-chat');
+  if (tabLog)  tabLog.onclick  = () => { _activeLogTab = 'log';  renderEventLog(); };
+  if (tabChat) tabChat.onclick = () => { _activeLogTab = 'chat'; _chatUnread = 0; renderEventLog(); _scrollChatToBottom(); };
+
+  // Wire expand toggle (tab bar button)
+  const expandBtn = dock.querySelector('#log-expand');
+  if (expandBtn) expandBtn.onclick = () => {
+    if (state.phase !== 'play') { _setupChatExpanded = !_setupChatExpanded; }
+    else { _logExpanded = !_logExpanded; }
+    renderEventLog(); if (_activeLogTab === 'chat') _scrollChatToBottom();
+  };
   const body = dock.querySelector('#event-log-body');
   if (expanded && body) body.scrollTop = 0;
+
+  // Wire chat send
+  const input  = dock.querySelector('#chat-input');
+  const sendBtn = dock.querySelector('#chat-send');
+  if (input && sendBtn) {
+    const doSend = () => {
+      const text = input.value.trim();
+      if (!text || !_netWs || !_netConnected) return;
+      _netWs.send(JSON.stringify({ type: 'chat', text }));
+      input.value = '';
+    };
+    sendBtn.onclick = doSend;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
+    if (_activeLogTab === 'chat') input.focus();
+  }
+
+  // Scroll chat to bottom when viewing chat tab
+  if (_activeLogTab === 'chat') _scrollChatToBottom();
+}
+
+function _scrollChatToBottom() {
+  const body = document.getElementById('chat-body');
+  if (body) body.scrollTop = body.scrollHeight;
 }
 
 /* Transient VP-award toast, stacked at top-centre of the board. */
@@ -1951,7 +2087,12 @@ function renderPanels() {
         <b style="color:var(--${sideCssKey(side)});font-size:15px;">${P.ap[side]}</b>
         ${P.passTokens[side] ? `<span style="font-size:8px;color:var(--text-mute);">· ${P.passTokens[side]} PASS</span>` : ''}
         <span style="font-size:9px;color:var(--text-mute);margin-left:auto;">⊕</span>`;
-      chip.addEventListener('click', () => { state.apEditOpen = side; renderAll(); });
+      chip.addEventListener('click', () => {
+        const r = chip.getBoundingClientRect();
+        state.apEditOpen = side;
+        state.apEditAnchor = { top: r.bottom, left: r.left };
+        renderAll();
+      });
       container.insertBefore(chip, container.firstChild);
     };
     apChip('player1', ucmDiv);
@@ -1978,7 +2119,7 @@ function renderPanels() {
   [['player1', ucmTitle], ['player2', shalTitle]].forEach(([side, titleEl]) => {
     if (!titleEl) return;
     titleEl.style.cursor = 'pointer';
-    titleEl.onclick = () => openFleetViewForSide(side);
+    titleEl.onclick = (e) => openFleetViewForSide(side, e.currentTarget);
   });
 
   // Keep the player's own fleet at the top of the left panel; in hotseat fall back to
@@ -6083,7 +6224,10 @@ function _buildDefaultAdmiralAssignments(imported) {
 }
 
 /* Show imported (or quickplay Bioficer) fleet with admirals, payloads, and ships. */
-function openFleetView(slot) {
+let _fleetViewAnchor = null;
+function openFleetView(slot, anchor) {
+  if (anchor) _fleetViewAnchor = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
+  document.getElementById('fleet-view-backdrop')?.remove();
   let panel = document.getElementById('fleet-view-overlay');
   if (panel) panel.remove();
 
@@ -6091,25 +6235,44 @@ function openFleetView(slot) {
   const mySlot = _netSide === 'player1' ? 'f1' : _netSide === 'player2' ? 'f2' : null;
   const readOnly = mySlot !== null && mySlot !== slot;
 
-  const imported = state.importedFleets && state.importedFleets[slot];
+  let imported = state.importedFleets && state.importedFleets[slot];
   const fk = state.fleetChoices && state.fleetChoices[slot];
   if (!imported && !fk) return;
 
-  // Initialise admiral assignments if not set yet (imported only).
-  if (imported && !imported.admiralAssignments) {
+  // Fallback: if importedFleets is missing for a quickplay fleet (e.g. old save),
+  // re-parse from FASTPLAY_LISTS and store it so the opponent can also view it.
+  if (!imported && fk && FASTPLAY_LISTS[fk]) {
+    const qp = parseNewRecruit(FASTPLAY_LISTS[fk]);
+    if (qp && qp.valid) {
+      state.importedFleets = state.importedFleets || { f1: null, f2: null };
+      state.importedFleets[slot] = { faction: qp.faction, groups: qp.groups, admirals: qp.admirals, admiralLevel: qp.admiralLevel, secondaries: qp.secondaries };
+      imported = state.importedFleets[slot];
+    }
+  }
+  if (!imported) return;
+
+  // Initialise admiral assignments on first open.
+  if (!imported.admiralAssignments) {
     imported.admiralAssignments = _buildDefaultAdmiralAssignments(imported);
     const nfa0 = imported.admiralAssignments.find(a => !a.isFamous);
     if (nfa0) imported.admiralGroupIdx = nfa0.groupIdx;
   }
 
+  const fvBackdrop = document.createElement('div');
+  fvBackdrop.id = 'fleet-view-backdrop';
+  fvBackdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(fvBackdrop);
+
   panel = document.createElement('div');
   panel.id = 'fleet-view-overlay';
-  panel.className = 'setup-overlay';
-  panel.style.zIndex = '400';
+  if (state.phase !== 'play') {
+    panel.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:720px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  } else {
+    panel.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:720px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  }
 
-  // Quickplay fleet groups (when no imported list) — parsed from the fastplay file.
-  const qpParsed = !imported && fk && FASTPLAY_LISTS[fk] ? parseNewRecruit(FASTPLAY_LISTS[fk]) : null;
-  const qpFleet = qpParsed ? qpParsed.groups : null;
+  // qpFleet kept for backward compat (now always null since importedFleets is always set).
+  const qpFleet = null;
 
   const groups = imported ? (imported.groups || []) : [];
   const faction = imported ? imported.faction : fk;
@@ -6322,42 +6485,42 @@ function openFleetView(slot) {
     : '';
 
   panel.innerHTML = `
-    <div class="setup-card" style="max-width:720px;">
-      <div class="setup-header">
-        <h2 class="setup-title">${factionLabel} FLEET${readOnly?' <span style="font-size:11px;font-weight:400;opacity:0.6;">(opponent)</span>':''}</h2>
-      </div>
-      <div class="setup-body" style="padding:0;">
-        ${readOnlyNote}
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.1);color:var(--text-mute);font-size:9px;letter-spacing:0.04em;">
-              <th style="padding:4px 8px;text-align:left;font-weight:400;">NAME</th>
-              <th style="padding:4px 8px;text-align:left;font-weight:400;">ROLE</th>
-              <th style="padding:4px 8px;text-align:left;font-weight:400;">ASSIGNMENT</th>
-              <th style="padding:4px 8px;text-align:right;font-weight:400;">PTS</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${admiralRows.length ? sectionHdr('ADMIRALS') + admiralRows.join('') : ''}
-            ${payloadRows.length ? sectionHdr('PAYLOADS') + payloadRows.join('') : ''}
-            ${shipRows ? sectionHdr('GROUPS / SHIPS') + shipRows : ''}
-            ${secondaryRows ? sectionHdr('SECONDARY OBJECTIVES') + secondaryRows : ''}
-          </tbody>
-          <tfoot>
-            <tr style="border-top:1px solid rgba(255,255,255,0.15);">
-              <td colspan="3" style="padding:6px 8px;text-align:right;color:var(--text-mute);font-size:9px;">
-                ${imported ? groups.length : (qpFleet ? qpFleet.filter(g => { const d = findShipDef(fk, g.name); return !d || !d.payload; }).length : 0)} groups${admiralsList.length > 0 ? ` + ${admiralsList.length} admiral${admiralsList.length > 1 ? 's' : ''}` : ''}
-              </td>
-              <td style="padding:6px 8px;text-align:right;font-weight:700;">${totalPts} pts</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
+    <div class="setup-header">
+      <h2 class="setup-title">${factionLabel} FLEET${readOnly?' <span style="font-size:11px;font-weight:400;opacity:0.6;">(opponent)</span>':''}</h2>
     </div>
+    <div style="overflow-y:auto;flex:1;padding:0;">
+      ${readOnlyNote}
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.1);color:var(--text-mute);font-size:9px;letter-spacing:0.04em;">
+            <th style="padding:4px 8px;text-align:left;font-weight:400;">NAME</th>
+            <th style="padding:4px 8px;text-align:left;font-weight:400;">ROLE</th>
+            <th style="padding:4px 8px;text-align:left;font-weight:400;">ASSIGNMENT</th>
+            <th style="padding:4px 8px;text-align:right;font-weight:400;">PTS</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${admiralRows.length ? sectionHdr('ADMIRALS') + admiralRows.join('') : ''}
+          ${payloadRows.length ? sectionHdr('PAYLOADS') + payloadRows.join('') : ''}
+          ${shipRows ? sectionHdr('GROUPS / SHIPS') + shipRows : ''}
+          ${secondaryRows ? sectionHdr('SECONDARY OBJECTIVES') + secondaryRows : ''}
+        </tbody>
+        <tfoot>
+          <tr style="border-top:1px solid rgba(255,255,255,0.15);">
+            <td colspan="3" style="padding:6px 8px;text-align:right;color:var(--text-mute);font-size:9px;">
+              ${imported ? groups.length : (qpFleet ? qpFleet.filter(g => { const d = findShipDef(fk, g.name); return !d || !d.payload; }).length : 0)} groups${admiralsList.length > 0 ? ` + ${admiralsList.length} admiral${admiralsList.length > 1 ? 's' : ''}` : ''}
+            </td>
+            <td style="padding:6px 8px;text-align:right;font-weight:700;">${totalPts} pts</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
   `;
   document.body.appendChild(panel);
-  panel.querySelector('#fleet-view-close').addEventListener('click', () => panel.remove());
+  const closeFleetView = () => { document.getElementById('fleet-view-backdrop')?.remove(); panel.remove(); };
+  panel.querySelector('#fleet-view-close').addEventListener('click', closeFleetView);
+  fvBackdrop.addEventListener('click', closeFleetView);
 
   if (!readOnly) {
     // Non-famous admiral flagship dropdowns (one per admiral).
@@ -6405,16 +6568,16 @@ function openFleetView(slot) {
         if (sel.value) payloadLinks[pk] = sel.value;
         else delete payloadLinks[pk];
         // Re-render the panel to update capacity counts.
-        panel.remove(); openFleetView(slot); renderAll(); netRelaySetup();
+        document.getElementById('fleet-view-backdrop')?.remove(); panel.remove(); openFleetView(slot); renderAll(); netRelaySetup();
       });
     });
   }
 }
 
-function openFleetViewForSide(side) {
+function openFleetViewForSide(side, anchor) {
   const slot = (state.slotForSide && state.slotForSide[side])
             || (side === 'player1' ? 'f1' : 'f2');
-  openFleetView(slot);
+  openFleetView(slot, anchor);
 }
 
 /* Payload→Porter assignment modal (Bioficer, setup-time, per chosen fleet slot).
@@ -6724,6 +6887,7 @@ function renderScoringModal() {
    Shows the current AP, +/- controls (own side only in online), and a reference
    list of admiral abilities available to this side. */
 function renderApEditModal() {
+  document.getElementById('ap-edit-backdrop')?.remove();
   let overlay = document.getElementById('ap-edit-overlay');
   if (overlay) overlay.remove();
   const side = state.apEditOpen;
@@ -6800,11 +6964,10 @@ function renderApEditModal() {
 
   overlay = document.createElement('div');
   overlay.id = 'ap-edit-overlay';
-  overlay.className = 'setup-overlay';
-  overlay.style.zIndex = '312';
-  overlay.innerHTML = `<div class="setup-card" style="max-width:420px;">
+  overlay.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:420px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  overlay.innerHTML = `
     <div class="setup-header"><h2 class="setup-title" style="color:var(--${sideCssKey(side)})">${factionName(side)} · ABILITY POINTS</h2></div>
-    <div class="setup-body">
+    <div class="setup-body" style="overflow-y:auto;flex:1;">
       ${canAdjust ? `
       <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin:4px 0 8px;">
         <button class="hp-btn" id="ap-dec" style="font-size:18px;width:38px;height:38px;" ${P.ap[side]<=0?'disabled':''}>−</button>
@@ -6818,10 +6981,15 @@ function renderApEditModal() {
       ${P.passTokens[side] ? `<div style="font-size:10px;color:var(--text-mute);text-align:center;margin-bottom:6px;">${P.passTokens[side]} Pass Token${P.passTokens[side]>1?'s':''} remaining</div>` : ''}
       ${abilitiesTable}
     </div>
-    <div class="setup-footer"><button class="btn-primary" id="ap-edit-close" style="width:100%;">DONE</button></div>
-  </div>`;
+    <div class="setup-footer"><button class="btn-primary" id="ap-edit-close" style="width:100%;">DONE</button></div>`;
+
+  const apBackdrop = document.createElement('div');
+  apBackdrop.id = 'ap-edit-backdrop';
+  apBackdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(apBackdrop);
   document.body.appendChild(overlay);
 
+  const closeAp = () => { state.apEditOpen = null; document.getElementById('ap-edit-backdrop')?.remove(); renderAll(); };
   if (canAdjust) {
     overlay.querySelector('#ap-dec').addEventListener('click', () => {
       if ((P.ap[side] || 0) > 0) dispatch({ type: 'adjustAP', side, delta: -1 });
@@ -6830,13 +6998,14 @@ function renderApEditModal() {
       dispatch({ type: 'adjustAP', side, delta: 1 });
     });
   }
-  overlay.querySelector('#ap-edit-close').addEventListener('click', () => { state.apEditOpen = null; renderAll(); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) { state.apEditOpen = null; renderAll(); } });
+  overlay.querySelector('#ap-edit-close').addEventListener('click', closeAp);
+  apBackdrop.addEventListener('click', closeAp);
 }
 
 /* Full Victory-Point breakdown modal — opened from the topbar VP counter. Groups the
    structured scoreLog by side, newest first, plus current totals. */
 function renderVPBreakdown() {
+  document.getElementById('vpbreak-backdrop')?.remove();
   let overlay = document.getElementById('vpbreak-overlay');
   if (overlay) overlay.remove();
   if (!state.vpBreakdownOpen || !state.score) return;
@@ -6900,25 +7069,30 @@ function renderVPBreakdown() {
     ${secExpanded ? `<div style="margin:-6px 0 12px;padding:0 4px;">${secRows}</div>` : ''}` : '';
   overlay = document.createElement('div');
   overlay.id = 'vpbreak-overlay';
-  overlay.className = 'setup-overlay';
-  overlay.style.zIndex = '310';
-  overlay.innerHTML = `<div class="setup-card" style="max-width:480px;">
+  overlay.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:480px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  overlay.innerHTML = `
     <div class="setup-header"><h2 class="setup-title">VICTORY POINTS</h2>
       <div class="setup-sub">Round ${state.round} / 6 · VP decides the game (Kill Points break ties)</div></div>
-    <div class="setup-body">
+    <div class="setup-body" style="overflow-y:auto;flex:1;">
       ${objBlock}
       ${secBlock}
       <div style="display:flex;gap:18px;">${sideBlock('player1')}${sideBlock('player2')}</div>
     </div>
-    <div class="setup-footer"><button class="btn-primary" id="vpbreak-close" style="width:100%;">CLOSE</button></div>
-  </div>`;
+    <div class="setup-footer"><button class="btn-primary" id="vpbreak-close" style="width:100%;">CLOSE</button></div>`;
+
+  const vpBackdrop = document.createElement('div');
+  vpBackdrop.id = 'vpbreak-backdrop';
+  vpBackdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(vpBackdrop);
   document.body.appendChild(overlay);
+
+  const closeVP = () => { state.vpBreakdownOpen = false; state.vpObjOpen = false; state.vpSecOpen = false; document.getElementById('vpbreak-backdrop')?.remove(); renderAll(true); };
   const objToggle = overlay.querySelector('#vp-obj-toggle');
   if (objToggle) objToggle.addEventListener('click', () => { state.vpObjOpen = !state.vpObjOpen; renderAll(true); });
   const secToggle = overlay.querySelector('#vp-sec-toggle');
   if (secToggle) secToggle.addEventListener('click', () => { state.vpSecOpen = !state.vpSecOpen; renderAll(true); });
-  overlay.querySelector('#vpbreak-close').addEventListener('click', () => { state.vpBreakdownOpen = false; state.vpObjOpen = false; state.vpSecOpen = false; renderAll(true); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) { state.vpBreakdownOpen = false; state.vpObjOpen = false; state.vpSecOpen = false; renderAll(true); } });
+  overlay.querySelector('#vpbreak-close').addEventListener('click', closeVP);
+  vpBackdrop.addEventListener('click', closeVP);
 }
 
 /* End-of-game summary modal. */
@@ -7321,9 +7495,11 @@ function renderSetupOverlay() {
   if (state.phase !== 'setup') return;
 
   // Pre-fill player name from logged-in username (only if still at the default).
-  if (currentUser?.username && !_netSide) {
+  if (currentUser?.username) {
     if (!state.playerNames) state.playerNames = { f1: 'Player 1', f2: 'Player 2' };
-    if (state.playerNames.f1 === 'Player 1') state.playerNames.f1 = currentUser.username;
+    const slot = _netSide === 'player2' ? 'f2' : 'f1';
+    const defaultName = slot === 'f1' ? 'Player 1' : 'Player 2';
+    if (state.playerNames[slot] === defaultName) state.playerNames[slot] = currentUser.username;
   }
 
   if (!state.scenario) state.scenario = { deployment: null, approach: null, layout: null, variant: null, objective: null };
@@ -7342,9 +7518,12 @@ function renderSetupOverlay() {
   const objectiveSet = scen.objectives ? !!(scen.objectives.player1 && scen.objectives.player2) : !!scen.objective;
   const scenarioComplete = bothFleetsSelected && !payloadsLocked && state.scenario &&
     ['deployment','approach','layout','variant'].every(k => state.scenario[k]) && objectiveSet;
-  // Fleet inputs: locked for opponent (online) OR if that player has already readied.
+  // Edit-lock: inputs/import locked for opponent (online) OR if that player has already readied.
   const f1Lock = (_netSide && _netSide !== 'player1') || p1Ready;
   const f2Lock = (_netSide && _netSide !== 'player2') || p2Ready;
+  // View-lock: VIEW FLEET button only locked if that player has readied (fleet frozen) AND it's your own side.
+  const f1ViewLock = (_netSide === 'player1') && p1Ready;
+  const f2ViewLock = (_netSide === 'player2') && p2Ready;
 
   // Build a summary line per option for each table — what shows in the picker list.
   const summarisers = {
@@ -7503,7 +7682,7 @@ function renderSetupOverlay() {
             </select>
             ${secondaryPickers('f1')}
             <button class="btn" data-import-fleet="f1" style="width:100%;margin-top:5px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f1 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
-            ${state.fleetChoices?.f1 ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} ${state.importedFleets?.f1||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
+            ${state.fleetChoices?.f1 ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} ${state.importedFleets?.f1||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
           </div>
           <div class="faction-slot">
             <div class="faction-lbl" style="color:var(--shal)">${_netSide === 'player2' ? '▶ YOUR NAME' : _netSide === 'player1' ? 'Opponent' : 'Player 2'}${p2Ready ? ' <span style="color:var(--hull-good);font-size:9px;">✓ READY</span>' : ''}</div>
@@ -7518,7 +7697,7 @@ function renderSetupOverlay() {
             </select>
             ${secondaryPickers('f2')}
             <button class="btn" data-import-fleet="f2" style="width:100%;margin-top:5px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f2 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
-            ${state.fleetChoices?.f2 ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} ${state.importedFleets?.f2||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
+            ${state.fleetChoices?.f2 ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} ${state.importedFleets?.f2||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
           </div>
         </div>
         <div style="font-size:9px;color:var(--text-mute);margin:-4px 0 10px;text-align:center;">Red and Blue deployment sides are assigned randomly when you confirm.</div>
@@ -7645,8 +7824,19 @@ function renderSetupOverlay() {
       const which = sel.dataset.fleetChoice; // 'f1' | 'f2'
       state.fleetChoices[which] = sel.value || null;
       state.payloadLinks[which] = {};
-      // Clear any imported fleet when the dropdown is changed manually
-      if (state.importedFleets) state.importedFleets[which] = null;
+      // Parse the quickplay fleet into importedFleets so the opponent can view it
+      // via the same fleet-view path as an imported list (admiral assignments etc. persist).
+      state.importedFleets = state.importedFleets || { f1: null, f2: null };
+      if (sel.value && FASTPLAY_LISTS[sel.value]) {
+        const qp = parseNewRecruit(FASTPLAY_LISTS[sel.value]);
+        if (qp && qp.valid) {
+          state.importedFleets[which] = { faction: qp.faction, groups: qp.groups, admirals: qp.admirals, admiralLevel: qp.admiralLevel, secondaries: qp.secondaries };
+        } else {
+          state.importedFleets[which] = null;
+        }
+      } else {
+        state.importedFleets[which] = null;
+      }
       // Rebuild fleets so groups and activeFleets reflect the new faction immediately.
       rebuildFleets();
       // Auto-set colour to faction default when a fleet is chosen; pick random free colour if default is taken.
@@ -7710,7 +7900,7 @@ function renderSetupOverlay() {
   overlay.querySelectorAll('[data-view-fleet]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openFleetView(btn.dataset.viewFleet);
+      openFleetView(btn.dataset.viewFleet, btn);
     });
   });
   // Hotseat: single button fires both readySetup intents.
@@ -7778,8 +7968,11 @@ function renderActivationHUD() {
   if (hud) hud.remove();
 
   const P = state.planning;
+  const anyActivated = state.activeSide && allDefs().some(def =>
+    def.side === state.activeSide && state.groups[def.id]?.activated);
   const canPass = state.phase === 'play' && P && state.activeSide
     && P.passTokens[state.activeSide] > 0
+    && !anyActivated
     && (!_netSide || _gs() === state.activeSide);
   const passBtn = canPass
     ? `<button class="btn" id="pass-activation" style="width:100%;margin-top:4px;" title="Spend a Pass Token to pass">⏭ PASS (${P.passTokens[state.activeSide]})</button>`
@@ -8047,7 +8240,12 @@ function renderBrand() {
       <span style="color:var(--shal);font-weight:700;font-size:17px;line-height:1;">${s.vp}</span>
       <span style="color:var(--shal);font-size:11px;letter-spacing:0.1em;font-weight:700;">${factionName('player2').toUpperCase()}</span>
     </button>`;
-    brandEl.querySelector('#brand-vp-btn').addEventListener('click', () => { state.vpBreakdownOpen = true; renderAll(true); });
+    brandEl.querySelector('#brand-vp-btn').addEventListener('click', (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      state.vpBreakdownOpen = true;
+      state.vpAnchor = { top: r.bottom, left: r.left };
+      renderAll(true);
+    });
     return;
   }
   brandEl.innerHTML = `<span id="brand-red">${factionName('player1').toUpperCase()}</span><span class="vs">VS</span><span class="shal-name" id="brand-blue">${factionName('player2').toUpperCase()}</span>`;
@@ -8067,7 +8265,13 @@ function renderPhaseNav() {
   if (nav && state.phase === 'play') {
     const sub = currentPlaySubPhase();
     nav.style.display = sub ? '' : 'none';
-    if (sub) nav.innerHTML = `<span style="font-family:var(--display);font-size:10px;letter-spacing:0.16em;color:var(--text-dim);">${sub}</span>`;
+    if (sub) {
+      const pName = state.activeSide ? playerNameForSide(state.activeSide).toUpperCase() : null;
+      const label = pName
+        ? `RND <b>${state.round}</b> / 6: ${pName} – ${sub}`
+        : `RND <b>${state.round}</b> / 6: ${sub}`;
+      nav.innerHTML = `<span style="font-family:var(--display);font-size:12px;letter-spacing:0.14em;color:var(--text);">${label}</span>`;
+    }
     return;
   }
   // Restore the phase-step breadcrumb if it was replaced.
@@ -8103,27 +8307,7 @@ function renderTopbarControls() {
   } else if (state.phase === 'deploy') {
     ctrl.innerHTML = ``;
   } else { // play
-    const waitingBanner = (_netSide && state.activeSide && _gs() !== state.activeSide)
-      ? `<span style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-right:4px;">⏳ OPPONENT'S TURN</span>`
-      : '';
-    // END ROUND is only available when all activations are done (activeSide === null).
-    const allDone = state.activeSide === null;
-    const myVoted   = _netSide && _endRoundVotes.has(_netSide);
-    const theyVoted = _netSide && _endRoundVotes.has(_netSide === 'player1' ? 'player2' : 'player1');
-    let endRoundBtn;
-    if (!allDone) {
-      endRoundBtn = `<button class="btn" id="end-round" disabled style="opacity:0.35;cursor:not-allowed;" title="All groups must finish activation first">END ROUND ▸</button>`;
-    } else if (_netSide && myVoted) {
-      endRoundBtn = `<button class="btn" id="end-round" disabled style="opacity:0.5;cursor:not-allowed;color:var(--hull-warn);" title="Waiting for opponent">⏳ WAITING</button>`;
-    } else {
-      const hint = (_netSide && theyVoted) ? ' (opponent ready)' : '';
-      endRoundBtn = `<button class="btn" id="end-round"${hint ? ' style="border-color:var(--hull-warn);color:var(--hull-warn);"' : ''}>END ROUND${hint} ▸</button>`;
-    }
-    ctrl.innerHTML = `
-      ${waitingBanner}
-      <div class="round-display">RND <b id="round-num">${state.round}</b> / 6</div>
-      ${endRoundBtn}
-    `;
+    ctrl.innerHTML = ``;
   }
 }
 
@@ -13991,6 +14175,11 @@ function _gs() { return _netSide; }
 let   _netWs            = null;
 let   _netConnected     = false;
 let   _netReceiving     = false; // true while we are applying a remote state update
+let   _chatMessages     = [];    // [{side, username, text, ts}]
+let   _activeLogTab     = 'chat'; // 'chat' | 'log'
+let   _chatUnread       = 0;
+let   _logExpanded      = false;
+let   _setupChatExpanded = true;
 let   _netPendingIntent = false; // true after sending an intent, until server broadcasts result
 
 // Local board overlay mode (not synced): 1 = selected ship's arcs+scan + enemy sigs, 2 = selected ship's sig + enemy arcs+scans
@@ -14137,10 +14326,21 @@ function _netConnect() {
     try { msg = JSON.parse(data); } catch { return; }
 
     switch (msg.type) {
-      case 'joined':
+      case 'joined': {
         // Server sends the current authoritative state on connect.
         _netApplyRemote(msg.state);
+        // Pre-fill our player name from the logged-in account if it's still the default.
+        if (currentUser?.username && _netSide && state.phase === 'setup') {
+          const slot = _netSide === 'player1' ? 'f1' : 'f2';
+          const defaultName = _netSide === 'player1' ? 'Player 1' : 'Player 2';
+          if (!state.playerNames) state.playerNames = { f1: 'Player 1', f2: 'Player 2' };
+          if (state.playerNames[slot] === defaultName) {
+            state.playerNames[slot] = currentUser.username;
+            netRelaySetup();
+          }
+        }
         break;
+      }
       case 'full':
         // Broadcast from the server after the other player acted.
         _endRoundVotes = new Set();
@@ -14166,6 +14366,19 @@ function _netConnect() {
         _endRoundVotes = new Set(msg.votes || []);
         renderAll(true);
         break;
+      case 'chatHistory': {
+        _chatMessages = msg.messages;
+        renderEventLog();
+        if (_activeLogTab === 'chat') _scrollChatToBottom();
+        break;
+      }
+      case 'chat': {
+        _chatMessages.push(msg);
+        if (_activeLogTab !== 'chat') _chatUnread++;
+        renderEventLog();
+        if (_activeLogTab === 'chat') _scrollChatToBottom();
+        break;
+      }
       case 'error':
         console.warn('[net] Server:', msg.reason);
         break;
@@ -14397,7 +14610,7 @@ function showAuthScreen() {
           submitBtn.textContent = isReg ? 'CREATE ACCOUNT' : 'SIGN IN';
           return;
         }
-        currentUser = { loggedIn: true, username: data.username, userId: data.userId };
+        currentUser = { loggedIn: true, username: data.username, userId: data.userId, role: data.role || 'player' };
         overlay.remove();
         renderAll();
         showModeSelector();
@@ -14425,7 +14638,39 @@ async function showModeSelector() {
   const overlay = document.createElement('div');
   overlay.id = 'mode-selector';
   overlay.className = 'setup-overlay';
-  overlay.style.zIndex = '500';
+  // Override the default centering — column layout so topbar sits above the card.
+  overlay.style.cssText = 'z-index:500;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:0;';
+
+  // ── Menu topbar ───────────────────────────────────────────────────────────
+  const menuBar = document.createElement('div');
+  menuBar.style.cssText = `
+    flex-shrink:0;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;
+    border-bottom:1px solid var(--border);
+    background:rgba(0,0,0,0.3);
+    font-family:var(--mono);font-size:9px;letter-spacing:0.12em;color:var(--text-mute);
+  `;
+  menuBar.innerHTML = `
+    <span style="font-family:var(--display);font-size:16px;font-weight:700;letter-spacing:0.18em;color:var(--ucm);">DFC FLEET OPS</span>
+    <div style="display:flex;align-items:center;gap:8px;position:relative;">
+      ${currentUser?.loggedIn ? `
+        <button id="ms-user-btn" title="Account details" style="
+          display:flex;align-items:center;gap:6px;
+          background:rgba(0,188,212,0.1);border:1px solid var(--ucm);border-radius:3px;
+          color:var(--ucm);font-family:var(--mono);font-size:9px;letter-spacing:0.08em;
+          padding:5px 10px;cursor:pointer;font-weight:700;">
+          ⬡ ${currentUser.username}${currentUser.role === 'admin' ? ' <span style="color:var(--hull-warn);font-size:7px;letter-spacing:0.1em;">ADMIN</span>' : ''}
+        </button>
+      ` : ''}
+    </div>
+  `;
+  overlay.appendChild(menuBar);
+
+  // Content area: fills remaining space, centres the card, scrollable.
+  const contentArea = document.createElement('div');
+  contentArea.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
+  overlay.appendChild(contentArea);
 
   function fmtDate(ts) {
     const d = new Date(ts);
@@ -14439,7 +14684,8 @@ async function showModeSelector() {
     const f1 = (s.factions && s.factions.player1) || '';
     const f2 = (s.factions && s.factions.player2) || '';
     const rnd = s.round ? `Rnd ${s.round}` : '';
-    return [p1 + ' vs ' + p2, f1 + '/' + f2, rnd, fmtDate(s.savedAt)].filter(Boolean).join(' · ');
+    const detail = [p1 + ' vs ' + p2, f1 + '/' + f2, rnd, fmtDate(s.savedAt)].filter(Boolean).join(' · ');
+    return `<span style="color:var(--text);font-weight:700;margin-right:6px;">${s.roomId}</span>${detail}`;
   }
 
   function render(view) {
@@ -14451,7 +14697,7 @@ async function showModeSelector() {
             <div style="font-size:10px;font-weight:400;color:var(--text-mute);margin-top:3px;">${saves.length} game${saves.length !== 1 ? 's' : ''} — resume or replay</div>
           </button>` : '';
       html = `<div class="setup-card" style="max-width:360px;text-align:center;">
-        <div class="setup-header"><h2 class="setup-title">DFC FLEET OPS</h2></div>
+        <div class="setup-header"><h2 class="setup-title">MAIN MENU</h2></div>
         <div style="font-size:9px;color:var(--text-mute);font-family:var(--mono);padding:4px 0 0;letter-spacing:0.5px;">
           App v${APP_VERSION} &nbsp;·&nbsp; Rulebook v${RULEBOOK_VERSION} &nbsp;·&nbsp; Errata v${ERRATA_VERSION}
         </div>
@@ -14478,6 +14724,7 @@ async function showModeSelector() {
           <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="btn-primary" data-ms-resume="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;">▶ RESUME</button>
             <button class="btn" data-ms-replay="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;${!s.hasReplay ? 'opacity:0.35;cursor:not-allowed;' : ''}" ${!s.hasReplay ? 'disabled title="No replay data for this save"' : ''}>↺ REPLAY</button>
+            <button class="btn" data-ms-delete="${s.roomId}" style="padding:7px 10px;font-size:11px;color:var(--hull-crit);border-color:var(--hull-crit);" title="Delete save">🗑</button>
           </div>
         </div>`;
       const sectionHdr = label => `<div style="font-size:9px;letter-spacing:0.1em;color:var(--text-mute);padding:4px 2px 2px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:2px;">${label}</div>`;
@@ -14521,7 +14768,7 @@ async function showModeSelector() {
         </div>
       </div>`;
     }
-    overlay.innerHTML = html;
+    contentArea.innerHTML = html;
     wire(view);
   }
 
@@ -14566,8 +14813,8 @@ async function showModeSelector() {
             } catch (err) { alert('Could not load save: ' + err.message); btn.disabled = false; btn.textContent = '▶ RESUME'; }
             return;
           }
-          render('resuming');
-          doResume(id, meta);
+          btn.disabled = true; btn.textContent = '…';
+          doResume(id);
         };
       });
       overlay.querySelectorAll('[data-ms-replay]').forEach(btn => {
@@ -14582,6 +14829,23 @@ async function showModeSelector() {
           } catch (err) {
             alert('Could not load replay: ' + err.message);
             btn.disabled = false; btn.textContent = '↺ REPLAY';
+          }
+        };
+      });
+      overlay.querySelectorAll('[data-ms-delete]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.msDelete;
+          if (!confirm(`Delete save ${id}? This cannot be undone.`)) return;
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/saves/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!data.ok) { alert(data.error || 'Delete failed.'); btn.disabled = false; return; }
+            saves = saves.filter(s => s.roomId !== id);
+            if (saves.length) render('saves'); else render('main');
+          } catch (err) {
+            alert('Could not reach server: ' + err.message);
+            btn.disabled = false;
           }
         };
       });
@@ -14608,8 +14872,7 @@ async function showModeSelector() {
     }
   }
 
-  async function doResume(saveId, saveMeta) {
-    const msgEl = () => document.getElementById('ms-resume-msg');
+  async function doResume(saveId) {
     try {
       const res = await fetch('/api/rooms/resume', {
         method: 'POST',
@@ -14617,75 +14880,11 @@ async function showModeSelector() {
         body: JSON.stringify({ saveId }),
       });
       const data = await res.json();
-      if (data.error) { if (msgEl()) msgEl().textContent = data.error; return; }
-      const id = data.roomId;
-      const p1Name = saveMeta?.playerNames?.f1 || 'Player 1';
-      const p2Name = saveMeta?.playerNames?.f2 || 'Player 2';
-      const f1Key  = saveMeta?.factions?.player1 || '';
-      const f2Key  = saveMeta?.factions?.player2 || '';
-      const f1Name = (f1Key && FACTIONS[f1Key]?.name) || f1Key;
-      const f2Name = (f2Key && FACTIONS[f2Key]?.name) || f2Key;
-      const sc = saveMeta?.sideColors || {};
-      const c1 = (sc.player1 && PLAYER_COLORS[sc.player1]?.hex) || 'var(--ucm)';
-      const c2 = (sc.player2 && PLAYER_COLORS[sc.player2]?.hex) || 'var(--shal)';
-      const summary = `Rnd ${saveMeta?.round ?? '?'} · ${fmtDate(saveMeta?.savedAt)}`;
-      let chosenSide = null;
-      overlay.innerHTML = `<div class="setup-card" style="max-width:440px;">
-        <div class="setup-header"><h2 class="setup-title">ROOM ${id}</h2></div>
-        <div class="setup-body" style="padding:24px;display:flex;flex-direction:column;gap:14px;">
-          <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);">${summary}</div>
-          <div>
-            <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:6px;">SELECT PLAYER</div>
-            <div style="display:flex;gap:8px;">
-              <button class="btn ms-resume-side" data-side="player1" style="flex:1;padding:10px;border-color:${c1};color:${c1};">${p1Name} (${f1Name})</button>
-              <button class="btn ms-resume-side" data-side="player2" style="flex:1;padding:10px;border-color:${c2};color:${c2};">${p2Name} (${f2Name})</button>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:5px;">OPPONENT LINK</div>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <input readonly id="ms-resume-link" placeholder="Choose your side first"
-                style="flex:1;min-width:0;padding:7px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-family:var(--mono);font-size:9px;border-radius:4px;"/>
-              <button class="btn" id="ms-resume-copy" style="padding:7px 11px;white-space:nowrap;">📋 Copy</button>
-            </div>
-          </div>
-        </div>
-        <div class="setup-footer">
-          <button class="btn" id="ms-resume-back">← Back</button>
-          <button class="btn-primary" id="ms-resume-play" disabled style="padding:12px 28px;">▶ PLAY</button>
-        </div>
-      </div>`;
-      const colorOf = { player1: c1, player2: c2 };
-      overlay.querySelectorAll('.ms-resume-side').forEach(btn => {
-        btn.onclick = () => {
-          chosenSide = btn.dataset.side;
-          overlay.querySelectorAll('.ms-resume-side').forEach(b => {
-            b.classList.remove('active');
-            b.style.background = '';
-          });
-          btn.classList.add('active');
-          btn.style.background = colorOf[chosenSide] + '22'; // 13% opacity tint
-          const otherSide = chosenSide === 'player1' ? 'player2' : 'player1';
-          const linkEl = document.getElementById('ms-resume-link');
-          if (linkEl) linkEl.value = `${location.origin}${location.pathname}?room=${id}&side=${otherSide}`;
-          const playBtn = document.getElementById('ms-resume-play');
-          if (playBtn) playBtn.disabled = false;
-        };
-      });
-      document.getElementById('ms-resume-copy').onclick = () => {
-        const link = document.getElementById('ms-resume-link')?.value;
-        if (!link || !chosenSide) return;
-        navigator.clipboard.writeText(link).then(() => {
-          const b = document.getElementById('ms-resume-copy');
-          if (b) { b.textContent = '✓ Copied'; setTimeout(() => { if (document.getElementById('ms-resume-copy')) b.textContent = '📋 Copy'; }, 1500); }
-        });
-      };
-      document.getElementById('ms-resume-play').onclick = () => {
-        if (chosenSide) location.href = `${location.pathname}?room=${id}&side=${chosenSide}`;
-      };
-      document.getElementById('ms-resume-back').onclick = () => render('saves');
+      if (data.error) { render('saves'); alert(data.error); return; }
+      location.href = `${location.pathname}?room=${data.roomId}&side=${data.userSide || 'player1'}`;
     } catch (err) {
-      if (msgEl()) msgEl().textContent = 'Could not reach server: ' + err.message;
+      render('saves');
+      alert('Could not reach server: ' + err.message);
     }
   }
 
@@ -14694,33 +14893,7 @@ async function showModeSelector() {
     try {
       const res  = await fetch('/api/rooms', { method: 'POST' });
       const data = await res.json();
-      const id   = data.roomId;
-      const link = `${location.origin}${location.pathname}?room=${id}&side=player2`;
-      overlay.innerHTML = `<div class="setup-card" style="max-width:420px;">
-        <div class="setup-header"><h2 class="setup-title">ROOM ${id}</h2></div>
-        <div class="setup-body" style="padding:24px;display:flex;flex-direction:column;gap:14px;">
-          <div style="font-size:11px;color:var(--text-dim);">Share this link with Player 2:</div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <input readonly id="ms-link" value="${link}"
-              style="flex:1;min-width:0;padding:7px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-family:var(--mono);font-size:9px;border-radius:4px;"/>
-            <button class="btn" id="ms-copy" style="padding:7px 11px;white-space:nowrap;">📋 Copy</button>
-          </div>
-        </div>
-        <div class="setup-footer">
-          <button class="btn" id="ms-host-back">← Back</button>
-          <button class="btn-primary" id="ms-play-ucm" style="padding:12px 28px;">▶ PLAY</button>
-        </div>
-      </div>`;
-      document.getElementById('ms-copy').onclick = () => {
-        navigator.clipboard.writeText(link).then(() => {
-          const b = document.getElementById('ms-copy');
-          if (b) { b.textContent = '✓ Copied'; setTimeout(() => { if (document.getElementById('ms-copy')) b.textContent = '📋 Copy'; }, 1500); }
-        });
-      };
-      document.getElementById('ms-host-back').onclick = () => render('main');
-      document.getElementById('ms-play-ucm').onclick = () => {
-        location.href = `${location.pathname}?room=${id}&side=player1`;
-      };
+      location.href = `${location.pathname}?room=${data.roomId}&side=player1`;
     } catch {
       if (msgEl()) msgEl().textContent = 'Could not reach server. Is it running on port 3000?';
     }
@@ -14732,17 +14905,221 @@ async function showModeSelector() {
   wire('main');
   document.body.appendChild(overlay);
 
+  // Wire menu topbar buttons.
+  const wireMenuBar = () => {
+    const userBtn   = overlay.querySelector('#ms-user-btn');
+    const logoutBtn = overlay.querySelector('#ms-logout-btn');
+
+    if (userBtn && !userBtn._wired) {
+      userBtn._wired = true;
+      userBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const btnContainer = userBtn.closest('div[style*="position:relative"]') || menuBar;
+        const existing = btnContainer.querySelector('#ms-user-modal');
+        if (existing) { existing.remove(); return; }
+
+        if (currentUser?.role === 'admin') {
+          openAdminPanel(userBtn);
+        } else {
+          _openUserModal(btnContainer, userBtn);
+        }
+      });
+    }
+
+    if (logoutBtn && !logoutBtn._wired) {
+      logoutBtn._wired = true;
+      logoutBtn.addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); currentUser = null; location.reload(); });
+    }
+  };
+
+  function _openUserModal(container, anchor) {
+    const fmtDate = ts => new Date(ts).toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' });
+    const modal = document.createElement('div');
+    modal.id = 'ms-user-modal';
+    modal.style.cssText = `position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:5px;padding:16px 18px;min-width:210px;font-family:var(--mono);font-size:10px;color:var(--text-dim);box-shadow:0 8px 32px rgba(0,0,0,0.5);z-index:10;`;
+    modal.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div style="width:36px;height:36px;border-radius:50%;background:var(--ucm);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;flex-shrink:0;">${currentUser.username[0].toUpperCase()}</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${currentUser.username}</div>
+          <div style="font-size:9px;color:var(--text-mute);margin-top:2px;">User #${currentUser.userId}</div>
+        </div>
+      </div>
+      ${currentUser.createdAt ? `<div style="margin-bottom:14px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:3px;border:1px solid var(--border);"><div style="font-size:8px;letter-spacing:0.1em;color:var(--text-mute);margin-bottom:3px;">MEMBER SINCE</div><div>${fmtDate(currentUser.createdAt)}</div></div>` : ''}
+      <button id="ms-modal-logout" class="btn" style="width:100%;padding:8px;font-size:10px;color:var(--hull-crit);border-color:var(--hull-crit);">⏏ SIGN OUT</button>`;
+    container.appendChild(modal);
+    modal.querySelector('#ms-modal-logout').addEventListener('click', async () => {
+      await fetch('/api/auth/logout', { method: 'POST' }); currentUser = null; location.reload();
+    });
+    const dismiss = (ev) => { if (!modal.contains(ev.target) && ev.target !== anchor) { modal.remove(); document.removeEventListener('click', dismiss); } };
+    setTimeout(() => document.addEventListener('click', dismiss), 0);
+  }
+
+  wireMenuBar();
+
   // Fetch saves in background and refresh if any are found.
   try {
     const r = await fetch('/api/saves');
     if (r.ok) {
       const fetched = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
-      if (fetched.length) { saves = fetched; render('main'); wire('main'); }
+      if (fetched.length) { saves = fetched; render('main'); wire('main'); wireMenuBar(); }
     }
   } catch {}
 }
 
 document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
+
+// ---------------------------------------------------------------------------
+// Admin panel — opened from mode selector menu OR in-game topbar chip
+// ---------------------------------------------------------------------------
+
+async function openAdminPanel(anchor) {
+  const existing = document.getElementById('admin-panel-backdrop');
+  if (existing) { existing.remove(); return; }
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'admin-panel-backdrop';
+  backdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(backdrop);
+
+  const closePanel = () => { backdrop.remove(); };
+  backdrop.addEventListener('click', closePanel);
+
+  const rect = anchor.getBoundingClientRect();
+  const modal = document.createElement('div');
+  modal.id = 'admin-panel-modal';
+  modal.style.cssText = `position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;background:var(--bg-elev,#11171a);border:1px solid var(--border-bright);border-radius:5px;padding:0;min-width:480px;max-width:90vw;font-family:var(--mono);font-size:10px;color:var(--text-dim);box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;overflow:hidden;`;
+
+  const tabBtn = (id, label, active) => `<button data-tab="${id}" style="flex:1;padding:9px 6px;background:none;border:none;border-bottom:2px solid ${active?'var(--ucm)':'transparent'};color:${active?'var(--ucm)':'var(--text-mute)'};font-family:var(--mono);font-size:9px;letter-spacing:0.1em;cursor:pointer;">${label}</button>`;
+
+  modal.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:28px;height:28px;border-radius:50%;background:var(--ucm);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;">${currentUser.username[0].toUpperCase()}</div>
+        <div><div style="font-size:11px;font-weight:700;color:var(--text);">${currentUser.username}</div><div style="font-size:8px;color:var(--hull-warn);letter-spacing:0.12em;">⬡ ADMIN</div></div>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button id="adm-exit-game" class="btn" style="padding:5px 10px;font-size:9px;">← EXIT GAME</button>
+        <button id="adm-logout" class="btn" style="padding:5px 10px;font-size:9px;color:var(--hull-crit);border-color:var(--hull-crit);">⏏ SIGN OUT</button>
+      </div>
+    </div>
+    <div style="display:flex;border-bottom:1px solid var(--border);">
+      ${tabBtn('users','👤 USERS',true)}${tabBtn('rooms','⚡ LIVE GAMES',false)}${tabBtn('saves','💾 SAVES',false)}
+    </div>
+    <div id="adm-body" style="padding:12px 14px;max-height:360px;overflow-y:auto;">
+      <div style="color:var(--text-mute);text-align:center;padding:20px;">Loading…</div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#adm-exit-game').addEventListener('click', () => {
+    backdrop.remove();
+    location.href = location.pathname;
+  });
+  modal.querySelector('#adm-logout').addEventListener('click', async () => {
+    backdrop.remove();
+    await fetch('/api/auth/logout', { method: 'POST' }); currentUser = null; location.reload();
+  });
+
+  const body = modal.querySelector('#adm-body');
+
+  const loadTab = async (tab) => {
+    modal.querySelectorAll('[data-tab]').forEach(b => {
+      const active = b.dataset.tab === tab;
+      b.style.borderBottomColor = active ? 'var(--ucm)' : 'transparent';
+      b.style.color = active ? 'var(--ucm)' : 'var(--text-mute)';
+    });
+    body.innerHTML = `<div style="color:var(--text-mute);text-align:center;padding:20px;">Loading…</div>`;
+    try {
+      if (tab === 'users') {
+        const users = await fetch('/api/admin/users').then(r => r.json());
+        body.innerHTML = users.map(u => `
+          <div data-uid="${u.id}" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <div style="flex:1;min-width:0;">
+              <span style="color:var(--text);font-weight:700;">${u.username}</span>
+              <span style="margin-left:6px;font-size:8px;color:${u.role==='admin'?'var(--hull-warn)':'var(--text-mute)'};">${u.role.toUpperCase()}</span>
+              <div style="font-size:8px;color:var(--text-mute);">User #${u.id}</div>
+            </div>
+            ${u.id !== currentUser.userId ? `
+              <button class="btn adm-reset-pw" data-uid="${u.id}" data-uname="${u.username}" style="padding:3px 7px;font-size:8px;">🔑 RESET PW</button>
+              <button class="btn adm-toggle-role" data-uid="${u.id}" data-role="${u.role}" style="padding:3px 7px;font-size:8px;">${u.role==='admin'?'▽ PLAYER':'▲ ADMIN'}</button>
+              <button class="btn adm-del-user" data-uid="${u.id}" data-uname="${u.username}" style="padding:3px 7px;font-size:8px;color:var(--hull-crit);border-color:var(--hull-crit);">✕</button>
+            ` : '<span style="font-size:8px;color:var(--text-mute);">(you)</span>'}
+          </div>`).join('');
+        body.querySelectorAll('.adm-reset-pw').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const pw = prompt(`New password for ${btn.dataset.uname} (min 8 chars):`);
+            if (!pw || pw.length < 8) return;
+            const r = await fetch(`/api/admin/users/${btn.dataset.uid}/reset-password`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ newPassword: pw }) });
+            const d = await r.json();
+            if (d.ok) btn.textContent = '✓'; else alert(d.error);
+          });
+        });
+        body.querySelectorAll('.adm-toggle-role').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const newRole = btn.dataset.role === 'admin' ? 'player' : 'admin';
+            await fetch(`/api/admin/users/${btn.dataset.uid}/role`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role: newRole }) });
+            loadTab('users');
+          });
+        });
+        body.querySelectorAll('.adm-del-user').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Delete user ${btn.dataset.uname}? This cannot be undone.`)) return;
+            await fetch(`/api/admin/users/${btn.dataset.uid}`, { method:'DELETE' });
+            loadTab('users');
+          });
+        });
+
+      } else if (tab === 'rooms') {
+        const rooms = await fetch('/api/admin/rooms').then(r => r.json());
+        if (!rooms.length) { body.innerHTML = '<div style="color:var(--text-mute);text-align:center;padding:20px;">No live rooms.</div>'; return; }
+        const ago = ms => { const s = Math.floor((Date.now()-ms)/1000); return s < 60 ? `${s}s ago` : `${Math.floor(s/60)}m ago`; };
+        body.innerHTML = rooms.map(r => `
+          <div style="padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <div style="display:flex;justify-content:space-between;">
+              <span style="color:var(--text);font-weight:700;">${r.id}</span>
+              <span style="font-size:8px;color:var(--text-mute);">${ago(r.lastActivity)}</span>
+            </div>
+            <div style="font-size:8px;color:var(--text-mute);margin-top:2px;">
+              ${r.phase?.toUpperCase()} · Rnd ${r.round??'—'} · P1:${r.p1?'✓':'✗'} P2:${r.p2?'✓':'✗'} · ${r.spectators} spec
+            </div>
+          </div>`).join('');
+
+      } else if (tab === 'saves') {
+        const saves = await fetch('/api/admin/saves').then(r => r.json());
+        if (!saves.length) { body.innerHTML = '<div style="color:var(--text-mute);text-align:center;padding:20px;">No saves.</div>'; return; }
+        const fmtTs = ts => ts ? new Date(ts).toLocaleDateString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+        body.innerHTML = saves.map(s => `
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;justify-content:space-between;">
+                <span style="color:var(--text);font-weight:700;">${s.roomId}</span>
+                <span style="font-size:8px;color:var(--text-mute);">${fmtTs(s.savedAt)}</span>
+              </div>
+              <div style="font-size:8px;color:var(--text-mute);margin-top:2px;">
+                ${(s.playerNames?.f1||'P1')} vs ${(s.playerNames?.f2||'P2')} · ${s.phase?.toUpperCase()} Rnd ${s.round??'—'} · ${s.isHotseat?'HOTSEAT':'ONLINE'}${s.hasReplay?' · ↺':''}
+              </div>
+            </div>
+            <button class="btn adm-del-save" data-rid="${s.roomId}" style="padding:3px 7px;font-size:8px;color:var(--hull-crit);border-color:var(--hull-crit);flex-shrink:0;">✕</button>
+          </div>`).join('');
+        body.querySelectorAll('.adm-del-save').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Delete save ${btn.dataset.rid}? This cannot be undone.`)) return;
+            const r = await fetch(`/api/admin/saves/${btn.dataset.rid}`, { method: 'DELETE' });
+            const d = await r.json();
+            if (d.ok) loadTab('saves'); else alert(d.error);
+          });
+        });
+      }
+    } catch(err) {
+      body.innerHTML = `<div style="color:var(--hull-crit);padding:12px;">Error: ${err.message}</div>`;
+    }
+  };
+
+  modal.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => loadTab(b.dataset.tab)));
+  modal.addEventListener('click', e => e.stopPropagation());
+  backdrop.appendChild(modal);
+  loadTab('users');
+}
 
 // ---------------------------------------------------------------------------
 // Initialise networking (online) or show mode selector (local/first load)
@@ -14751,17 +15128,73 @@ document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
 function renderUserChip() {
   const chip = document.getElementById('topbar-user');
   if (!chip) return;
-  if (currentUser?.loggedIn) {
-    chip.innerHTML = `<span style="opacity:0.6;">⬡</span> ${currentUser.username} <button id="btn-logout" style="background:none;border:none;color:var(--text-mute);font-family:var(--mono);font-size:9px;cursor:pointer;padding:2px 4px;letter-spacing:0.06em;" title="Sign out">⏏</button>`;
-    chip.querySelector('#btn-logout').addEventListener('click', async () => {
+  if (!currentUser?.loggedIn) { chip.innerHTML = ''; return; }
+
+  chip.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 10px;font-family:var(--mono);font-size:9px;color:var(--text-mute);white-space:nowrap;position:relative;';
+  chip.innerHTML = `
+    <button id="btn-user-chip" style="
+      display:flex;align-items:center;gap:5px;
+      background:none;border:1px solid rgba(255,255,255,0.1);border-radius:3px;
+      color:var(--text-dim);font-family:var(--mono);font-size:9px;letter-spacing:0.06em;
+      padding:3px 8px;cursor:pointer;">
+      <span style="opacity:0.6;">⬡</span> ${currentUser.username}${currentUser.role==='admin'?' <span style="color:var(--hull-warn);font-size:7px;letter-spacing:0.1em;">ADMIN</span>':''}
+    </button>`;
+
+  const chipBtn = chip.querySelector('#btn-user-chip');
+  chipBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    if (currentUser?.role === 'admin') {
+      openAdminPanel(chipBtn);
+      return;
+    }
+
+    const existing = document.getElementById('user-chip-popup');
+    if (existing) { existing.remove(); return; }
+
+    const rect = chipBtn.getBoundingClientRect();
+    const popup = document.createElement('div');
+    popup.id = 'user-chip-popup';
+    popup.style.cssText = `
+      position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;
+      background:#0d1a1f;border:1px solid var(--border-bright);border-radius:6px;
+      padding:12px;min-width:170px;
+      font-family:var(--mono);font-size:10px;
+      box-shadow:0 12px 40px rgba(0,0,0,0.85);z-index:9999;
+    `;
+    popup.innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border);">
+        ${currentUser.username}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <button id="chip-exit-game" class="btn" style="width:100%;padding:9px 10px;font-size:10px;text-align:left;box-sizing:border-box;">
+          ← EXIT GAME
+        </button>
+        <button id="chip-logout" class="btn" style="width:100%;padding:9px 10px;font-size:10px;text-align:left;box-sizing:border-box;color:var(--hull-crit);border-color:var(--hull-crit);">
+          ⏏ SIGN OUT
+        </button>
+      </div>`;
+    document.body.appendChild(popup);
+
+    popup.querySelector('#chip-exit-game').addEventListener('click', () => {
+      popup.remove();
+      location.href = location.pathname;
+    });
+    popup.querySelector('#chip-logout').addEventListener('click', async () => {
+      popup.remove();
       await fetch('/api/auth/logout', { method: 'POST' });
       currentUser = null;
-      renderUserChip();
       location.reload();
     });
-  } else {
-    chip.innerHTML = '';
-  }
+
+    const dismiss = (ev) => {
+      if (!popup.contains(ev.target) && ev.target !== chipBtn) {
+        popup.remove();
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', dismiss), 0);
+  });
 }
 
 // ---------------------------------------------------------------------------

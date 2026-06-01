@@ -36,6 +36,7 @@ export function initDb() {
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id               TEXT    NOT NULL UNIQUE,
       owner_user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      player2_user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
       phase                 TEXT,
       round                 INTEGER,
       is_hotseat            INTEGER NOT NULL DEFAULT 0,
@@ -69,6 +70,11 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_room_slots_room ON room_slots(room_id);
   `);
 
+  // Migrations — each wrapped individually so an already-applied one doesn't block others.
+  try { _db.exec(`ALTER TABLE saves ADD COLUMN player2_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`); } catch {}
+  _db.exec(`CREATE INDEX IF NOT EXISTS idx_saves_player2 ON saves(player2_user_id)`);
+  try { _db.exec(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'player'`); } catch {}
+
   return _db;
 }
 
@@ -89,21 +95,37 @@ export function createUser(username, passwordHash) {
   return info.lastInsertRowid;
 }
 
+export function getAllUsers() {
+  return getDb().prepare('SELECT id, username, role, created_at FROM users ORDER BY id').all();
+}
+
+export function setUserRole(userId, role) {
+  getDb().prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
+}
+
+export function setUserPassword(userId, passwordHash) {
+  getDb().prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId);
+}
+
+export function deleteUser(userId) {
+  getDb().prepare('DELETE FROM users WHERE id = ?').run(userId);
+}
+
 // ── Saves ─────────────────────────────────────────────────────────────────────
 
-export function upsertSave(data, userId = null) {
+export function upsertSave(data, userId = null, player2UserId = null) {
   const db = getDb();
   const hasReplay = !!(data.playStartState || data.play_start_state_json);
   db.prepare(`
     INSERT INTO saves (
-      room_id, owner_user_id, phase, round, is_hotseat, seed,
+      room_id, owner_user_id, player2_user_id, phase, round, is_hotseat, seed,
       player_names_json, factions_json, side_colors_json, has_replay,
       app_version, rulebook_version, errata_version,
       current_state_json, current_rng_state,
       play_start_state_json, play_start_rng_state, intent_log_json,
       updated_at, saved_at
     ) VALUES (
-      @roomId, @ownerId, @phase, @round, @isHotseat, @seed,
+      @roomId, @ownerId, @player2Id, @phase, @round, @isHotseat, @seed,
       @playerNamesJson, @factionsJson, @sideColorsJson, @hasReplay,
       @appVersion, @rulebookVersion, @errataVersion,
       @currentStateJson, @currentRngState,
@@ -112,6 +134,7 @@ export function upsertSave(data, userId = null) {
     )
     ON CONFLICT(room_id) DO UPDATE SET
       owner_user_id         = COALESCE(excluded.owner_user_id, owner_user_id),
+      player2_user_id       = COALESCE(excluded.player2_user_id, player2_user_id),
       phase                 = excluded.phase,
       round                 = excluded.round,
       is_hotseat            = excluded.is_hotseat,
@@ -133,6 +156,7 @@ export function upsertSave(data, userId = null) {
   `).run({
     roomId:            data.roomId,
     ownerId:           userId,
+    player2Id:         player2UserId,
     phase:             data.phase ?? null,
     round:             data.round ?? null,
     isHotseat:         data.isHotseat ? 1 : 0,
@@ -153,6 +177,16 @@ export function upsertSave(data, userId = null) {
   });
 }
 
+export function getSaveOwners(roomId) {
+  return getDb()
+    .prepare('SELECT owner_user_id, player2_user_id FROM saves WHERE room_id = ?')
+    .get(roomId) ?? { owner_user_id: null, player2_user_id: null };
+}
+
+export function deleteSaveDb(roomId) {
+  getDb().prepare('DELETE FROM saves WHERE room_id = ?').run(roomId);
+}
+
 export function getSaveByRoomId(roomId) {
   const row = getDb().prepare('SELECT * FROM saves WHERE room_id = ?').get(roomId);
   if (!row) return null;
@@ -161,8 +195,8 @@ export function getSaveByRoomId(roomId) {
 
 export function getAllSavesForUser(userId) {
   return getDb()
-    .prepare('SELECT * FROM saves WHERE owner_user_id = ? ORDER BY updated_at DESC')
-    .all(userId)
+    .prepare('SELECT * FROM saves WHERE owner_user_id = ? OR player2_user_id = ? ORDER BY updated_at DESC')
+    .all(userId, userId)
     .map(_hydrateSaveMetadata);
 }
 

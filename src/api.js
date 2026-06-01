@@ -1,12 +1,12 @@
 // REST routes and WebSocket connection handler.
 
 import { Router } from 'express';
-import { createRoom, getRoom, joinRoom, leaveRoom, broadcast, send, sideOf, recordIntent } from './rooms.js';
+import { createRoom, getRoom, joinRoom, leaveRoom, broadcast, send, recordIntent } from './rooms.js';
 import { isLegal } from './engine/gating.js';
 import { apply } from './engine/mutators.js';
 import { saveRoom, loadSave, loadAllSaves } from './saves.js';
 import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './engine/version.js';
-import { getRoomSlot, setRoomSlot } from './db.js';
+import { getRoomSlot, setRoomSlot, getSaveOwners, deleteSaveDb } from './db.js';
 
 export const router = Router();
 
@@ -19,8 +19,10 @@ router.get('/meta', (_req, res) => {
 router.post('/rooms', (req, res) => {
   const room = createRoom();
   console.log(`Room ${room.id} created (seed ${room.seed})`);
-  // If the creator is authenticated, claim player1 slot for them.
-  if (req.user) setRoomSlot(room.id, 'player1', req.user.id);
+  if (req.user) {
+    room.creatorUserId = req.user.id;
+    setRoomSlot(room.id, 'player1', req.user.id);
+  }
   res.json({ roomId: room.id, seed: room.seed });
 });
 
@@ -89,6 +91,23 @@ router.get('/saves/:id', async (req, res) => {
   }
 });
 
+// DELETE /api/saves/:id — delete a save. Only owner or player2 may delete.
+router.delete('/saves/:id', (req, res) => {
+  const roomId = req.params.id.toUpperCase();
+  if (req.user) {
+    const owners = getSaveOwners(roomId);
+    if (owners.owner_user_id !== req.user.id && owners.player2_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Not your save.' });
+    }
+  }
+  try {
+    deleteSaveDb(roomId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/rooms/:id/replay — full replay data for a room (from its save file).
 router.get('/rooms/:id/replay', async (req, res) => {
   try {
@@ -120,18 +139,43 @@ router.post('/rooms/resume', async (req, res) => {
   } catch {
     return res.status(404).json({ error: 'Save not found.' });
   }
-  const room = createRoom(save.roomId);
-  room.state             = save.currentState;
-  room.seed              = save.seed;
-  room.rng.setState(save.currentRngState);
-  room.intentLog         = save.intentLog        || [];
-  room.playStartState    = save.playStartState    || null;
-  room.playStartRngState = save.playStartRngState ?? null;
-  room.createdAt         = save.createdAt         || room.createdAt;
-  // Re-claim player1 slot for the resuming user.
-  if (req.user) setRoomSlot(room.id, 'player1', req.user.id);
+  // If the room is already live in memory (the other player already resumed it),
+  // reuse it rather than overwriting it — otherwise the first player's WebSocket
+  // closure would reference a stale room object and chat / broadcasts would break.
+  let room = getRoom(save.roomId);
+  if (!room) {
+    room = createRoom(save.roomId);
+    room.state             = save.currentState;
+    room.seed              = save.seed;
+    room.rng.setState(save.currentRngState);
+    room.intentLog         = save.intentLog        || [];
+    room.playStartState    = save.playStartState    || null;
+    room.playStartRngState = save.playStartRngState ?? null;
+    room.createdAt         = save.createdAt         || room.createdAt;
+  }
+
+  // Restore slot ownership from the save's stored user IDs.
+  // Determine which side the requesting user held in the original game.
+  let userSide = null;
+  if (req.user) {
+    const owners = getSaveOwners(save.roomId);
+    if (owners.owner_user_id === req.user.id) {
+      userSide = 'player1';
+      setRoomSlot(room.id, 'player1', req.user.id);
+      if (owners.player2_user_id) setRoomSlot(room.id, 'player2', owners.player2_user_id);
+    } else if (owners.player2_user_id === req.user.id) {
+      userSide = 'player2';
+      setRoomSlot(room.id, 'player2', req.user.id);
+      if (owners.owner_user_id) setRoomSlot(room.id, 'player1', owners.owner_user_id);
+    } else {
+      // User not in the original game — default to player1 if free.
+      userSide = 'player1';
+      setRoomSlot(room.id, 'player1', req.user.id);
+    }
+  }
+
   console.log(`Room ${room.id} resumed from save ${save.roomId} (round ${save.round})`);
-  res.json({ roomId: room.id, seed: room.seed });
+  res.json({ roomId: room.id, seed: room.seed, userSide });
 });
 
 // ---------------------------------------------------------------------------
@@ -179,24 +223,32 @@ export function handleConnection(ws, req) {
     room.spectators.push(ws);
   }
 
-  console.log(`[${roomId}] ${side} connected${req.user ? ` (${req.user.username})` : ''}`);
-
-  send(ws, { type: 'joined', side, roomId, state: room.state });
-  broadcast(room, { type: 'peerJoined', side }, ws);
-
+  // Register lifecycle handlers immediately so they're always wired,
+  // regardless of any exception in the setup code below.
   ws.on('message', raw => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     onMessage(room, ws, side, msg, connectedUserId);
   });
-
   ws.on('close', () => {
     console.log(`[${roomId}] ${side} disconnected`);
     leaveRoom(room, ws);
     broadcast(room, { type: 'opponentLeft', side });
   });
-
   ws.on('error', err => console.error(`[${roomId}/${side}] WS error: ${err.message}`));
+
+  console.log(`[${roomId}] ${side} connected${req.user ? ` (${req.user.username})` : ''}`);
+
+  // Update the player name in game state from the authenticated username.
+  if (req.user && (side === 'player1' || side === 'player2')) {
+    const slot = side === 'player1' ? 'f1' : 'f2';
+    room.state.playerNames[slot] = req.user.username;
+    broadcast(room, { type: 'full', state: room.state }, ws);
+  }
+
+  send(ws, { type: 'joined', side, roomId, state: room.state });
+  if ((room.chatHistory || []).length > 0) send(ws, { type: 'chatHistory', messages: room.chatHistory });
+  broadcast(room, { type: 'peerJoined', side }, ws);
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +307,19 @@ function onMessage(room, ws, side, msg, userId) {
 
     case 'peerView': {
       broadcast(room, { type: 'peerView', peerView: msg.peerView }, ws);
+      break;
+    }
+
+    case 'chat': {
+      const text = (typeof msg.text === 'string') ? msg.text.trim().slice(0, 500) : '';
+      if (!text) return;
+      const slot = side === 'player1' ? 'f1' : 'f2';
+      const username = room.state.playerNames?.[slot] || side;
+      const chatMsg = { side, username, text, ts: Date.now() };
+      if (!room.chatHistory) room.chatHistory = [];
+      room.chatHistory.push(chatMsg);
+      if (room.chatHistory.length > 200) room.chatHistory.shift();
+      broadcast(room, { type: 'chat', ...chatMsg });
       break;
     }
 

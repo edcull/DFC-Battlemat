@@ -19,7 +19,7 @@ authRouter.post('/register', async (req, res) => {
   const hash = await bcrypt.hash(password, 12);
   const id = createUser(username, hash);
   req.session.userId = id;
-  res.json({ ok: true, username });
+  res.json({ ok: true, username, userId: id, role: 'player' });
 });
 
 authRouter.post('/login', async (req, res) => {
@@ -33,7 +33,7 @@ authRouter.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials.' });
 
   req.session.userId = user.id;
-  res.json({ ok: true, username: user.username });
+  res.json({ ok: true, username: user.username, userId: user.id, role: user.role || 'player' });
 });
 
 authRouter.post('/logout', (req, res) => {
@@ -45,7 +45,13 @@ authRouter.post('/logout', (req, res) => {
 
 authRouter.get('/me', (req, res) => {
   if (req.user) {
-    res.json({ loggedIn: true, username: req.user.username, userId: req.user.id });
+    res.json({
+      loggedIn:  true,
+      username:  req.user.username,
+      userId:    req.user.id,
+      role:      req.user.role || 'player',
+      createdAt: req.user.created_at * 1000,
+    });
   } else {
     res.json({ loggedIn: false });
   }

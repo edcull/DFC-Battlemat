@@ -1,5 +1,11 @@
 # Node server dependencies (installed via `npm install`; not committed)
 node_modules/
+reference/
+data/
+saves/
+
+# Local environment (secrets — never commit)
+.env
 
 # Logs / OS cruft
 *.log

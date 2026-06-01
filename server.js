@@ -1,3 +1,4 @@
+import 'dotenv/config';
 // DFC Fleet Ops — server entry point.
 // Serves static files, REST API, and WebSocket rooms.
 //
@@ -5,7 +6,7 @@
 //   node server.js            (production)
 //   node --watch server.js    (dev — auto-restart on file changes)
 //
-// Then open: http://localhost:3000/client/index.html
+// Then open: http://localhost:3000
 
 import http from 'http';
 import path from 'path';
@@ -15,10 +16,9 @@ import express from 'express';
 import session from 'express-session';
 import { WebSocketServer } from 'ws';
 import { router as apiRouter, handleConnection } from './src/api.js';
-import { ensureSavesDir } from './src/saves.js';
 import { initDb, getUserById } from './src/db.js';
 import { authRouter } from './src/auth.js';
-import { migrateFileSavesToDb } from './src/migrate.js';
+import { adminRouter } from './src/admin.js';
 import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './src/engine/version.js';
 
 const require = createRequire(import.meta.url);
@@ -48,7 +48,7 @@ const sessionMiddleware = session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    maxAge: 12 * 60 * 60 * 1000, // 12 hours
   },
 });
 app.use(sessionMiddleware);
@@ -62,6 +62,9 @@ app.use('/api', (req, _res, next) => {
 // Auth routes (/api/auth/register, /api/auth/login, …)
 app.use('/api/auth', authRouter);
 
+// Admin routes (/api/admin/users, /api/admin/rooms, /api/admin/saves)
+app.use('/api/admin', adminRouter);
+
 // REST API
 app.use('/api', apiRouter);
 
@@ -72,6 +75,9 @@ app.use(express.static(__dirname));
 
 // Redirect bare /client → /client/index.html
 app.get('/client', (_req, res) => res.redirect('/client/index.html'));
+
+// Redirect root → /client/index.html
+app.get('/', (_req, res) => res.redirect('/client/index.html'));
 
 // ---------------------------------------------------------------------------
 // HTTP + WebSocket server
@@ -102,12 +108,10 @@ wss.on('connection', handleConnection);
 // ---------------------------------------------------------------------------
 
 initDb();
-await ensureSavesDir();
-await migrateFileSavesToDb();
 
 server.listen(PORT, () => {
   console.log(`DFC Fleet Ops v${APP_VERSION}  |  Rulebook v${RULEBOOK_VERSION}  |  Errata v${ERRATA_VERSION}`);
   console.log(`Server listening on http://localhost:${PORT}`);
-  console.log(`  Client : http://localhost:${PORT}/client/index.html`);
+  console.log(`  Client : http://localhost:${PORT}`);
   console.log(`  API    : http://localhost:${PORT}/api/rooms`);
 });
