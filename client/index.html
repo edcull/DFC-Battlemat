@@ -1009,6 +1009,7 @@
     <div class="topbar-controls" id="topbar-controls">
       <!-- populated by renderTopbarControls() -->
     </div>
+    <div id="topbar-user" style="display:flex;align-items:center;gap:6px;padding:0 10px;font-family:var(--mono);font-size:9px;color:var(--text-mute);white-space:nowrap;"></div>
   </header>
 
   <div id="replay-bar" style="display:none;grid-column:1/-1;z-index:9999;background:#0d1a1f;border-bottom:2px solid #2a7fff;padding:6px 14px;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;color:#ccc;">
@@ -1194,6 +1195,9 @@ import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 const DROPSITE_VP = { S: { control: 2, contest: 0 }, M: { control: 3, contest: 1 }, L: { control: 4, contest: 2 } };
 let state   = createState();
 const rng   = _rng;   // Math.random — hotseat mode, no seed
+
+// ─── AUTH STATE ───────────────────────────────────────────────────────────────
+let currentUser = null; // { loggedIn, username, userId } — set on page load
 
 // ─── REPLAY STATE ─────────────────────────────────────────────────────────────
 let _replayMode     = false;
@@ -7315,6 +7319,12 @@ function renderSetupOverlay() {
   let overlay = document.getElementById('setup-overlay');
   if (overlay) overlay.remove();
   if (state.phase !== 'setup') return;
+
+  // Pre-fill player name from logged-in username (only if still at the default).
+  if (currentUser?.username && !_netSide) {
+    if (!state.playerNames) state.playerNames = { f1: 'Player 1', f2: 'Player 2' };
+    if (state.playerNames.f1 === 'Player 1') state.playerNames.f1 = currentUser.username;
+  }
 
   if (!state.scenario) state.scenario = { deployment: null, approach: null, layout: null, variant: null, objective: null };
   const scen = state.scenario;
@@ -14300,6 +14310,109 @@ function _intentSide(intent) {
 // Mode selector — full-screen overlay shown at first load (no URL params)
 // ---------------------------------------------------------------------------
 
+function showAuthScreen() {
+  const existing = document.getElementById('auth-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'auth-overlay';
+  overlay.className = 'setup-overlay';
+  overlay.style.cssText = 'z-index:600;display:flex;align-items:center;justify-content:center;';
+
+  let mode = 'login'; // 'login' | 'register'
+
+  function render() {
+    const isReg = mode === 'register';
+    overlay.innerHTML = `
+      <div style="background:var(--panel);border:1px solid var(--border-bright);border-radius:8px;padding:32px 28px;width:320px;max-width:90vw;">
+        <div style="text-align:center;margin-bottom:24px;">
+          <div style="font-size:11px;letter-spacing:0.18em;color:var(--text-mute);margin-bottom:6px;">DFC FLEET OPS</div>
+          <div style="font-size:16px;font-weight:700;letter-spacing:0.08em;">${isReg ? 'CREATE ACCOUNT' : 'SIGN IN'}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div>
+            <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">USERNAME</div>
+            <input id="auth-username" type="text" maxlength="32" autocomplete="username" spellcheck="false"
+              style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg-card,#0e1a20);border:1px solid var(--border-bright);color:var(--text);font-family:var(--mono);font-size:12px;border-radius:3px;"/>
+          </div>
+          <div>
+            <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">PASSWORD</div>
+            <input id="auth-password" type="password" maxlength="128" autocomplete="${isReg ? 'new-password' : 'current-password'}"
+              style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg-card,#0e1a20);border:1px solid var(--border-bright);color:var(--text);font-family:var(--mono);font-size:12px;border-radius:3px;"/>
+          </div>
+          ${isReg ? `<div>
+            <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">CONFIRM PASSWORD</div>
+            <input id="auth-confirm" type="password" maxlength="128" autocomplete="new-password"
+              style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg-card,#0e1a20);border:1px solid var(--border-bright);color:var(--text);font-family:var(--mono);font-size:12px;border-radius:3px;"/>
+          </div>` : ''}
+          <div id="auth-err" style="color:var(--hull-crit,#ff5252);font-size:10px;min-height:14px;"></div>
+          <button id="auth-submit" class="btn-primary" style="padding:12px;font-size:12px;letter-spacing:0.08em;margin-top:2px;">
+            ${isReg ? 'CREATE ACCOUNT' : 'SIGN IN'}
+          </button>
+          <button id="auth-switch" class="btn" style="padding:9px;font-size:10px;color:var(--text-mute);">
+            ${isReg ? 'Already have an account? SIGN IN' : 'No account? CREATE ONE'}
+          </button>
+        </div>
+      </div>`;
+
+    overlay.querySelector('#auth-switch').addEventListener('click', () => {
+      mode = isReg ? 'login' : 'register';
+      render();
+    });
+
+    const submitBtn = overlay.querySelector('#auth-submit');
+    const errDiv    = overlay.querySelector('#auth-err');
+    const usernameEl = overlay.querySelector('#auth-username');
+    const passwordEl = overlay.querySelector('#auth-password');
+
+    // Focus username on render
+    setTimeout(() => usernameEl?.focus(), 0);
+
+    // Submit on Enter key
+    overlay.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') submitBtn.click(); });
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      errDiv.textContent = '';
+      const username = usernameEl.value.trim();
+      const password = passwordEl.value;
+      if (!username || !password) { errDiv.textContent = 'Username and password are required.'; return; }
+      if (isReg) {
+        const confirm = overlay.querySelector('#auth-confirm')?.value;
+        if (password !== confirm) { errDiv.textContent = 'Passwords do not match.'; return; }
+      }
+      submitBtn.disabled = true;
+      submitBtn.textContent = '…';
+      try {
+        const res  = await fetch(`/api/auth/${isReg ? 'register' : 'login'}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errDiv.textContent = data.error || 'Something went wrong.';
+          submitBtn.disabled = false;
+          submitBtn.textContent = isReg ? 'CREATE ACCOUNT' : 'SIGN IN';
+          return;
+        }
+        currentUser = { loggedIn: true, username: data.username, userId: data.userId };
+        overlay.remove();
+        renderAll();
+        showModeSelector();
+      } catch {
+        errDiv.textContent = 'Network error — is the server running?';
+        submitBtn.disabled = false;
+        submitBtn.textContent = isReg ? 'CREATE ACCOUNT' : 'SIGN IN';
+      }
+    });
+  }
+
+  render();
+  document.body.appendChild(overlay);
+}
+
 async function showModeSelector() {
   // Strip room/side/replay params from the URL without a page reload.
   if (location.search) history.replaceState({}, '', location.pathname);
@@ -14635,16 +14748,55 @@ document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
 // Initialise networking (online) or show mode selector (local/first load)
 // ---------------------------------------------------------------------------
 
+function renderUserChip() {
+  const chip = document.getElementById('topbar-user');
+  if (!chip) return;
+  if (currentUser?.loggedIn) {
+    chip.innerHTML = `<span style="opacity:0.6;">⬡</span> ${currentUser.username} <button id="btn-logout" style="background:none;border:none;color:var(--text-mute);font-family:var(--mono);font-size:9px;cursor:pointer;padding:2px 4px;letter-spacing:0.06em;" title="Sign out">⏏</button>`;
+    chip.querySelector('#btn-logout').addEventListener('click', async () => {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      currentUser = null;
+      renderUserChip();
+      location.reload();
+    });
+  } else {
+    chip.innerHTML = '';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Initialise: check auth, then connect or show mode selector
+// ---------------------------------------------------------------------------
+
+// Check authentication status before anything else.
+try {
+  const meRes = await fetch('/api/auth/me');
+  currentUser = await meRes.json();
+} catch {
+  currentUser = { loggedIn: false };
+}
+renderUserChip();
+
 if (_netRoom && (_netSide === 'player1' || _netSide === 'player2')) {
-  // Online mode: connect — skip initial render, wait for server state broadcast.
-  _netConnect();
+  // Online mode: connect — auth check already done above.
+  if (!currentUser?.loggedIn) {
+    // Show auth screen; after login the page will reload via the URL params.
+    showAuthScreen();
+  } else {
+    _netConnect();
+  }
 } else if (!_netRoom) {
   if (sessionStorage.getItem('startHotseat')) {
     sessionStorage.removeItem('startHotseat');
-    renderAll(); // hotseat: go straight to setup
+    if (!currentUser?.loggedIn) { showAuthScreen(); }
+    else { renderAll(); }
   } else {
-    renderAll(); // render board behind mode selector before it appears
-    showModeSelector();
+    renderAll(); // render board behind overlay
+    if (!currentUser?.loggedIn) {
+      showAuthScreen();
+    } else {
+      showModeSelector();
+    }
   }
 }
 
