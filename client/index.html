@@ -3293,7 +3293,7 @@ function renderDetail() {
       else if (!moved) weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">Move this ship first, then assign weapon targets.</div>`;
       else if (limit === 0) weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">This Order cannot fire weapons.</div>`;
       else if (lockedCount > 0) {
-        weaponsHTML += `<button class="btn-finish-act" data-fire="${state.selectedGroupId}|${si}" style="background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">🎯 ENGAGE (${lockedCount})</button>`;
+        weaponsHTML += `<button class="btn-finish-act" data-fire="${state.selectedGroupId}|${si}" style="background:linear-gradient(180deg,var(--hull-crit) 0%,#a32020 100%);border-color:var(--hull-crit);color:#fff;">⊕ ENGAGE (${lockedCount})</button>`;
       } else {
         weaponsHTML += `<div class="weapon-special" style="color:var(--text-mute)">Click a weapon, then click an enemy ship to lock a target.</div>`;
       }
@@ -7961,7 +7961,7 @@ function renderSetupOverlay() {
                 <option value="">— Bonus secondary —</option>
                 ${['annihilate','take_prizes','decapitate'].map(k => `<option value="${k}" ${(state.moonguardSecondaryChoice&&state.moonguardSecondaryChoice.f1)===k?'selected':''}>${SECONDARY_OBJECTIVES[k]?SECONDARY_OBJECTIVES[k].name:k}</option>`).join('')}
               </select>` : ''}
-            <button class="btn" data-import-fleet="f1" style="width:100%;margin-top:5px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f1 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
+            <button class="btn" data-import-fleet="f1" style="width:100%;margin-top:5px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f1 ? '✏ EDIT IMPORT' : '≡ IMPORT LIST'}</button>
             ${state.fleetChoices?.f1 ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} ${state.importedFleets?.f1||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
           </div>
           <div class="faction-slot">
@@ -7982,7 +7982,7 @@ function renderSetupOverlay() {
                 <option value="">— Bonus secondary —</option>
                 ${['annihilate','take_prizes','decapitate'].map(k => `<option value="${k}" ${(state.moonguardSecondaryChoice&&state.moonguardSecondaryChoice.f2)===k?'selected':''}>${SECONDARY_OBJECTIVES[k]?SECONDARY_OBJECTIVES[k].name:k}</option>`).join('')}
               </select>` : ''}
-            <button class="btn" data-import-fleet="f2" style="width:100%;margin-top:5px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f2 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
+            <button class="btn" data-import-fleet="f2" style="width:100%;margin-top:5px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f2 ? '✏ EDIT IMPORT' : '≡ IMPORT LIST'}</button>
             ${state.fleetChoices?.f2 ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} ${state.importedFleets?.f2||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
           </div>
         </div>

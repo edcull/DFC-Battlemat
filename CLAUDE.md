@@ -142,10 +142,10 @@ Custom fleet import (`⊕ IMPORT LIST` in setup overlay): `parseNewRecruit` pars
 2. **Pick an Order** — all other same-side groups lock immediately (cannot activate until this group finishes)
 3. **Move each ship** in the group (in any order); ships show their move cone and snap to valid headings
 4. **Assign weapon targets** — click a weapon card to enter targeting mode, then click an enemy ship to lock; repeat for each weapon slot
-5. **🎯 ENGAGE** — appears in the ship detail panel once at least one target is locked; click to open the attack modal and resolve shooting
+5. **⊕ ENGAGE** — appears in the ship detail panel once at least one target is locked; click to open the attack modal and resolve shooting
 6. **Finish Activation** — after all shots resolve, click FINISH to mark the group activated and advance the active side
 
-The `🎯 ENGAGE (N)` button shows the count of locked targets. In online mode only the active side can click it; the opponent sees the attack modal open on their screen simultaneously (server-authoritative via the `fireWeapons` intent family).
+The `⊕ ENGAGE (N)` button shows the count of locked targets. In online mode only the active side can click it; the opponent sees the attack modal open on their screen simultaneously (server-authoritative via the `fireWeapons` intent family).
 
 ## Client UI
 

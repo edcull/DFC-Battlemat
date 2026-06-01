@@ -177,7 +177,7 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 2. Pick an **Order** — all other same-side groups lock immediately
 3. Move each ship in the group (in any order)
 4. Assign weapon targets (click weapon card → click enemy ship)
-5. Click **🔥 ENGAGE** to open the attack modal and resolve shooting
+5. Click **⊕ ENGAGE** to open the attack modal and resolve shooting
 6. Launch assets, use Detector, or Extract as appropriate
 7. Click **FINISH ACTIVATION ▸** — AP is spent, side flips to opponent
 
