@@ -4038,6 +4038,117 @@ function applyFireFeatureWeapon(state, intent) {
   return state;
 }
 
+/* Place a scenery piece. Server-authoritative so both clients update together. */
+function applyPlaceScenery(state, intent) {
+  const { sceneryType, x, y, angle } = intent;
+  if (!state.scenarioData) return state;
+  state.scenarioData.placedScenery = state.scenarioData.placedScenery || [];
+  state.scenarioData.placedScenery.push({ type: sceneryType, x, y, angle });
+  if (state.sceneryTurn) state.sceneryTurn = state.sceneryTurn === 'player1' ? 'player2' : 'player1';
+  logEvent(state, `${sceneryType === 'micrometeor' ? 'Micrometeor Cloud' : 'Dense Field'} placed at (${Math.round(x*10)/10}", ${Math.round(y*10)/10}")`);
+  return state;
+}
+
+/* Move a launched asset to a new position. Handles auto-lock, split, dogfight, and merge. */
+function applyAssetMove(state, rng, intent) {
+  const { assetId, x, y, count: moveCount } = intent;
+  const assets = state.launchedAssets || [];
+  const asset = assets.find(a => a.id === assetId);
+  if (!asset || asset.moved || asset.count <= 0) return state;
+
+  const thrPx = assetThrust(state, asset) * INCH;
+  const isBomberType = asset.kind === 'bomber' || asset.kind === 'fireship' || asset.kind === 'torpedo';
+
+  // Auto-lock: bomber/fireship/torpedo moved onto an enemy ship → snap to base contact.
+  if (isBomberType) {
+    const hit = enemyShipAtPoint(state, asset.side, { x, y });
+    if (hit && (hit.ship.layer || 'orbit') !== 'atmosphere') {
+      const contact = 1 * INCH + shipBaseRadiusPx(hit.def);
+      const dist = Math.hypot(hit.ship.x - asset.x, hit.ship.y - asset.y);
+      const newX = dist <= contact ? asset.x : hit.ship.x - (hit.ship.x - asset.x) / dist * contact;
+      const newY = dist <= contact ? asset.y : hit.ship.y - (hit.ship.y - asset.y) / dist * contact;
+      if (Math.hypot(newX - asset.x, newY - asset.y) > thrPx + 2) return state;
+      const ox = asset.x, oy = asset.y;
+      asset._preMove = { x: ox, y: oy, t2tRange: asset._t2tRange };
+      asset.x = newX; asset.y = newY; asset.moved = true; asset._t2tRange = undefined;
+      applyAssetScenery(state, rng, asset, ox, oy);
+      if (asset.count > 0) asset.bomberTarget = { gid: hit.gid, si: hit.si };
+      else state.launchedAssets = state.launchedAssets.filter(a => a.count > 0);
+      state.assetMove = null;
+      afterAssetMove(state);
+      return state;
+    }
+  }
+
+  if (Math.hypot(x - asset.x, y - asset.y) > thrPx + 2) return state;
+  const actualCount = Math.min(moveCount || asset.count, asset.count);
+  const ox = asset.x, oy = asset.y;
+
+  let mover;
+  if (actualCount < asset.count) {
+    asset.count -= actualCount;
+    const newId = 'a' + (state._assetId = (state._assetId || 0) + 1);
+    mover = { id: newId, kind: asset.kind, count: actualCount, side: asset.side, x, y, moved: true };
+    state.launchedAssets.push(mover);
+  } else {
+    asset._preMove = { x: ox, y: oy, t2tRange: asset._t2tRange };
+    asset.x = x; asset.y = y; asset.moved = true; asset._t2tRange = undefined;
+    mover = asset;
+  }
+
+  applyAssetScenery(state, rng, mover, ox, oy);
+
+  if (mover.count <= 0) {
+    state.launchedAssets = state.launchedAssets.filter(a => a.count > 0);
+    state.assetMove = null;
+    afterAssetMove(state);
+    return state;
+  }
+
+  // Fighter dogfight: collide with nearest enemy fighter.
+  if (mover.kind === 'fighter') {
+    const enemy = mover.side === 'player1' ? 'player2' : 'player1';
+    const foe = state.launchedAssets.find(a => a.id !== mover.id && a.side === enemy &&
+      Math.hypot(a.x - mover.x, a.y - mover.y) <= shipBaseRadiusPx({ tonnage: 'L' }));
+    if (foe) {
+      const rem = Math.min(mover.count, foe.count);
+      mover.count -= rem; foe.count -= rem;
+      state.dogfightResult = { attackerSide: mover.side, foeSide: enemy, foeKind: foe.kind,
+        attackerBefore: mover.count + rem, attackerAfter: mover.count,
+        foeBefore: foe.count + rem, foeAfter: foe.count, removed: rem };
+      state.launchedAssets = state.launchedAssets.filter(a => a.count > 0);
+      state.assetMove = null;
+      afterAssetMove(state);
+      return state;
+    }
+  }
+
+  // Friendly merge.
+  const merge = state.launchedAssets.find(a => a.id !== mover.id && a.kind === mover.kind &&
+    a.side === mover.side && Math.hypot(a.x - mover.x, a.y - mover.y) <= shipBaseRadiusPx({ tonnage: 'L' }));
+  if (merge) {
+    merge.count += mover.count; merge.moved = true;
+    state.launchedAssets = state.launchedAssets.filter(a => a.id !== mover.id);
+    state.assetMove = null;
+    afterAssetMove(state);
+    return state;
+  }
+
+  const sideBefore = state.assetActiveSide, typeBefore = state.assetPhase && state.assetPhase.assetType;
+  state.assetMove = null;
+  afterAssetMove(state);
+
+  // Auto-reselect bomber/fireship that arrived in base contact with an enemy.
+  if (isBomberType && mover.count > 0 && !state.attackModal &&
+      state.assetActiveSide === sideBefore && state.assetPhase && state.assetPhase.assetType === typeBefore &&
+      state.launchedAssets.includes(mover) &&
+      enemyShipsInBaseContact(state, mover.side, mover.x, mover.y).length > 0) {
+    state.assetMove = { id: mover.id, count: mover.count };
+  }
+
+  return state;
+}
+
 /* Dispatch an intent to its mutator. Mutates `state` in place; returns it. */
 export function apply(state, intent, rng) {
   switch (intent && intent.type) {
@@ -4191,6 +4302,8 @@ export function apply(state, intent, rng) {
       if (state.assetPhase.doneSides.length >= 2) return advanceRound(state, rng);
       return state;
     }
+    case 'placeScenery':    return applyPlaceScenery(state, intent);
+    case 'assetMove':       return applyAssetMove(state, rng, intent);
     case 'assetT2T': {
       const at2t = intent.assetId && (state.launchedAssets || []).find(a => a.id === intent.assetId);
       if (at2t) { at2t.moved = false; at2t.t2t = true; at2t._t2tRange = 6; }

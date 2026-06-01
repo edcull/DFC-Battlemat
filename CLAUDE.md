@@ -136,6 +136,17 @@ Quickplay ships are cloned with side-prefixed IDs (`'ucm:u1'`, `'shal:s1'`) into
 
 Custom fleet import (`⊕ IMPORT LIST` in setup overlay): `parseNewRecruit` parses the New Recruit export text into groups + admiral entries; `buildSideFleet` then uses `findShipDef` to look up each ship from `db.js`, applying hardpoint options via `applyHardpointOptions`.
 
+## Activation Flow
+
+1. **Select a group** — click a ship on the board or a group card in the left panel
+2. **Pick an Order** — all other same-side groups lock immediately (cannot activate until this group finishes)
+3. **Move each ship** in the group (in any order); ships show their move cone and snap to valid headings
+4. **Assign weapon targets** — click a weapon card to enter targeting mode, then click an enemy ship to lock; repeat for each weapon slot
+5. **🎯 ENGAGE** — appears in the ship detail panel once at least one target is locked; click to open the attack modal and resolve shooting
+6. **Finish Activation** — after all shots resolve, click FINISH to mark the group activated and advance the active side
+
+The `🎯 ENGAGE (N)` button shows the count of locked targets. In online mode only the active side can click it; the opponent sees the attack modal open on their screen simultaneously (server-authoritative via the `fireWeapons` intent family).
+
 ## Client UI
 
 ### Setup overlay
@@ -202,20 +213,16 @@ A **user chip** (`#topbar-user`) in the top-right of the topbar shows the logged
 - DA transitions: `daFinishDropsite`, `daSwitchSide`, `daEnd`
 
 **Still on relay (remaining work):**
-- Asset board movement (board click during asset step); asset stage-advance buttons
-- DA feature attack modal opening
-- Undo deploy
-- Scenery placement board click
-- Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes)
+- Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes) — intentionally kept as relay
 
 ## Known Limitations
 
 - Online play requires running the Node server.
 - Wrong-side online clicks silently no-op + resync rather than having buttons visually disabled.
-- Asset board movement, undo deploy, scenery placement, and pre-game config still relay full state rather than using server-validated intents.
+- Pre-game setup overlay (fleet choices, names, colours, scenario) still relays full state — intentional collaborative config with no server legality to enforce.
 - No AI opponent.
 - Faction admiral personal abilities and famous admiral abilities are defined in `db.js` and shown in the AP modal, but are informational only — the abilities themselves (e.g. Mass Driver Volley, Dedicated Survey Teams) must be adjudicated manually by players.
 - Standard-scenario **variant features** (Military Outposts, Orbital Defence Guns, Power Plants, Hangars, Comms Stations) are placed on dropsites, but their in-game effects and any bespoke special rules (e.g. Entrapmoont's Power-Plant blast and the blue team's bonus Military Outpost) are adjudicated manually.
 - Multiplayer/team scenarios (e.g. Entrapmoont, Moonswipe, 2–4 players) are modelled as standard 2-player; attacker/defender map to player2/player1, and Red/Blue deployment zones are still assigned randomly at confirm.
-- **Scenario Expansion 1** — all 14 scenarios are selectable with faithful dropsite layouts (positions, features, focal point geometry). Engine-scored: Imminent/Backline/Staggered approach gating, Normal/Demolish/Kill Points/Focal Points/Assess scoring, Ruin/Level dropsite lifecycle (`ds.ruined` + `ds.destroyed`), per-zone siteRules for Assess and Demolish eligibility, +1VP per Admiral for One With (Almost) Nothing. Still adjudicated manually and surfaced as Special Rules notes: moving/breaking moons (Moonskipper, Moonbreaker, Moonswipe pre-deployment repositioning), Orbital Decay damage ("(Almost) Nothing" pair), asymmetric colour-city ownership scoring (When Backfields Meet), board-quarter focal value scoring (Erupting Quarters, (Almost) Nothing At All), Very Important Moon end-game crippled-ships-outside-focal-point VP.
+- **Scenario Expansion 1** — all 14 scenarios selectable with faithful dropsite layouts, features, and focal point geometry. Engine-scored: Imminent/Backline/Staggered approach gating; Normal/Demolish/Kill Points/Focal Points/Assess scoring; Ruin/Level dropsite lifecycle; per-zone `siteRules` for Assess, Demolish, and Normal Scoring eligibility (incl. WBM asymmetric `score_north`/`score_south`); board-quarter focal value scoring (Erupting Quarters, (Almost) Nothing At All); Moonskipper moon movement and ship destruction; Moonbreaker cloud damage and moon-majority scoring; Moonswipe pre-deployment Large Object repositioning (click moons in setup); Moonguard bonus secondary scoring; VIM crippled-groups-outside-focal-point VP; One With (Almost) Nothing +1VP per Admiral. Still adjudicated manually: RSE station 5+ BS while paired City has Power Plant; Orbital Decay token assignment (damage per token is engine-scored); standard variant-feature in-game effects (ODGs, Power Plants, etc.).
 - **Dropsite Ruin/Level lifecycle** — `ds.ruined` is set on first hull breach (damage resets to overflow); `ds.destroyed` on second breach. Demolish VP fires immediately on each event. The older `ds.destroyed`-only model has been replaced.

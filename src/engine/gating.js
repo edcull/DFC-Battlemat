@@ -11,9 +11,9 @@
 // apply() dispatcher in mutators.js — every intent type apply() handles must
 // have a matching case here.
 
-import { ORDERS, INCH } from './constants.js';
-import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, sideNeedsDeployPhase, transportValue, shipInNetwork, isCapital, objectiveForSide } from './mutators.js';
+import { ORDERS, INCH, FEATURES } from './constants.js';
+import { getDef, assetThrust } from './state.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, sideNeedsDeployPhase, transportValue, shipInNetwork, isCapital, objectiveForSide, sceneryValid } from './mutators.js';
 
 const INTENT_TYPES = ['pass', 'endRound', 'commitScenario'];
 
@@ -585,6 +585,41 @@ export function isLegal(state, intent, side) {
       const doneSides = state.assetPhase.doneSides || [];
       if (doneSides.includes(intent.side)) return false; // already confirmed
       return true;
+    }
+    case 'placeScenery': {
+      if (state.phase !== 'scenery') return false;
+      const { sceneryType, x, y } = intent;
+      if (!['micrometeor', 'dense'].includes(sceneryType)) return false;
+      if (state.sceneryTurn && state.sceneryTurn !== side) return false;
+      const placed = ((state.scenarioData && state.scenarioData.placedScenery) || []).filter(s => s.type === sceneryType).length;
+      const target = ((state.scenarioData && state.scenarioData.sceneryTargets) || {})[sceneryType] || 0;
+      if (placed >= target) return false;
+      return sceneryValid(state, sceneryType, x, y).ok;
+    }
+    case 'assetMove': {
+      if (!state.assetPhase || state.assetPhase.step !== 'assets') return false;
+      const { assetId, x, y } = intent;
+      const asset = (state.launchedAssets || []).find(a => a.id === assetId);
+      if (!asset || asset.moved || asset.count <= 0) return false;
+      if (side && asset.side !== side) return false;
+      if (state.assetActiveSide && asset.side !== state.assetActiveSide) return false;
+      if (asset.kind === 'mine') return false;
+      const thrPx = assetThrust(state, asset) * INCH;
+      return Math.hypot(x - asset.x, y - asset.y) <= thrPx + 2;
+    }
+    case 'fireFeatureWeapon': {
+      if (state.phase !== 'da') return false;
+      if (!state.daActiveSide || (side && state.daActiveSide !== side)) return false;
+      const { dsId, fi, targetGid, targetSi } = intent;
+      const fwDs = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+      if (!fwDs) return false;
+      const fwFk = fwDs.features && fwDs.features[fi];
+      if (!fwFk || !FEATURES[fwFk] || !FEATURES[fwFk].weapon) return false;
+      if ((fwDs.destroyedFeatures || []).includes(fi)) return false;
+      const fwTg = state.groups && state.groups[targetGid];
+      if (!fwTg) return false;
+      const fwTs = fwTg.ships && fwTg.ships[targetSi];
+      return !!(fwTs && !fwTs.destroyed && !fwTs.offTable);
     }
     case 'startAssetMove':
     case 'assetT2T':
