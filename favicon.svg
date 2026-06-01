@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" fill="#0a0e0d"/>
+  <!-- hex grid: 7 hexes tiling the square, flat-top, radius ~7 -->
+  <!-- row 0: top partial row -->
+  <polygon points="10,1 14,1 16,4.5 14,8 10,8 8,4.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <polygon points="18,1 22,1 24,4.5 22,8 18,8 16,4.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <!-- row 1: middle row, offset -->
+  <polygon points="6,8 10,8 12,11.5 10,15 6,15 4,11.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <polygon points="14,8 18,8 20,11.5 18,15 14,15 12,11.5" fill="#0f1f1a" stroke="#3a8f6a" stroke-width="1.2"/>
+  <polygon points="22,8 26,8 28,11.5 26,15 22,15 20,11.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <!-- row 2: lower middle -->
+  <polygon points="10,15 14,15 16,18.5 14,22 10,22 8,18.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <polygon points="18,15 22,15 24,18.5 22,22 18,22 16,18.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <!-- row 3: bottom partial -->
+  <polygon points="6,22 10,22 12,25.5 10,29 6,29 4,25.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <polygon points="14,22 18,22 20,25.5 18,29 14,29 12,25.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <polygon points="22,22 26,22 28,25.5 26,29 22,29 20,25.5" fill="none" stroke="#2a5f4a" stroke-width="0.8"/>
+  <!-- ship token in centre hex: top-down silhouette -->
+  <polygon points="16,9.5 17.2,11 17.5,13.5 16,14.5 14.5,13.5 14.8,11" fill="#e74c3c" stroke="none"/>
+</svg>
