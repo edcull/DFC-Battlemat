@@ -1,17 +1,13 @@
-// File-based game save persistence. Each room gets a JSON file at saves/<roomId>.json.
-// All writes are fire-and-forget — callers should .catch() errors but never await.
-
-import { readdir, readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
 import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from './engine/version.js';
+import { upsertSave, getSaveByRoomId, getAllSaves as dbGetAllSaves, getAllSavesForUser, getRoomSlot } from './db.js';
 
-const SAVES_DIR = join(process.cwd(), 'saves');
+export async function saveRoom(room, userId = null) {
+  if (room.state?.phase === 'setup') return;
+  const slot1 = getRoomSlot(room.id, 'player1');
+  const slot2 = getRoomSlot(room.id, 'player2');
+  const ownerId   = room.creatorUserId ?? slot1?.user_id ?? userId;
+  const player2Id = slot2?.user_id ?? null;
 
-export async function ensureSavesDir() {
-  await mkdir(SAVES_DIR, { recursive: true });
-}
-
-export async function saveRoom(room) {
   const data = {
     appVersion:        APP_VERSION,
     rulebookVersion:   RULEBOOK_VERSION,
@@ -24,6 +20,7 @@ export async function saveRoom(room) {
     round:             room.state.round,
     playerNames:       room.state.playerNames,
     factions:          room.state.factions,
+    sideColors:        room.state.sideColors || null,
     isHotseat:         room.isHotseat || false,
     playStartState:    room.playStartState,
     playStartRngState: room.playStartRngState,
@@ -31,38 +28,19 @@ export async function saveRoom(room) {
     currentRngState:   room.rng.getState(),
     intentLog:         room.intentLog,
   };
-  await writeFile(join(SAVES_DIR, `${room.id}.json`), JSON.stringify(data));
+  try {
+    upsertSave(data, ownerId, player2Id);
+  } catch (err) {
+    console.error(`[${room.id}] SQLite save error:`, err.message);
+  }
 }
 
 export async function loadSave(roomId) {
-  const raw = await readFile(join(SAVES_DIR, `${roomId.toUpperCase()}.json`), 'utf8');
-  return JSON.parse(raw);
+  const row = getSaveByRoomId(roomId.toUpperCase());
+  if (row) return row;
+  throw new Error(`Save not found: ${roomId}`);
 }
 
-export async function loadAllSaves() {
-  let files;
-  try {
-    files = await readdir(SAVES_DIR);
-  } catch {
-    return [];
-  }
-  const saves = [];
-  for (const f of files) {
-    if (!f.endsWith('.json')) continue;
-    try {
-      const raw = await readFile(join(SAVES_DIR, f), 'utf8');
-      saves.push(JSON.parse(raw));
-    } catch (err) {
-      console.error(`Failed to load save ${f}:`, err.message);
-    }
-  }
-  return saves;
-}
-
-export async function deleteSave(roomId) {
-  try {
-    await unlink(join(SAVES_DIR, `${roomId}.json`));
-  } catch {
-    // File may not exist if game never reached beginPlay — ignore
-  }
+export async function loadAllSaves(userId = null) {
+  return userId ? getAllSavesForUser(userId) : dbGetAllSaves();
 }
