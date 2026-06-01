@@ -280,13 +280,13 @@
   }
   .scen-row .scen-controls .scen-dropdown { flex: 0 0 75%; }
   .scen-row .scen-controls .reroll-btn { flex: 1 1 25%; margin-top: 0; }
-  .scen-row .scen-dropdown {
+  .scen-dropdown {
     background: var(--panel); border: 1px solid var(--border-bright);
     color: var(--text); font-family: var(--mono); font-size: 12px;
     padding: 8px 10px; border-radius: 4px; cursor: pointer; width: 100%;
     color-scheme: dark;
   }
-  .scen-row .scen-dropdown:hover { border-color: var(--text); }
+  .scen-dropdown:hover { border-color: var(--text); }
   .scen-row .picker-btn {
     background: transparent;
     border: 1px solid var(--border);
@@ -679,6 +679,19 @@
   }
   .hud-btn:hover { color: var(--text); border-color: var(--border-bright); }
   .hud-btn.active { color: var(--shal); border-color: var(--shal-dim); }
+  .hud-row { display: flex; gap: 4px; align-items: center; pointer-events: auto; }
+  .hud-icon-btn {
+    pointer-events: auto; cursor: pointer;
+    background: rgba(8,16,15,0.85); border: 1px solid var(--border);
+    color: var(--text-mute); font-family: var(--mono); font-size: 13px;
+    width: 24px; height: 24px; padding: 0; border-radius: 2px;
+    backdrop-filter: blur(4px); text-align: center; line-height: 22px;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .hud-icon-btn:hover { color: var(--text-dim); border-color: var(--border-bright); }
+  #btn-arc-toggle.active { color: var(--ucm); border-color: var(--ucm-dim); }
+  #btn-sig-toggle.active { color: var(--hull-crit); border-color: rgba(255,82,82,0.45); }
+  #btn-trails-toggle.active { color: var(--shal); border-color: var(--shal-dim); }
 
   .board-legend {
     position: absolute; bottom: 8px; left: 8px;
@@ -1028,7 +1041,12 @@
     <div class="board-hud">
       <div class="hud-item" id="hud-active">SELECT A GROUP →</div>
       <div class="hud-item" id="hud-turn-info" style="display:none;"></div>
-      <button class="hud-item hud-btn" id="btn-3d-toggle">3D VIEW</button>
+      <div class="hud-row">
+        <button class="hud-btn" id="btn-3d-toggle" style="padding:4px 7px;" title="Toggle 3D view">3D</button>
+        <button class="hud-icon-btn" id="btn-arc-toggle" data-arcview="1" title="Arcs+Scan: show weapon arcs &amp; scan range / enemy signatures">⚙</button>
+        <button class="hud-icon-btn" id="btn-sig-toggle" data-arcview="2" title="Sig: show own signature aura / enemy arcs &amp; scan ranges">◎</button>
+        <button class="hud-icon-btn" id="btn-trails-toggle" title="Toggle movement trail lines">↝</button>
+      </div>
     </div>
     <div class="board-legend">
       <div class="legend-row">
@@ -1124,6 +1142,7 @@ import {
   resolveBattalionCombat as _resolveBattalionCombat,
   aegisValueForGroup as _aegisValueForGroup,
   surveyableDropsite as _surveyableDropsite, extractableDropsite as _extractableDropsite,
+  objectiveForSide as _objectiveForSide, objAny as _objAny,
   eligibleEscort as _eligibleEscort, commandShipBonus as _commandShipBonus,
   sideHasCommsUplink as _sideHasCommsUplink, destroyFeature as _destroyFeature,
   contestedDropsites as _contestedDropsites,
@@ -1326,6 +1345,8 @@ function resolveBattalionCombat()                          { _resolveBattalionCo
 function aegisValueForGroup(targetGid)                     { return _aegisValueForGroup(state, targetGid); }
 function surveyableDropsite(ship, side)                    { return _surveyableDropsite(state, ship, side); }
 function extractableDropsite(ship, side)                   { return _extractableDropsite(state, ship, side); }
+function objectiveForSide(side)                            { return _objectiveForSide(state, side); }
+function objAny(key)                                       { return _objAny(state, key); }
 function eligibleEscort(tGid, tSi)                         { return _eligibleEscort(state, tGid, tSi); }
 function commandShipBonus(side)                            { return _commandShipBonus(state, side); }
 function sideHasCommsUplink(side)                          { return _sideHasCommsUplink(state, side); }
@@ -2053,6 +2074,12 @@ function makeGroupCard(def) {
     </div>
   `;
   card.addEventListener('click', () => {
+    // In play phase, silently ignore clicks on groups that have no eligible ships
+    // (off-table and not yet eligible to arrive). They auto-activate separately.
+    if (state.phase === 'play' && undeployedCount > 0 && onTable === 0) {
+      const _elig = canActivateOffTable(def);
+      if (!_elig.eligible) return;
+    }
     const wasSelected = state.selectedGroupId === def.id;
     selectGroup(def.id);
     // Also select the first alive ship in the group so the ship detail panel shows.
@@ -2147,6 +2174,14 @@ function makeCellsCard(side, payloadDefs) {
 }
 
 function selectGroup(gid) {
+  // In replay mode, allow freely selecting any group for viewing — skip all game guards.
+  if (_replayMode) {
+    state.selectedGroupId = state.selectedGroupId === gid ? null : gid;
+    state.selectedShipIdx = state.selectedGroupId ? 0 : null;
+    state.selectedDropsiteId = null;
+    renderAll(true);
+    return;
+  }
   // Hotseat turn enforcement: only the active player may interact with their groups.
   if (!_netSide) {
     const def = getDef(gid);
@@ -2197,26 +2232,25 @@ function selectGroup(gid) {
   arcViewMode = 1;
   renderAll(true);
   netSendPeerView();
-  // Bug 3: auto-skip activation for groups with no ships to act on.
-  if (state.phase === 'play' && state.selectedGroupId) {
-    const grp = state.groups[state.selectedGroupId];
-    const def = getDef(state.selectedGroupId);
-    if (grp && def && !grp.activated) {
-      // Don't skip groups that have ships which can still act:
-      // - on-table ships, OR ships that just arrived (offTable but placed this activation)
-      // - off-table reserve ships that are eligible to arrive this round
+}
+
+/* Auto-activate any groups whose ships are all off-table and not yet eligible
+   to arrive. Called via setTimeout from renderAll so it runs after the paint
+   without needing the player to click the ineligible group card. */
+function _autoSkipIneligible() {
+  if (state.phase !== 'play') return;
+  ['player1','player2'].forEach(side => {
+    fleetForSide(side).forEach(def => {
+      const grp = state.groups[def.id];
+      if (!grp || grp.activated) return;
       const hasOffTable = grp.ships.some(s => !s.destroyed && s.offTable && !s.attachedTo);
-      const hasActive = grp.ships.some(s => !s.destroyed && (!s.offTable || s.justArrived))
-        || (hasOffTable && canActivateOffTable(def).eligible);
-      if (!hasActive) {
-        const side = def.side;
-        if (_isLegal(state, { type: 'finishActivation', gid: state.selectedGroupId }, side)) {
-          flashLaunchMsg(`${def.name} has no ships to activate — skipped`);
-          dispatch({ type: 'finishActivation', gid: state.selectedGroupId });
-        }
+      const hasActive   = grp.ships.some(s => !s.destroyed && (!s.offTable || s.justArrived))
+                        || (hasOffTable && canActivateOffTable(def).eligible);
+      if (!hasActive && _isLegal(state, { type: 'finishActivation', gid: def.id }, side)) {
+        dispatch({ type: 'finishActivation', gid: def.id });
       }
-    }
-  }
+    });
+  });
 }
 
 /* ==========================================================================
@@ -2736,12 +2770,6 @@ function renderDetail() {
           ${rows}
         </div>`;
       })()}
-      <div style="margin-top:6px;display:flex;gap:4px;align-items:center;">
-        <span style="font-size:9px;color:var(--text-mute);">Board:</span>
-        <button class="order-btn ${arcViewMode===1?'active '+sideClass:''}" data-arcview="1" style="font-size:8px;padding:2px 6px;" title="Show this ship's weapon arcs &amp; scan range, plus all opponent ship signature auras">⚙ Arcs+Scan</button>
-        <button class="order-btn ${arcViewMode===2?'active '+sideClass:''}" data-arcview="2" style="font-size:8px;padding:2px 6px;" title="Show this ship's signature aura, plus all opponent ship weapon arcs &amp; scan ranges">◎ Sig</button>
-        ${_view3d ? `<button class="order-btn ${_view3dTrails?'active '+sideClass:''}" id="btn-trails-toggle" style="font-size:8px;padding:2px 6px;" title="Toggle 3D movement trail lines">↝ Trails</button>` : ''}
-      </div>
     </div>
   `;
 
@@ -3027,8 +3055,7 @@ function renderDetail() {
   // forgo attacking/launching to Survey it (once per Dropsite per side per game).
   let surveyHTML = '';
   {
-    const objKey = state.scenario && state.scenario.objective;
-    const surveyActive = objKey === 'survey' || (state.secondaries && state.secondaries[def.side] && state.secondaries[def.side].includes('gather_intel'));
+    const surveyActive = objectiveForSide(def.side) === 'survey' || (state.secondaries && state.secondaries[def.side] && state.secondaries[def.side].includes('gather_intel'));
     const selShip = state.selectedShipIdx !== null ? grp.ships[state.selectedShipIdx] : null;
     if (surveyActive && selShip && !selShip.destroyed && !selShip.offTable && isCapital(def) && state.phase === 'play') {
       const near = surveyableDropsite(selShip, def.side);
@@ -3050,7 +3077,7 @@ function renderDetail() {
   let extractHTML = '';
   {
     const selShip = state.selectedShipIdx !== null ? grp.ships[state.selectedShipIdx] : null;
-    const canExtractObj = state.scenario && state.scenario.objective === 'extract';
+    const canExtractObj = objectiveForSide(def.side) === 'extract';
     const tv = transportValue(def);
     if (canExtractObj && tv > 0 && selShip && !selShip.destroyed && !selShip.offTable && state.phase === 'play' && !isOpponent && activeGroupIdForSide(def.side) === def.id) {
       const k = targetKey(state.selectedGroupId, state.selectedShipIdx);
@@ -3364,9 +3391,6 @@ function renderDetail() {
       const justDeployed = grp.ships.some(s => !s.destroyed && s.justArrived);
       moveHTML = `<div class="panel-section">
         <div class="help-tip ${sideClass}">Select an Order first ↑</div>
-        ${!isOpponent && !justDeployed ? `<div style="margin-top:6px;">
-          <button class="btn" data-cancel-activation="${gid}" style="width:100%;">✕ CANCEL ACTIVATION</button>
-        </div>` : ''}
       </div>`;
     } else if (grp.activated) {
       moveHTML = `<div class="panel-section">
@@ -3474,9 +3498,8 @@ function renderBoard() {
       });
     }
 
-    // Enemy signature auras — shown while moving a friendly ship, and always in arc view mode 1.
-    // Suppressed in mode 2 (only the selected ship's own sig aura is shown there).
-    if (arcViewMode !== 2 && (movingActive || arcViewMode === 1)) {
+    // Enemy signature auras — mode 1 (attacker view) or while moving (never in mode 0 or 2).
+    if (arcViewMode !== 0 && (arcViewMode === 1 || (movingActive && arcViewMode !== 2))) {
       const enemySide = def.side === 'player1' ? 'player2' : 'player1';
       const enemyFleet = fleetForSide(enemySide);
       const enemyCol = 'var(--hull-crit)';
@@ -3503,8 +3526,10 @@ function renderBoard() {
       // While launching from this ship, suppress its scan/arc overlay (replaced
       // by the launch aura below).
       if (launchingHere && state.launching.si === si) return;
-      // In arc view mode 2: suppress weapon arcs for the selected ship (we show sig aura instead)
-      if (arcViewMode === 2 && isSel) {
+      // Mode 0: hide all overlays
+      if (arcViewMode === 0) { /* skip */ }
+      // Mode 2: show sig aura for every ship in the group
+      else if (arcViewMode === 2) {
         // Show this ship's signature aura in red (matches enemy sig aura style)
         const spikes = grp.spikes || 0;
         const sig = ship.sigSilent ? 0 : def.sig;
@@ -3520,7 +3545,7 @@ function renderBoard() {
       }
     });
 
-    // Arc view mode 2: show all enemy ships' weapon arcs + scan ranges.
+    // Mode 2 (defender view): show all enemy ships' weapon arcs + scan ranges.
     if (arcViewMode === 2) {
       const enemySide2 = def.side === 'player1' ? 'player2' : 'player1';
       fleetForSide(enemySide2).forEach(edef => {
@@ -3726,8 +3751,8 @@ function renderBoard() {
     }
   }
 
-  // Movement traces — controlled by the same toggle as the 3D trail lines.
-  if (_view3dTrails) allDefs().forEach(def => {
+  // Movement traces — always shown during replay animation; otherwise uses the trail toggle.
+  if (_view3dTrails || _replayAnim) allDefs().forEach(def => {
     const grp = getGroup(def.id);
     const trail = grp.moveTrail || [];
     if (!trail.length) return;
@@ -6013,6 +6038,7 @@ function _fleetTotalPts(imported) {
   return shipPts + admiralPts;
 }
 
+
 /* Build default admiral assignments for an imported fleet. */
 function _buildDefaultAdmiralAssignments(imported) {
   const assignments = [];
@@ -6382,45 +6408,9 @@ function openFleetView(slot) {
 }
 
 function openFleetViewForSide(side) {
-  const slot = state.slotForSide && state.slotForSide[side];
-  if (slot) {
-    const imported = state.importedFleets && state.importedFleets[slot];
-    const fk = state.fleetChoices && state.fleetChoices[slot];
-    if (imported || fleetHasPayloads(fk)) {
-      openFleetView(slot);
-      return;
-    }
-  }
-  // Pre-generated fleet — build from active defs.
-  let panel = document.getElementById('fleet-view-overlay');
-  if (panel) panel.remove();
-  const defs = (side === 'player1' ? redFleet() : blueFleet()).filter(d => !d.payload);
-  const TONNAGE_SORT = { C: 0, H: 1, M: 2, L: 3 };
-  defs.sort((a, b) => (TONNAGE_SORT[a.tonnage] ?? 99) - (TONNAGE_SORT[b.tonnage] ?? 99));
-  const sideClass = sideCssKey(side);
-  const cards = defs.map(def => `
-    <div class="group-card" style="min-width:110px;max-width:130px;">
-      <div class="group-name">${def.name}</div>
-      <div class="group-role">${roleLabel(def)} · ${def.tonnage} · ${def.pts}pts${def.groupSize > 1 ? ' ×' + def.groupSize : ''}</div>
-    </div>`).join('');
-  panel = document.createElement('div');
-  panel.id = 'fleet-view-overlay';
-  panel.className = 'setup-overlay';
-  panel.style.zIndex = '400';
-  panel.innerHTML = `
-    <div class="setup-card" style="max-width:600px;">
-      <div class="setup-header">
-        <h2 class="setup-title">${factionName(side).toUpperCase()} FLEET</h2>
-        <div class="setup-sub">${defs.length} groups</div>
-      </div>
-      <div class="setup-body">
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">${cards}</div>
-      </div>
-      <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
-    </div>
-  `;
-  document.body.appendChild(panel);
-  panel.querySelector('#fleet-view-close').addEventListener('click', () => panel.remove());
+  const slot = (state.slotForSide && state.slotForSide[side])
+            || (side === 'player1' ? 'f1' : 'f2');
+  openFleetView(slot);
 }
 
 /* Payload→Porter assignment modal (Bioficer, setup-time, per chosen fleet slot).
@@ -6551,18 +6541,24 @@ function renderSceneryPlacement() {
   const turnLabel = turnName
     ? `<span style="font-size:10px;color:var(--${turnSide})"><b>${turnName}</b> places ·</span>`
     : `<span><b>Place Scenery</b> ·</span>`;
+  // In online mode the completion button is always available once the player
+  // hasn't committed yet — independent of whose placing turn it is.
+  // In hotseat the button commits both sides, so only show it once myTurn is true
+  // (hotseat myTurn is always true since !_netSide short-circuits the check).
+  const doneBtn = myCommitted
+    ? `<span style="font-size:10px;color:var(--text-mute)">✓ done · waiting for opponent…</span>`
+    : _netSide
+      ? `<button class="btn-primary" id="commit-scenery-top" style="padding:5px 12px;font-size:10px;">SCENERY COMPLETE →</button>`
+      : `<button class="btn-primary" id="commit-scenery-both" style="padding:5px 12px;font-size:10px;">✓ SCENERY DONE</button>`;
   banner.innerHTML = `
     ${turnLabel}
     ${tab('micrometeor', 'Micrometeor', 'rgba(150,200,240,0.9)')}
     ${tab('dense', 'Dense Field', 'rgba(235,140,100,0.95)')}
-    ${myCommitted
-      ? `<span style="font-size:10px;color:var(--text-mute)">✓ done · waiting for opponent…</span>`
-      : !myTurn
-        ? `<span style="font-size:10px;color:var(--text-mute)">⏳ waiting for ${turnName}…</span>`
-        : sel ? (sel.pending
-            ? `<span style="font-size:10px;color:var(--text-dim)">click to set facing · right-click cancels</span>`
-            : `<span style="font-size:10px;color:var(--text-dim)">click board to place, then click again to set facing · ≥4&quot; from edges/zones/other scenery</span>`)
-          : `<span style="font-size:10px;color:var(--text-dim)">pick a type, then place. Click a piece to remove.</span>`}
+    ${sel ? (sel.pending
+        ? `<span style="font-size:10px;color:var(--text-dim)">click to set facing · right-click cancels</span>`
+        : `<span style="font-size:10px;color:var(--text-dim)">click board to place, then click again to set facing · ≥4&quot; from edges/zones/other scenery</span>`)
+      : ''}
+    ${doneBtn}
   `;
   board.appendChild(banner);
 }
@@ -6841,30 +6837,38 @@ function renderVPBreakdown() {
   if (overlay) overlay.remove();
   if (!state.vpBreakdownOpen || !state.score) return;
   const sideBlock = (side) => {
+    const col = `var(--${sideCssKey(side)})`;
     const entries = (state.scoreLog || []).filter(e => e.side === side);
     const lines = entries.length
       ? entries.map(e => `<div style="display:flex;gap:8px;font-size:10px;padding:2px 0;">
           <span style="color:var(--text-mute);min-width:24px;">R${e.round}</span>
           <span style="flex:1;">${e.reason}</span>
-          <b style="color:${e.vp>=0?`var(--${side})`:'var(--hull-crit)'};">${e.vp>=0?'+':''}${e.vp}</b>
+          <b style="color:${e.vp>=0?col:'var(--hull-crit)'};">${e.vp>=0?'+':''}${e.vp}</b>
         </div>`).join('')
       : `<div style="font-size:10px;color:var(--text-mute);padding:4px 0;">No VP yet.</div>`;
     return `<div style="flex:1;min-width:0;">
-      <div class="init-name" style="color:var(--${side})">${factionName(side)}</div>
-      <div style="font-size:26px;font-weight:700;color:var(--${side});line-height:1;">${state.score[side].vp}<span style="font-size:11px;color:var(--text-mute);font-weight:400;"> VP</span></div>
+      <div class="init-name" style="color:${col}">${factionName(side)}</div>
+      <div style="font-size:26px;font-weight:700;color:${col};line-height:1;">${state.score[side].vp}<span style="font-size:11px;color:var(--text-mute);font-weight:400;"> VP</span></div>
       <div style="font-size:9px;color:var(--text-mute);margin-bottom:6px;">${state.score[side].kp} Kill Points</div>
       ${lines}
     </div>`;
   };
+  const _scAsym = !!(state.scenario && state.scenario.objectives);
   const obj = state.scenario && state.scenario.objective ? OBJECTIVES[state.scenario.objective] : null;
   const objExpanded = !!state.vpObjOpen;
-  const objBlock = obj ? `<button id="vp-obj-toggle" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:${ucmRgba(0.06)};border:1px solid var(--ucm);border-radius:5px;padding:7px 11px;cursor:pointer;margin-bottom:12px;">
-      <span style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);">OBJECTIVE</span>
-      <b style="color:var(--ucm);flex:1;">${obj.name}</b>
+  const objTitle = _scAsym
+    ? `${OBJECTIVES[state.scenario.objectives.player1]?.name || '—'} / ${OBJECTIVES[state.scenario.objectives.player2]?.name || '—'}`
+    : (obj ? obj.name : '');
+  const objDetail = _scAsym
+    ? ['player1','player2'].map(s => { const o = OBJECTIVES[state.scenario.objectives[s]]; const col = s==='player1'?'var(--ucm)':'var(--shal)'; return o ? `<div style="margin-bottom:6px;"><b style="color:${col};">${factionName(s)} — ${o.name}:</b> ${o.desc}${o.bonus ? `<div style="margin-top:3px;color:var(--hull-good,#6ec97a);">▸ ${o.bonus}</div>` : ''}</div>` : ''; }).join('')
+    : (obj ? `${obj.desc}${obj.bonus ? `<div style="margin-top:6px;color:var(--hull-good,#6ec97a);">▸ ${obj.bonus}</div>` : ''}` : '');
+  const objBlock = (obj || _scAsym) ? `<button id="vp-obj-toggle" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:${ucmRgba(0.06)};border:1px solid var(--ucm);border-radius:5px;padding:7px 11px;cursor:pointer;margin-bottom:12px;">
+      <span style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);">OBJECTIVE${_scAsym?' (PER SIDE)':''}</span>
+      <b style="color:var(--ucm);flex:1;">${objTitle}</b>
       <span style="color:var(--text-mute);font-size:11px;">${objExpanded ? '▾' : '▸'}</span>
     </button>
     ${objExpanded ? `<div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin:-6px 0 12px;padding:0 4px;">
-      ${obj.desc}${obj.bonus ? `<div style="margin-top:6px;color:var(--hull-good,#6ec97a);">▸ ${obj.bonus}</div>` : ''}
+      ${objDetail}
     </div>` : ''}` : '';
 
   // Secondary objectives block
@@ -7220,6 +7224,8 @@ function renderProtectNomModal() {
   if (panel) panel.remove();
   if (state.phase !== 'protect') return;
   const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
+  // Only sides whose Objective is Protect nominate (asymmetric scenarios may have just one).
+  const protectSides = ['player1','player2'].filter(s => objectiveForSide(s) === 'protect');
   const renderRow = (side) => {
     if (_netSide && side !== _netSide) {
       const cur = state.protectNom && state.protectNom[side];
@@ -7241,22 +7247,19 @@ function renderProtectNomModal() {
       <div class="nom-hint">${isActive ? '← Click a dropsite on the map' : 'Click to activate'}</div>
     </button>`;
   };
-  // Default active pick to own side
-  if (!_nomPicking) _nomPicking = { side: _netSide || 'player1', key: '__protect__' };
+  // Default active pick to own side (or the first Protect side in hotseat).
+  if (!_nomPicking) _nomPicking = { side: _netSide || protectSides[0] || 'player1', key: '__protect__' };
 
-  // Build confirm button — waiting state per side.
+  // Build confirm button — waiting state per side (only Protect sides need to confirm).
   const protReady = state.protectNomReady || {};
   let protConfirmHtml;
   if (!_netSide) {
-    const p1Done = protReady.player1;
-    const p2Done = protReady.player2;
-    protConfirmHtml = `
-      ${p1Done
-        ? `<span class="btn" style="width:100%;margin-top:4px;padding:5px;font-size:10px;opacity:0.5;cursor:default;display:block;">✓ ${playerNameForSide('player1')}</span>`
-        : `<button class="btn-primary" data-protect-confirm="player1" style="width:100%;margin-top:4px;padding:5px;font-size:10px;">✓ ${playerNameForSide('player1')} CONFIRM</button>`}
-      ${p2Done
-        ? `<span class="btn" style="width:100%;margin-top:4px;padding:5px;font-size:10px;opacity:0.5;cursor:default;display:block;">✓ ${playerNameForSide('player2')}</span>`
-        : `<button class="btn-primary" data-protect-confirm="player2" style="width:100%;margin-top:4px;padding:5px;font-size:10px;">✓ ${playerNameForSide('player2')} CONFIRM</button>`}`;
+    protConfirmHtml = protectSides.map(side => protReady[side]
+      ? `<span class="btn" style="width:100%;margin-top:4px;padding:5px;font-size:10px;opacity:0.5;cursor:default;display:block;">✓ ${playerNameForSide(side)}</span>`
+      : `<button class="btn-primary" data-protect-confirm="${side}" style="width:100%;margin-top:4px;padding:5px;font-size:10px;">✓ ${playerNameForSide(side)} CONFIRM</button>`).join('');
+  } else if (!protectSides.includes(_netSide)) {
+    // Online: this player has no Protect objective — nothing to nominate.
+    protConfirmHtml = `<button class="btn-primary" style="width:100%;margin-top:8px;padding:5px;font-size:10px;opacity:0.5;cursor:not-allowed;" disabled>⏳ Waiting for opponent…</button>`;
   } else {
     const myConfirmed = protReady[_netSide];
     protConfirmHtml = myConfirmed
@@ -7269,8 +7272,8 @@ function renderProtectNomModal() {
   panel.className = 'nom-panel';
   panel.innerHTML = `
     <h3>PROTECT NOMINATION</h3>
-    <div style="font-size:8px;color:var(--text-mute);margin-bottom:6px;">Each player nominates a Dropsite to protect. Click a site on the map.</div>
-    ${renderRow('player1')}${renderRow('player2')}
+    <div style="font-size:8px;color:var(--text-mute);margin-bottom:6px;">Each Protecting player nominates a Dropsite to protect. Click a site on the map.</div>
+    ${protectSides.map(renderRow).join('')}
     ${protConfirmHtml}
   `;
   board.appendChild(panel);
@@ -7295,6 +7298,18 @@ function renderProtectNomModal() {
   });
 }
 
+// Standard-scenario presets — keyed by scenario ID, used by the Standard tab dropdown and
+// the random button. Defined at module scope so other code can check preset membership.
+const SCEN_PRESETS = {
+  take_and_hold:        { deployment:'line',         approach:'close_enough',          layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey'    },
+  erupting_battlefront: { deployment:'line',         approach:'column',                layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'       },
+  power_grab:           { deployment:'from_corners', approach:'column',                layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' },
+  shock_and_yaw:        { deployment:'table_corners',  approach:'column',                layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   },
+  orbital_support:      { deployment:'line',         approach:'column',                layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      },
+  // Entrapmoont: asymmetric — attacker (player2/Red) Razes, defender (player1/Blue) Protects.
+  entrapmoont:          { deployment:'encirclement', approach:'home_fleet_disadvantage', layout:'entrapmoont', variant:'entrapmoont', objective:'raze', objectives:{ player1:'protect', player2:'raze' } }
+};
+
 function renderSetupOverlay() {
   const board = document.querySelector('.board-wrap');
   let overlay = document.getElementById('setup-overlay');
@@ -7314,8 +7329,9 @@ function renderSetupOverlay() {
   const p1Ready = !!_sr.player1, p2Ready = !!_sr.player2;
   const anyReady = p1Ready || p2Ready;
   const readyCount = (p1Ready ? 1 : 0) + (p2Ready ? 1 : 0);
+  const objectiveSet = scen.objectives ? !!(scen.objectives.player1 && scen.objectives.player2) : !!scen.objective;
   const scenarioComplete = bothFleetsSelected && !payloadsLocked && state.scenario &&
-    ['deployment','approach','layout','variant','objective'].every(k => state.scenario[k]);
+    ['deployment','approach','layout','variant'].every(k => state.scenario[k]) && objectiveSet;
   // Fleet inputs: locked for opponent (online) OR if that player has already readied.
   const f1Lock = (_netSide && _netSide !== 'player1') || p1Ready;
   const f2Lock = (_netSide && _netSide !== 'player2') || p2Ready;
@@ -7359,7 +7375,7 @@ function renderSetupOverlay() {
       <div class="scen-controls">
         <select class="scen-dropdown" data-scen-select="${key}">
           <option value="" ${!currentKey?'selected':''}>— select —</option>
-          ${Object.keys(table).map(optKey => {
+          ${Object.keys(table).filter(optKey => !table[optKey].bespoke || optKey === currentKey).map(optKey => {
             const opt = table[optKey];
             const d6 = opt.d6 === 0 ? '—' : opt.d6;
             return `<option value="${optKey}" ${optKey===currentKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${opt.name}</option>`;
@@ -7370,6 +7386,88 @@ function renderSetupOverlay() {
     html += `</div>`;
     return html;
   };
+
+  // Scoring Objective section — supports asymmetric (per-side) scoring. When
+  // scen.objectives is set, each side picks its own objective (e.g. attacker
+  // Raze / defender Protect); otherwise a single shared objective applies.
+  const asym = !!scen.objectives;
+  const objOptionList = (selKey) => `<option value="" ${!selKey?'selected':''}>— select —</option>` +
+    Object.keys(OBJECTIVES).map(k => { const o = OBJECTIVES[k]; const d6 = o.d6 === 0 ? '—' : o.d6; return `<option value="${k}" ${k===selKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${o.name}</option>`; }).join('');
+  const asymToggleRow = `<div class="scen-row full-width" style="grid-template-rows:auto;padding:6px 14px;">
+      <label style="grid-column:1/-1;display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-dim);">
+        <input type="checkbox" data-asym-toggle ${asym?'checked':''}> ⇄ Asymmetric scoring — each side has its own Objective
+      </label>
+    </div>`;
+  const asymPickerRow = asym ? `<div class="scen-row full-width">
+      <div class="scen-roll none">⇄</div>
+      <div class="scen-label">Scoring Objective</div>
+      <div class="scen-helper">Per-side (asymmetric) scoring.</div>
+      <div class="scen-name" style="display:flex;gap:12px;width:100%;align-items:flex-end;">
+        <div style="flex:1;min-width:0;"><div style="color:var(--ucm);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player1')}</div><select class="scen-dropdown" data-asym-obj="player1">${objOptionList(scen.objectives.player1)}</select></div>
+        <div style="flex:1;min-width:0;"><div style="color:var(--shal);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player2')}</div><select class="scen-dropdown" data-asym-obj="player2">${objOptionList(scen.objectives.player2)}</select></div>
+      </div>
+    </div>` : '';
+  const objectiveSection = (asym ? asymPickerRow : makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)) + asymToggleRow;
+
+  // ---- Two-tab layout: Standard scenarios vs Custom generation ----
+  // Tab is shared (relayed) state so both clients stay on the same tab.
+  const setupTab = (state.setupTab === 'custom') ? 'custom' : 'standard';
+  const lockStyle = (payloadsLocked || anyReady) ? 'opacity:0.4;pointer-events:none;filter:grayscale(0.6);' : '';
+  const lockAttr  = (payloadsLocked || anyReady) ? 'disabled' : '';
+  const tabBtn = (key, label) => `<button data-setup-tab="${key}" style="flex:1;padding:8px 6px;font:inherit;font-size:11px;font-weight:700;letter-spacing:0.04em;cursor:pointer;background:none;border:none;border-bottom:2px solid ${setupTab===key?'var(--ucm)':'transparent'};color:${setupTab===key?'var(--ucm)':'var(--text-mute)'};">${label}</button>`;
+  const tabsBar = `<div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);">
+      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('custom','⚙ GENERATE SCENARIO')}
+    </div>`;
+
+  // Standard tab: dropdown + random button + a read-only summary of the chosen scenario
+  // (deployment, approach, scoring — layout & variant are bespoke and not shown here).
+  const sumRow = (lbl, title, sub) => `<div style="padding:8px 11px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;background:${ucmRgba(0.03)};">
+      <div style="font-size:9px;letter-spacing:0.1em;color:var(--text-mute);text-transform:uppercase;">${lbl}</div>
+      <div style="font-size:13px;font-weight:700;margin-top:2px;">${title || '<span style="color:var(--text-mute)">— not selected —</span>'}</div>
+      ${sub ? `<div style="font-size:10px;color:var(--text-dim);margin-top:3px;">${sub}</div>` : ''}
+    </div>`;
+  const standardSummary = () => {
+    if (!scen.deployment && !scen.approach && !scen.objective && !scen.objectives) {
+      return `<div class="scen-extra-note" style="text-align:center;color:var(--text-mute);">Pick a standard scenario above, or roll a random one.</div>`;
+    }
+    const dep = scen.deployment ? DEPLOYMENTS[scen.deployment] : null;
+    const ap  = scen.approach ? APPROACHES[scen.approach] : null;
+    const objTitle = asym
+      ? `${OBJECTIVES[scen.objectives.player1]?.name || '—'} / ${OBJECTIVES[scen.objectives.player2]?.name || '—'}`
+      : (scen.objective ? OBJECTIVES[scen.objective].name : '');
+    const objSub = asym
+      ? `<b style="color:var(--ucm)">${playerNameForSide('player1')}:</b> ${OBJECTIVES[scen.objectives.player1]?.short || '—'} · <b style="color:var(--shal)">${playerNameForSide('player2')}:</b> ${OBJECTIVES[scen.objectives.player2]?.short || '—'}`
+      : (scen.objective ? OBJECTIVES[scen.objective].short : '');
+    return sumRow('Deployment Type', dep ? dep.name : '', dep ? (dep.short || dep.desc) : '') +
+           sumRow('Approach', ap ? ap.name : '', cardSummary.approach()) +
+           sumRow('Scoring Objective', objTitle, objSub);
+  };
+  const standardTab = `<div style="${lockStyle}">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+        <select class="scen-dropdown" data-preset-select style="flex:1;" ${lockAttr} title="Apply a standard scenario">
+          <option value="">⚑ Select standard scenario…</option>
+          ${Object.keys(SCEN_PRESETS).map(k => `<option value="${k}"${scen.layout===k?' selected':''}>${LAYOUTS[SCEN_PRESETS[k].layout]?.name || k}</option>`).join('')}
+        </select>
+        <button class="btn" data-preset="random" ${lockAttr} title="Apply a random standard scenario">⚄ RANDOM</button>
+      </div>
+      ${standardSummary()}
+    </div>`;
+
+  // Custom tab: the full generation grid + RANDOMISE ALL.
+  const customTab = `<div style="${lockStyle}">
+      <div class="setup-grid">
+        ${makeCard('deployment','Deployment Type', DEPLOYMENTS, scen.deployment)}
+        ${makeCard('approach',  'Approach',        APPROACHES,  scen.approach)}
+        ${makeCard('layout',    'Layout',          LAYOUTS,     scen.layout)}
+        ${makeCard('variant',   'Variant',         VARIANTS,    scen.variant)}
+        ${makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)}
+      </div>
+      ${vrn && vrn.d6 > 0 ? `<div class="scen-extra-note"><b>${vrn.name}:</b> ${vrn.desc}</div>` : ''}
+      ${scen.objective && OBJECTIVES[scen.objective]?.d6 > 0 ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)"><b>${OBJECTIVES[scen.objective].name}:</b> ${OBJECTIVES[scen.objective].desc}</div>` : ''}
+      <div style="display:flex;justify-content:flex-end;margin-top:10px;">
+        <button class="btn" data-reroll="all" ${lockAttr}>⚄ RANDOMISE ALL</button>
+      </div>
+    </div>`;
 
   overlay = document.createElement('div');
   overlay.id = 'setup-overlay';
@@ -7419,27 +7517,18 @@ function renderSetupOverlay() {
             ? 'Select <b>both fleets</b> above before choosing a scenario.'
             : 'Complete fleet setup (admiral &amp; payload assignment) before choosing a scenario. Use <b>⚠ SETUP / VIEW FLEET</b> above.'}
         </div>` : ''}
-        <div class="setup-grid" style="${payloadsLocked || anyReady ? 'opacity:0.4;pointer-events:none;filter:grayscale(0.6);' : ''}">
-          ${makeCard('deployment','Deployment Type', DEPLOYMENTS, scen.deployment)}
-          ${makeCard('approach',  'Approach',        APPROACHES,  scen.approach)}
-          ${makeCard('layout',    'Layout',          LAYOUTS,     scen.layout)}
-          ${makeCard('variant',   'Variant',         VARIANTS,    scen.variant)}
-          ${makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)}
-        </div>
-        ${vrn && vrn.d6 > 0 ? `<div class="scen-extra-note">
-          <b>${vrn.name}:</b> ${vrn.desc}
-        </div>` : ''}
-        ${obj && obj.d6 > 0 ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)">
-          <b>${obj.name}:</b> ${obj.desc}
-        </div>` : ''}
+        ${tabsBar}
+        ${setupTab === 'custom' ? customTab : standardTab}
       </div>
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
-        <button class="btn" data-reroll="all" ${payloadsLocked || anyReady ? 'disabled' : ''}>⚄ RANDOMISE ALL</button>
         ${(() => {
           if (!_netSide) {
-            // Hotseat: single button that marks both sides ready simultaneously.
-            return `<button class="btn-primary" id="btn-hotseat-ready" ${scenarioComplete ? '' : 'disabled'}>✓ CONFIRM READY</button>`;
+            // Hotseat: single button confirms both sides at once.
+            if (p1Ready && p2Ready) {
+              return `<button class="btn" data-unready-setup-both style="color:var(--hull-good);border-color:var(--hull-good);">✓ READY — cancel</button>`;
+            }
+            return `<button class="btn-primary" data-ready-setup-both ${scenarioComplete ? '' : 'disabled'}>✓ READY</button>`;
           }
           const mySide = _netSide;
           const myReady = mySide === 'player1' ? p1Ready : p2Ready;
@@ -7454,6 +7543,17 @@ function renderSetupOverlay() {
   `;
   board.appendChild(overlay);
 
+  // Switching tabs resets the scenario selections (keeps each mode simple) and
+  // relays — so the opponent follows to the same tab with a cleared scenario.
+  overlay.querySelectorAll('[data-setup-tab]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.setupTab = (btn.dataset.setupTab === 'custom') ? 'custom' : 'standard';
+      state.scenario = { deployment: null, approach: null, layout: null, variant: null, objective: null };
+      renderAll(); // relays in setup phase → opponent's view follows
+    });
+  });
+
   // Reroll buttons: 'all' randomises every row; a single key randomises just that row.
   const SCEN_TABLES = { deployment: DEPLOYMENTS, approach: APPROACHES, layout: LAYOUTS, variant: VARIANTS, objective: OBJECTIVES };
   overlay.querySelectorAll('[data-reroll]').forEach(btn => {
@@ -7461,12 +7561,36 @@ function renderSetupOverlay() {
       e.stopPropagation();
       const key = btn.dataset.reroll;
       if (key === 'all') {
-        state.scenario = generateScenario();
+        state.scenario = generateScenario(); // fresh object — clears any asymmetric objectives
       } else {
-        const keys = Object.keys(SCEN_TABLES[key]);
-        state.scenario = { ...state.scenario, [key]: keys[Math.floor(Math.random() * keys.length)] };
+        // Exclude bespoke standard-scenario-only entries from generator rerolls.
+        const keys = Object.keys(SCEN_TABLES[key]).filter(k => !SCEN_TABLES[key][k].bespoke);
+        const next = { ...state.scenario, [key]: keys[Math.floor(Math.random() * keys.length)] };
+        if (key === 'objective') delete next.objectives; // rerolling the shared objective drops asymmetric mode
+        state.scenario = next;
       }
       renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
+    });
+  });
+  // Standard-scenario presets (defined at module scope above renderSetupOverlay).
+  const applyPreset = (key) => {
+    const preset = SCEN_PRESETS[key];
+    if (!preset) return;
+    const next = { ...state.scenario, ...preset };
+    if (!preset.objectives) delete next.objectives; // presets without asymmetric scoring clear it
+    state.scenario = next;
+    renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
+  };
+  // Dropdown: pick a named standard scenario.
+  overlay.querySelectorAll('[data-preset-select]').forEach(sel => {
+    sel.addEventListener('change', (e) => { e.stopPropagation(); applyPreset(sel.value); });
+  });
+  // Button: apply a random standard scenario.
+  overlay.querySelectorAll('[data-preset="random"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const keys = Object.keys(SCEN_PRESETS);
+      applyPreset(keys[Math.floor(Math.random() * keys.length)]);
     });
   });
   // Picker dropdown — change (or clear) the chosen option for a scenario row.
@@ -7474,6 +7598,34 @@ function renderSetupOverlay() {
     sel.addEventListener('change', (e) => {
       const key = sel.dataset.scenSelect;
       state.scenario = { ...state.scenario, [key]: sel.value || null };
+      renderAll();
+    });
+  });
+  // Asymmetric-scoring toggle: switch between a single shared objective and per-side ones.
+  overlay.querySelectorAll('[data-asym-toggle]').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      if (cb.checked) {
+        // Seed both sides from the current shared objective.
+        const seed = state.scenario.objective || null;
+        state.scenario = { ...state.scenario, objectives: { player1: seed, player2: seed } };
+      } else {
+        const next = { ...state.scenario };
+        // Collapse back to a single shared objective (keep player1's pick).
+        next.objective = (next.objectives && (next.objectives.player1 || next.objectives.player2)) || next.objective || null;
+        delete next.objectives;
+        state.scenario = next;
+      }
+      renderAll();
+    });
+  });
+  // Per-side objective pickers (asymmetric mode).
+  overlay.querySelectorAll('[data-asym-obj]').forEach(sel => {
+    sel.addEventListener('change', (e) => {
+      const side = sel.dataset.asymObj; // 'player1' | 'player2'
+      const objectives = { ...(state.scenario.objectives || {}), [side]: sel.value || null };
+      // Keep the shared `objective` as a representative fallback for legacy reads.
+      state.scenario = { ...state.scenario, objectives, objective: objectives.player1 || objectives.player2 || state.scenario.objective || null };
       renderAll();
     });
   });
@@ -7577,12 +7729,30 @@ function renderSetupOverlay() {
       dispatch({ type: 'readySetup', side });
     });
   });
+  const readyBothBtn = overlay.querySelector('[data-ready-setup-both]');
+  if (readyBothBtn) {
+    readyBothBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state.fleetChoices.f1 || !state.fleetChoices.f2) { flashLaunchMsg('Select both fleets first'); return; }
+      if (!scenarioComplete) { flashLaunchMsg('Select all scenario options first'); return; }
+      dispatch({ type: 'readySetup', side: 'player1' });
+      dispatch({ type: 'readySetup', side: 'player2' });
+    });
+  }
   overlay.querySelectorAll('[data-unready-setup]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       dispatch({ type: 'unreadySetup', side: btn.dataset.unreadySetup });
     });
   });
+  const unreadyBothBtn = overlay.querySelector('[data-unready-setup-both]');
+  if (unreadyBothBtn) {
+    unreadyBothBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dispatch({ type: 'unreadySetup', side: 'player1' });
+      dispatch({ type: 'unreadySetup', side: 'player2' });
+    });
+  }
   const exitBtn = overlay.querySelector('#exit-to-menu');
   if (exitBtn) exitBtn.addEventListener('click', () => {
     showModeSelector(); // appends mode selector overlay first
@@ -7692,7 +7862,7 @@ function renderActivationHUD() {
     <div class="act-hud-name" style="color:var(--${sideClass});">${def.name}</div>
     ${undoBtn}
     ${finishBtn}
-    ${passBtn}
+    ${anyOnTableNotMoved ? '' : passBtn}
   `;
   board.appendChild(hud);
 }
@@ -7704,8 +7874,7 @@ function renderDeployHint() {
   if (state.phase !== 'deploy') return;
 
   // Auto-skip sides that have nothing to deploy (no Direct or Vanguard groups).
-  // Don't fire while a placement is pending confirmation or a ship is being aimed.
-  if (!_pendingDeploy && !state.aiming) {
+  if (!state.aiming) {
     for (const side of ['player1', 'player2']) {
       if (state.deployDone[side]) continue;
       if (!deploySideAllowed(side)) continue;
@@ -7721,12 +7890,7 @@ function renderDeployHint() {
 
   // Status text varies depending on selection.
   let status = '';
-  if (_pendingDeploy) {
-    const pdDef = getDef(_pendingDeploy.gid);
-    const pdGrp = state.groups[_pendingDeploy.gid];
-    const pdTotal = pdGrp ? pdGrp.ships.filter(s => !s.destroyed).length : 1;
-    status = `Confirm placement of <b>${pdDef ? pdDef.name : 'ship'}</b> (ship ${_pendingDeploy.si + 1} of ${pdTotal})?`;
-  } else if (state.selectedGroupId) {
+  if (state.selectedGroupId) {
     const def = getDef(state.selectedGroupId);
     const grp = state.groups[state.selectedGroupId];
     if (!canDeployNow(def)) {
@@ -7774,11 +7938,21 @@ function renderDeployHint() {
 
   // Footer button.
   let footerBtn;
-  if (_pendingDeploy) {
-    footerBtn = `<button class="btn-finish-act" id="deploy-confirm" style="width:auto;padding:6px 16px;margin-top:0;">✓ CONFIRM PLACEMENT</button>` +
-                `<button class="btn" id="deploy-cancel" style="width:auto;padding:6px 12px;margin-top:0;margin-left:4px;">✕ CANCEL</button>`;
-  } else if (state.aiming) {
+  if (state.aiming) {
     footerBtn = '';
+  } else if (state.selectedGroupId) {
+    const _fDef = getDef(state.selectedGroupId);
+    const _fGrp = state.groups[state.selectedGroupId];
+    if (_fDef && canDeployNow(_fDef) && deploySideAllowed(_fDef.side) && netIsMySide(_fDef.side)) {
+      const _allPlaced = _fGrp && nextUndeployedShipIdx(state.selectedGroupId) < 0;
+      footerBtn = `<button class="btn-finish-act" id="deploy-group-confirm" ${_allPlaced ? '' : 'disabled'} style="width:auto;padding:6px 16px;margin-top:0;${_allPlaced ? '' : 'opacity:0.45;cursor:not-allowed;'}">✓ CONFIRM DEPLOYMENT</button>`;
+    } else if (!state.deployDone.player1 && netIsMySide('player1') && sideNeedsDeployPhase('player1')) {
+      footerBtn = `<button class="btn-finish-act" id="deploy-done-red" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player1')} DONE ▸</button>`;
+    } else if (!state.deployDone.player2 && netIsMySide('player2') && sideNeedsDeployPhase('player2')) {
+      footerBtn = `<button class="btn-finish-act" id="deploy-done-blue" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player2')} DONE ▸</button>`;
+    } else {
+      footerBtn = `<button class="btn-primary" id="commit-deploy" style="padding:5px 14px;font-size:11px;">BEGIN PLAY →</button>`;
+    }
   } else if (!state.deployDone.player1 && netIsMySide('player1') && sideNeedsDeployPhase('player1')) {
     footerBtn = `<button class="btn-finish-act" id="deploy-done-red" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player1')} DONE ▸</button>`;
   } else if (!state.deployDone.player2 && netIsMySide('player2') && sideNeedsDeployPhase('player2')) {
@@ -7790,20 +7964,10 @@ function renderDeployHint() {
   hint.innerHTML = `<span>${status}</span>${footerBtn}`;
   board.appendChild(hint);
 
-  const dc = hint.querySelector('#deploy-confirm');
-  if (dc) dc.addEventListener('click', () => {
-    const pd = _pendingDeploy;
-    _pendingDeploy = null;
-    const pdShip = pd && state.groups[pd.gid] && state.groups[pd.gid].ships[pd.si];
-    if (pdShip) { pdShip.offTable = true; pdShip.x = undefined; pdShip.y = undefined; pdShip.heading = undefined; pdShip.deployedRound = undefined; }
-    dispatch({ type: 'deployShip', gid: pd.gid, si: pd.si, x: pd.x, y: pd.y, heading: pd.heading });
-  });
-  const dcancel = hint.querySelector('#deploy-cancel');
-  if (dcancel) dcancel.addEventListener('click', () => {
-    const pd = _pendingDeploy;
-    _pendingDeploy = null;
-    const pdShip = pd && state.groups[pd.gid] && state.groups[pd.gid].ships[pd.si];
-    if (pdShip) { pdShip.offTable = true; pdShip.x = undefined; pdShip.y = undefined; pdShip.heading = undefined; pdShip.deployedRound = undefined; }
+  const dgc = hint.querySelector('#deploy-group-confirm');
+  if (dgc) dgc.addEventListener('click', () => {
+    state.selectedGroupId = null;
+    state.selectedShipIdx = null;
     renderAll(true);
   });
 
@@ -7832,23 +7996,25 @@ function renderScenBanner() {
   let bn = document.getElementById('scen-banner');
   if (bn) bn.remove();
   if (state.phase !== 'play' || !state.scenario) return;
+  const _bnAsym = !!state.scenario.objectives;
   const obj = OBJECTIVES[state.scenario.objective];
   // In online mode show only this player's info; in hotseat show both sides.
   const sides = _netSide ? [_netSide] : ['player1', 'player2'];
   const lines = sides.map(side => {
     const fName = FACTIONS[state.factions?.[side]]?.name || playerNameForSide(side);
     const col   = side === 'player1' ? 'var(--ucm)' : 'var(--shal)';
+    const sideObj = _bnAsym ? OBJECTIVES[objectiveForSide(side)] : null;
     const secKeys = (state.secondaries && state.secondaries[side]) || [];
     const secText = secKeys.map(k => SECONDARY_OBJECTIVES[k]?.name).filter(Boolean).join(', ');
     return `<div style="margin-bottom:1px;">
-      <span style="font-size:9px;font-weight:700;color:${col};">${fName}</span>
+      <span style="font-size:9px;font-weight:700;color:${col};">${fName}${sideObj ? ` · ${sideObj.name}` : ''}</span>
       ${secText ? `<div style="font-size:8px;color:${col};opacity:0.8;">${secText}</div>` : ''}
     </div>`;
   }).join('');
   bn = document.createElement('div');
   bn.id = 'scen-banner';
   bn.className = 'scen-banner';
-  bn.innerHTML = `<b>${obj.name}</b>${lines}`;
+  bn.innerHTML = `<b>${_bnAsym ? 'Asymmetric' : (obj ? obj.name : '')}</b>${lines}`;
   board.appendChild(bn);
 }
 
@@ -7921,30 +8087,11 @@ function renderTopbarControls() {
   if (state.phase === 'setup') {
     ctrl.innerHTML = ``;
   } else if (state.phase === 'scenery') {
-    const r = state.sceneryReady || {};
-    let scenBtns;
-    if (!_netSide) {
-      // Hotseat: separate done button per side.
-      const p1 = r.player1
-        ? `<span class="btn" style="opacity:0.5;cursor:default;padding:6px 10px;font-size:11px;">✓ ${playerNameForSide('player1')}</span>`
-        : `<button class="btn-primary" data-scenery-done="player1" style="padding:6px 14px;font-size:11px;">✓ ${playerNameForSide('player1')} DONE</button>`;
-      const p2 = r.player2
-        ? `<span class="btn" style="opacity:0.5;cursor:default;padding:6px 10px;font-size:11px;">✓ ${playerNameForSide('player2')}</span>`
-        : `<button class="btn-primary" data-scenery-done="player2" style="padding:6px 14px;font-size:11px;">✓ ${playerNameForSide('player2')} DONE</button>`;
-      scenBtns = `${p1}${p2}`;
-    } else {
-      scenBtns = r[_netSide]
-        ? `<span style="font-size:10px;color:var(--text-mute);padding:6px;">⏳ Waiting for opponent…</span>`
-        : `<button class="btn-primary" id="commit-scenery-top" style="padding:6px 14px;font-size:11px;">SCENERY COMPLETE →</button>`;
-    }
-    ctrl.innerHTML = `<button class="btn" id="back-to-setup">← SETUP</button>${scenBtns}`;
+    ctrl.innerHTML = ``;
   } else if (state.phase === 'nominations') {
     ctrl.innerHTML = ``;
   } else if (state.phase === 'deploy') {
-    ctrl.innerHTML = `
-      <button class="btn" id="back-to-setup">← SETUP</button>
-      <button class="btn-primary" id="commit-deploy-top" style="padding:6px 14px;font-size:11px;">DEPLOYMENT COMPLETE →</button>
-    `;
+    ctrl.innerHTML = ``;
   } else { // play
     const waitingBanner = (_netSide && state.activeSide && _gs() !== state.activeSide)
       ? `<span style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-right:4px;">⏳ OPPONENT'S TURN</span>`
@@ -7962,14 +8109,10 @@ function renderTopbarControls() {
       const hint = (_netSide && theyVoted) ? ' (opponent ready)' : '';
       endRoundBtn = `<button class="btn" id="end-round"${hint ? ' style="border-color:var(--hull-warn);color:var(--hull-warn);"' : ''}>END ROUND${hint} ▸</button>`;
     }
-    const replayBtn = _netRoom
-      ? `<button class="btn" id="open-replay" style="font-size:10px;padding:4px 8px;opacity:0.7;" title="Watch this game's replay">↺ REPLAY</button>`
-      : '';
     ctrl.innerHTML = `
       ${waitingBanner}
       <div class="round-display">RND <b id="round-num">${state.round}</b> / 6</div>
       ${endRoundBtn}
-      ${replayBtn}
     `;
   }
 }
@@ -7986,6 +8129,7 @@ function renderAll(localOnly = false) {
   try {
     applyThemeColors();
     syncPayloads();
+    updateArcViewHud();
     renderBrand();
     renderPhaseNav();
     renderTopbarControls();
@@ -8035,6 +8179,9 @@ function renderAll(localOnly = false) {
   if (!localOnly && !_replayMode) {
     if (state.phase === 'setup' || state.phase === 'scenery' || state.phase === 'nominations') netRelaySetup(); else netAfterRender();
   }
+  // Hotseat only: auto-activate ineligible off-table groups. In online mode the
+  // server pre-activates them inside rollInitiative so no client dispatch needed.
+  if (state.phase === 'play' && !_replayMode && !_netSide) setTimeout(_autoSkipIneligible, 0);
   renderReplayControls();
   // Cursor: crosshair when targeting / placing / aiming on either board.
   const _cursorCrosshair = (() => {
@@ -8089,6 +8236,100 @@ function renderReplayControls() {
   if (nextRndBtn) nextRndBtn.disabled = _replayStep >= total;
 }
 
+/* Compress the raw intent log before replaying.
+   Two passes:
+   1. Mark undone intent pairs for removal:
+      - undoDeploy{gid} cancels all preceding deployShip{gid} in this activation.
+      - undoMove{gid,si} cancels the preceding moveShip{gid,si} + any aimShip after it.
+   2. Bundle surviving intents within each activation chunk:
+      - All deployShip for the same group → one replay step (ships appear at final positions).
+      - All moveShip/aimShip for the group → one replay step (ships arrive at final positions).
+      - Everything else (applyOrder, fireWeapons, finishActivation…) stays as individual steps. */
+function compressReplayLog(intentLog) {
+  // ── Pass 1: mark undo pairs for removal ──────────────────────────────────
+  const removed = new Set();
+  const deployStacks = {};   // gid → [intentLog idx] of pending deployShip
+  const shipHist     = {};   // `gid:si` → [{idx, type:'move'|'aim'}]
+  const lastMovedSi  = {};   // gid → si (aimShip has gid but not si)
+
+  intentLog.forEach((entry, i) => {
+    const { type, gid, si } = entry.intent;
+    if (type === 'deployShip' || type === 'arriveShip') {
+      (deployStacks[gid] = deployStacks[gid] || []).push(i);
+    } else if (type === 'undoDeploy') {
+      (deployStacks[gid] || []).forEach(idx => removed.add(idx));
+      delete deployStacks[gid];
+      removed.add(i);
+    } else if (type === 'moveShip') {
+      const key = `${gid}:${si}`;
+      (shipHist[key] = shipHist[key] || []).push({ idx: i, type: 'move' });
+      lastMovedSi[gid] = si;
+    } else if (type === 'aimShip') {
+      const resolvedSi = lastMovedSi[gid];
+      if (resolvedSi !== undefined)
+        (shipHist[`${gid}:${resolvedSi}`] = shipHist[`${gid}:${resolvedSi}`] || []).push({ idx: i, type: 'aim' });
+    } else if (type === 'undoMove') {
+      removed.add(i);
+      const hist = shipHist[`${gid}:${si}`] || [];
+      while (hist.length > 0) { const top = hist.pop(); removed.add(top.idx); if (top.type === 'move') break; }
+      shipHist[`${gid}:${si}`] = hist;
+      if (!hist.some(h => h.type === 'move')) delete lastMovedSi[gid];
+    } else if (type === 'finishActivation') {
+      delete deployStacks[gid];
+      Object.keys(shipHist).filter(k => k.startsWith(gid + ':')).forEach(k => delete shipHist[k]);
+      delete lastMovedSi[gid];
+    }
+  });
+
+  // ── Pass 2: bundle and emit ───────────────────────────────────────────────
+  const result = [];
+  let chunk = []; // surviving entries since last finishActivation
+
+  const flushChunk = () => {
+    if (!chunk.length) return;
+    // Collect deploy and move/aim entries; everything else emits individually.
+    const deployEntries = [], moveEntries = [];
+    chunk.forEach(e => {
+      const t = e.intent.type;
+      if (t === 'deployShip' || t === 'arriveShip') deployEntries.push(e);
+      else if (t === 'moveShip' || t === 'aimShip') moveEntries.push(e);
+    });
+    const mkBundle = (entries) =>
+      entries.length === 1 ? entries[0] : { ...entries[0], intents: entries.map(e => e.intent) };
+
+    let deployDone = false, moveDone = false;
+    chunk.forEach(e => {
+      const t = e.intent.type;
+      if (t === 'deployShip' || t === 'arriveShip') {
+        if (!deployDone) { result.push(mkBundle(deployEntries)); deployDone = true; }
+      } else if (t === 'moveShip' || t === 'aimShip') {
+        if (!moveDone) { result.push(mkBundle(moveEntries)); moveDone = true; }
+      } else {
+        result.push(e);
+      }
+    });
+    chunk = [];
+  };
+
+  intentLog.forEach((entry, i) => {
+    if (removed.has(i)) return;
+    if (entry.intent.type === 'finishActivation') {
+      flushChunk();
+      result.push(entry);
+    } else {
+      chunk.push(entry);
+    }
+  });
+  flushChunk();
+
+  return result;
+}
+
+/* Return the primary intent type from a (possibly bundled) replay log entry. */
+function _replayEntryType(entry) {
+  return entry.intents ? entry.intents[0].type : entry.intent.type;
+}
+
 function loadReplay(data) {
   if (!data || !data.playStartState) {
     alert('No replay data available for this game yet (play must have started).');
@@ -8098,7 +8339,7 @@ function loadReplay(data) {
   _replayInterval = null;
   _liveState  = state;
   _replayMode = true;
-  _replayData = data;
+  _replayData = { ...data, intentLog: compressReplayLog(data.intentLog) };
   _replayStep = -1;
   _replayRng  = _makeRng(data.seed);
   _replayRng.setState(data.playStartRngState);
@@ -8107,8 +8348,63 @@ function loadReplay(data) {
   renderAll(true);
 }
 
+// ── Replay movement animation ─────────────────────────────────────────────────
+let _replayAnim = null; // { rafId, ships:[{gid,si,x0,y0,h0,x1,y1,h1}] }
+
+function _animLerpAngle(a, b, t) {
+  const d = ((b - a + 540) % 360) - 180;
+  return (a + d * t + 360) % 360;
+}
+
+function _cancelReplayAnim() {
+  if (!_replayAnim) return;
+  cancelAnimationFrame(_replayAnim.rafId);
+  // Snap every ship to its final position.
+  _replayAnim.ships.forEach(({ gid, si, x1, y1, h1 }) => {
+    const ship = state.groups[gid]?.ships[si];
+    if (ship) { ship.x = x1; ship.y = y1; ship.heading = h1; }
+  });
+  _replayAnim = null;
+}
+
+function _startReplayMoveAnim(ships) {
+  _cancelReplayAnim();
+  const DURATION = 700;
+  const t0 = performance.now();
+  const anim = { rafId: null, ships };
+  _replayAnim = anim;
+
+  const tick = (now) => {
+    if (_replayAnim !== anim) return; // superseded
+    const raw = Math.min(1, (now - t0) / DURATION);
+    // Ease-in-out quadratic
+    const ease = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2;
+    ships.forEach(({ gid, si, x0, y0, h0, x1, y1, h1 }) => {
+      const ship = state.groups[gid]?.ships[si];
+      if (!ship) return;
+      ship.x = x0 + (x1 - x0) * ease;
+      ship.y = y0 + (y1 - y0) * ease;
+      ship.heading = _animLerpAngle(h0, h1, ease);
+    });
+    renderAll(true);
+    if (raw < 1) {
+      anim.rafId = requestAnimationFrame(tick);
+    } else {
+      // Snap to exact end and clear
+      ships.forEach(({ gid, si, x1, y1, h1 }) => {
+        const ship = state.groups[gid]?.ships[si];
+        if (ship) { ship.x = x1; ship.y = y1; ship.heading = h1; }
+      });
+      _replayAnim = null;
+      renderAll(true);
+    }
+  };
+  anim.rafId = requestAnimationFrame(tick);
+}
+
 function replayGoTo(targetStep) {
   if (!_replayMode || !_replayData) return;
+  _cancelReplayAnim();
   const log = _replayData.intentLog;
   const clampedStep = Math.max(-1, Math.min(targetStep, log.length - 1));
   // If seeking backward, reset to playStartState
@@ -8117,16 +8413,49 @@ function replayGoTo(targetStep) {
     state = structuredClone(_replayData.playStartState);
     _replayStep = -1;
   }
-  // Fast-forward to target
+  // Fast-forward to target — each entry may be a single intent or a bundle.
+  // The final step animates if it contains moveShip intents.
   while (_replayStep < clampedStep) {
     _replayStep++;
-    const { intent } = log[_replayStep];
-    try { _apply(state, intent, _replayRng); } catch(e) { console.warn('[replay] step', _replayStep, e); }
+    const entry = log[_replayStep];
+    const intents = entry.intents || [entry.intent];
+    const isLast = _replayStep === clampedStep;
+    const moveIntents = isLast ? intents.filter(i => i.type === 'moveShip') : [];
+
+    if (moveIntents.length > 0) {
+      // Capture start positions before applying.
+      const ships = moveIntents.map(i => {
+        const ship = state.groups[i.gid]?.ships[i.si];
+        return ship ? { gid: i.gid, si: i.si, x0: ship.x, y0: ship.y, h0: ship.heading } : null;
+      }).filter(Boolean);
+
+      // Apply the full bundle (moveShip + aimShip → sets final x/y/heading).
+      intents.forEach(intent => {
+        try { _apply(state, intent, _replayRng); } catch(e) { console.warn('[replay]', e); }
+      });
+
+      // Record end positions, then rewind ships to start so animation plays forward.
+      ships.forEach(s => {
+        const ship = state.groups[s.gid]?.ships[s.si];
+        if (!ship) return;
+        s.x1 = ship.x; s.y1 = ship.y; s.h1 = ship.heading;
+        ship.x = s.x0; ship.y = s.y0; ship.heading = s.h0;
+      });
+
+      renderAll(true); // draw ships at start positions with trail from moveTrail
+      _startReplayMoveAnim(ships);
+      return; // animation drives the rest
+    }
+
+    intents.forEach(intent => {
+      try { _apply(state, intent, _replayRng); } catch(e) { console.warn('[replay] step', _replayStep, e); }
+    });
   }
   renderAll(true);
 }
 
 function exitReplay() {
+  _cancelReplayAnim();
   clearInterval(_replayInterval);
   _replayInterval = null;
   // Navigate to the root — full page reload returns to the mode selector.
@@ -8137,8 +8466,7 @@ function _replayRoundStart(round) {
   if (!_replayMode || !_replayData) return -1;
   const log = _replayData.intentLog;
   for (let i = 0; i < log.length; i++) {
-    if (log[i].intent && log[i].intent.type === 'advanceRound') {
-      // The step after advanceRound is the first of the next round
+    if (_replayEntryType(log[i]) === 'advanceRound') {
       replayGoTo(i);
       return i;
     }
@@ -8383,10 +8711,10 @@ function _handle3dClick(e) {
         const heading = headingToward(finalX, finalY, pt.x, pt.y);
         state.aiming = null; state.hoverPoint = null;
         if (state.phase === 'deploy') {
-          // Show the ship at its aimed position locally; CONFIRM button sends the intent.
+          // Auto-dispatch immediately — no per-ship confirm step.
           aship.heading = heading;
-          _pendingDeploy = { gid: a.gid, si: a.si, x: finalX, y: finalY, heading };
-          renderAll(true);
+          aship.offTable = true; aship.x = undefined; aship.y = undefined; aship.deployedRound = undefined;
+          dispatch({ type: 'deployShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
         } else {
           dispatch({ type: 'arriveShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
           renderAll();
@@ -8889,10 +9217,6 @@ function _handle3dClick(e) {
 
   // Deploy phase: place next off-table ship onto the orbit layer
   if (state.phase === 'deploy' && state.selectedGroupId) {
-    if (_pendingDeploy) {
-      flashLaunchMsg('Confirm or cancel the current placement first');
-      return;
-    }
     const _dpDef = getDef(state.selectedGroupId);
     const _dpIdx = _dpDef ? nextUndeployedShipIdx(state.selectedGroupId) : -1;
     if (_dpIdx >= 0) {
@@ -8906,11 +9230,13 @@ function _handle3dClick(e) {
       const _dpDep = DEPLOYMENTS[state.scenario?.deployment];
       const _dpZoneName = state.deployZone?.[_dpDef.side] || (_dpDef.side === 'player1' ? 'south' : 'north');
       const _dpZone = _dpDep?.zones?.[_dpZoneName];
-      if (_dpZone && !isInZone(_dpPt.x / INCH, _dpPt.y / INCH, _dpZone)) {
+      const _dpInBase = !_dpZone || isInZone(_dpPt.x / INCH, _dpPt.y / INCH, _dpZone);
+      const _dpInHalo = !_dpInBase && _dpDef.vanguard && isInVanguardZone(_dpPt.x / INCH, _dpPt.y / INCH, _dpDef, _dpZone);
+      if (_dpZone && !_dpInBase && !_dpInHalo) {
         flashLaunchMsg('Click within your deployment zone');
         return;
       }
-      const _dpSnap = _dpZone ? (snapToEdgeLineTangent(_dpZone, _dpPt, _dpDef) || _dpPt) : _dpPt;
+      const _dpSnap = (_dpZone && _dpInBase) ? (snapToEdgeLineTangent(_dpZone, _dpPt, _dpDef) || _dpPt) : _dpPt;
       const _dpShip = state.groups[state.selectedGroupId].ships[_dpIdx];
       _dpShip.x = _dpSnap.x; _dpShip.y = _dpSnap.y;
       _dpShip.heading = _dpDef.side === 'player1' ? -90 : 90;
@@ -9765,8 +10091,8 @@ function _sync3dOverlays(group) {
     });
   }
 
-  // 2. Enemy signature auras (mode 1, while moving, or while targeting a weapon)
-  if (arcViewMode !== 2 && (movingActive || arcViewMode === 1 || state.targeting)) {
+  // 2. Enemy signature auras — mode 1 (attacker view), while moving, or targeting (never in mode 0 or 2).
+  if (arcViewMode !== 0 && (arcViewMode === 1 || ((movingActive || state.targeting) && arcViewMode !== 2))) {
     const enemySide = def.side === 'player1' ? 'player2' : 'player1';
     // During targeting, find the firing origin so we can check per-target ring crossing.
     let targetingOrigin = null;
@@ -9825,10 +10151,18 @@ function _sync3dOverlays(group) {
     const wy    = _3D_LAYER_Y[ship.layer] ?? 120;
     if (launchingHere && state.launching.si === si) return; // replaced by launch aura
 
-    // Mode 2 + selected ship: show own sig aura instead of weapon arcs
-    if (arcViewMode === 2 && isSel) {
+    // Mode 0: hide all overlays
+    if (arcViewMode === 0) return;
+    // Mode 2: show sig aura for every ship in the group
+    if (arcViewMode === 2) {
       const sigPx = ((ship.sigSilent ? 0 : def.sig) + 3 * (grp.spikes || 0)) * INCH;
-      if (sigPx > 0) group.add(_3dDashedCircle(ship.x - 288, ship.y - 288, sigPx, wy, 0xff5252, 0.5, 2, 4));
+      if (sigPx > 0) {
+        group.add(_3dDashedCircle(ship.x - 288, ship.y - 288, sigPx, wy, 0xff5252, 0.55, 2, 4));
+        const sigFill = new THREE.CircleGeometry(sigPx, 64);
+        sigFill.rotateX(-Math.PI / 2);
+        sigFill.translate(ship.x - 288, wy, ship.y - 288);
+        group.add(new THREE.Mesh(sigFill, new THREE.MeshBasicMaterial({ color: 0xff5252, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false })));
+      }
       return;
     }
 
@@ -9851,7 +10185,7 @@ function _sync3dOverlays(group) {
     }
   });
 
-  // 4. Arc view mode 2: enemy ships' scans + weapon arcs (dimmed)
+  // 4. Mode 2 (defender view): enemy ships' scans + weapon arcs (dimmed)
   if (arcViewMode === 2) {
     const enemySide2 = def.side === 'player1' ? 'player2' : 'player1';
     fleetForSide(enemySide2).forEach(edef => {
@@ -10053,6 +10387,101 @@ function _sync3dOverlays(group) {
         const pCol = pDef.side === 'player1' ? 0x4488ff : 0xff8844;
         const pWy  = _3D_LAYER_Y[pShip.layer] ?? _3D_LAYER_Y.orbit;
         _3dMoveCone(group, pShip.x - 288, pShip.y - 288, pShip.heading, minR, maxR, o.turnLimit || 0, pWy, pCol, 0.035, 0.20);
+      }
+    }
+  }
+
+  // 8. Vanguard deployment halo — mirrors renderVanguardHalo() for the 3D view.
+  if (state.phase === 'deploy' && state.selectedGroupId && def.vanguard && state.scenario) {
+    const depKey = state.scenario.deployment;
+    const dep    = DEPLOYMENTS[depKey];
+    const zoneSide = (state.deployZone && state.deployZone[def.side]) || (def.side === 'player1' ? 'south' : 'north');
+    const zone = dep && dep.zones && dep.zones[zoneSide];
+    if (zone) {
+      const X  = def.vanguard;
+      const VY = _3D_LAYER_Y.orbit;
+      const iw = (inch) => inch * INCH - 288;
+      const vFill = new THREE.MeshBasicMaterial({ color: 0xff5252, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false });
+      const vDash = new THREE.LineDashedMaterial({ color: 0xff5252, transparent: true, opacity: 0.80, dashSize: 8, gapSize: 5 });
+      const emitVan = (shape) => {
+        const geo = new THREE.ShapeGeometry(shape);
+        geo.rotateX(Math.PI / 2);
+        geo.translate(0, VY, 0);
+        group.add(new THREE.Mesh(geo, vFill.clone()));
+        const pts = shape.getPoints(48).map(p => new THREE.Vector3(p.x, VY, p.y));
+        pts.push(pts[0].clone());
+        const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), vDash.clone());
+        ln.computeLineDistances();
+        group.add(ln);
+      };
+
+      if ((depKey === 'line' || depKey === 'attacker_defender') && zone.edgeLines) {
+        const seg = zone.edgeLines[0];
+        const onTop    = seg.y1 <= 0.5 && seg.y2 <= 0.5;
+        const onBottom = seg.y1 >= BOARD_IN - 0.5 && seg.y2 >= BOARD_IN - 0.5;
+        const onLeft   = seg.x1 <= 0.5 && seg.x2 <= 0.5;
+        const onRight  = seg.x1 >= BOARD_IN - 0.5 && seg.x2 >= BOARD_IN - 0.5;
+        let vpts = null;
+        if (onTop)    { const x1=Math.min(seg.x1,seg.x2),x2=Math.max(seg.x1,seg.x2); vpts=[{x:x1,y:0},{x:x2,y:0},{x:x2,y:X},{x:x1,y:X}]; }
+        if (onBottom) { const x1=Math.min(seg.x1,seg.x2),x2=Math.max(seg.x1,seg.x2); vpts=[{x:x1,y:BOARD_IN},{x:x2,y:BOARD_IN},{x:x2,y:BOARD_IN-X},{x:x1,y:BOARD_IN-X}]; }
+        if (onLeft)   { const y1=Math.min(seg.y1,seg.y2),y2=Math.max(seg.y1,seg.y2); vpts=[{x:0,y:y1},{x:0,y:y2},{x:X,y:y2},{x:X,y:y1}]; }
+        if (onRight)  { const y1=Math.min(seg.y1,seg.y2),y2=Math.max(seg.y1,seg.y2); vpts=[{x:BOARD_IN,y:y1},{x:BOARD_IN,y:y2},{x:BOARD_IN-X,y:y2},{x:BOARD_IN-X,y:y1}]; }
+        if (vpts) emitVan(new THREE.Shape(vpts.map(p => new THREE.Vector2(iw(p.x), iw(p.y)))));
+      } else if (depKey === 'attacker_defender' && zone.polygon) {
+        const poly = zone.polygon;
+        const cxAvg = poly.reduce((s,p)=>s+p.x,0)/poly.length;
+        const cyAvg = poly.reduce((s,p)=>s+p.y,0)/poly.length;
+        const exp = poly.map(p => {
+          const onL=p.x<=1.6,onR=p.x>=BOARD_IN-1.6,onT=p.y<=1.6,onB=p.y>=BOARD_IN-1.6;
+          return { x: (!onL&&!onR) ? (cxAvg<BOARD_IN/2 ? p.x+X : p.x-X) : p.x,
+                   y: (!onT&&!onB) ? (cyAvg<BOARD_IN/2 ? p.y+X : p.y-X) : p.y };
+        });
+        emitVan(new THREE.Shape(exp.map(p => new THREE.Vector2(iw(p.x), iw(p.y)))));
+      } else if (depKey === 'table_corners') {
+        // L-shaped zone: approximate vanguard as the polygon expanded inward by X.
+        // Use the same vertex-push logic as vanguardStripPath (edge-pinned vertices stay put).
+        if (zone.polygon) {
+          const poly = zone.polygon;
+          const cxAvg = poly.reduce((s,p)=>s+p.x,0)/poly.length;
+          const cyAvg = poly.reduce((s,p)=>s+p.y,0)/poly.length;
+          const exp = poly.map(p => {
+            const onL=p.x<=1.6,onR=p.x>=BOARD_IN-1.6,onT=p.y<=1.6,onB=p.y>=BOARD_IN-1.6;
+            return { x: (!onL&&!onR) ? (cxAvg<BOARD_IN/2 ? p.x+X : p.x-X) : p.x,
+                     y: (!onT&&!onB) ? (cyAvg<BOARD_IN/2 ? p.y+X : p.y-X) : p.y };
+          });
+          emitVan(new THREE.Shape(exp.map(p => new THREE.Vector2(iw(p.x), iw(p.y)))));
+        }
+      } else if (depKey === 'midboard' && zone.edgeSemicircle) {
+        const c = zone.edgeSemicircle;
+        const cx=iw(c.cx), cz=iw(c.cy), r=(c.r+X)*INCH;
+        const [a0,a1] = ({top:[0,Math.PI],bottom:[Math.PI,2*Math.PI],left:[-Math.PI/2,Math.PI/2],right:[Math.PI/2,3*Math.PI/2]})[c.edge]||[0,Math.PI];
+        const sh = new THREE.Shape(); const N=32;
+        sh.moveTo(cx+Math.cos(a0)*r, cz+Math.sin(a0)*r);
+        for (let i=1;i<=N;i++) { const a=a0+(a1-a0)*i/N; sh.lineTo(cx+Math.cos(a)*r, cz+Math.sin(a)*r); }
+        sh.closePath(); emitVan(sh);
+      } else if (depKey === 'from_corners' && zone.circleQuad) {
+        const c = zone.circleQuad;
+        const cx=iw(c.cx), cz=iw(c.cy), r=(c.r+X)*INCH;
+        const qa = ({br:[0,Math.PI/2],tl:[Math.PI,3*Math.PI/2],tr:[-Math.PI/2,0],bl:[Math.PI/2,Math.PI]})[c.quad]||[0,Math.PI/2];
+        const sh = new THREE.Shape(); const N=32;
+        sh.moveTo(cx, cz);
+        for (let i=0;i<=N;i++) { const a=qa[0]+(qa[1]-qa[0])*i/N; sh.lineTo(cx+Math.cos(a)*r, cz+Math.sin(a)*r); }
+        sh.closePath(); emitVan(sh);
+      } else if (depKey === 'encirclement') {
+        if (zone.circle) {
+          const c = zone.circle;
+          const sh = new THREE.Shape();
+          sh.absarc(iw(c.cx), iw(c.cy), (c.r+X)*INCH, 0, Math.PI*2, false);
+          emitVan(sh);
+        }
+        if (zone.corners) zone.corners.forEach(c => {
+          const cx=iw(c.cx), cz=iw(c.cy), r=(c.r+X)*INCH;
+          const qa = ({br:[0,Math.PI/2],tl:[Math.PI,3*Math.PI/2],tr:[-Math.PI/2,0],bl:[Math.PI/2,Math.PI]})[c.quad]||[0,Math.PI/2];
+          const sh = new THREE.Shape(); const N=32;
+          sh.moveTo(cx, cz);
+          for (let i=0;i<=N;i++) { const a=qa[0]+(qa[1]-qa[0])*i/N; sh.lineTo(cx+Math.cos(a)*r, cz+Math.sin(a)*r); }
+          sh.closePath(); emitVan(sh);
+        });
       }
     }
   }
@@ -11364,6 +11793,15 @@ function _buildWingMesh3d(def, color, side) {
   return obj;
 }
 
+function updateArcViewHud() {
+  const b1 = document.getElementById('btn-arc-toggle');
+  const b2 = document.getElementById('btn-sig-toggle');
+  const bt = document.getElementById('btn-trails-toggle');
+  if (b1) b1.classList.toggle('active', arcViewMode === 1);
+  if (b2) b2.classList.toggle('active', arcViewMode === 2);
+  if (bt) bt.classList.toggle('active', _view3dTrails);
+}
+
 function toggle3d() {
   _view3d = !_view3d;
   document.getElementById('board').style.display    = _view3d ? 'none'  : 'block';
@@ -11468,8 +11906,11 @@ function updateHUD() {
 document.addEventListener('click', (e) => {
   // Group card click handled inline
   // Arc view mode toggle (local only — affects board overlays for selected ship)
+  // Clicking the already-active mode toggles it off (mode 0 = hide all).
   if (e.target.matches('[data-arcview]')) {
-    arcViewMode = parseInt(e.target.dataset.arcview, 10);
+    const newMode = parseInt(e.target.dataset.arcview, 10);
+    arcViewMode = (arcViewMode === newMode) ? 0 : newMode;
+    updateArcViewHud();
     renderAll(true); return;
   }
   // Movement trails toggle — persisted, applies to both 2D and 3D views
@@ -11882,7 +12323,7 @@ document.addEventListener('click', (e) => {
     const log = _replayData ? _replayData.intentLog : [];
     let target = -1;
     for (let i = _replayStep - 1; i >= 0; i--) {
-      if (log[i].intent && log[i].intent.type === 'advanceRound') { target = i - 1; break; }
+      if (_replayEntryType(log[i]) === 'advanceRound') { target = i - 1; break; }
     }
     replayGoTo(target);
     return;
@@ -11891,7 +12332,7 @@ document.addEventListener('click', (e) => {
     // Seek to the step right after the next advanceRound
     const log = _replayData ? _replayData.intentLog : [];
     for (let i = _replayStep + 1; i < log.length; i++) {
-      if (log[i].intent && log[i].intent.type === 'advanceRound') { replayGoTo(i); return; }
+      if (_replayEntryType(log[i]) === 'advanceRound') { replayGoTo(i); return; }
     }
     replayGoTo(log.length - 1); // jump to end if no more rounds
     return;
@@ -12145,6 +12586,11 @@ document.addEventListener('click', (e) => {
   }
   if (e.target.matches('[data-scenery-done]')) {
     commitScenery(e.target.dataset.sceneryDone);
+    return;
+  }
+  if (e.target.matches('#commit-scenery-both')) {
+    commitScenery('player1');
+    commitScenery('player2');
     return;
   }
   // Reset game
@@ -12597,6 +13043,31 @@ board.addEventListener('contextmenu', (e) => {
 
 board.addEventListener('click', (e) => {
   if (state.phase === 'setup') return; // overlay handles
+
+  // In replay mode allow ship/dropsite selection for viewing only — no game actions.
+  if (_replayMode) {
+    let el = e.target;
+    while (el && el !== board) {
+      if (el.dataset && el.dataset.ship) {
+        const [gid0, si0] = el.dataset.ship.split('|');
+        state.selectedGroupId = state.selectedGroupId === gid0 && state.selectedShipIdx === parseInt(si0) ? null : gid0;
+        state.selectedShipIdx = state.selectedGroupId ? parseInt(si0) : null;
+        state.selectedDropsiteId = null;
+        renderAll(true);
+        return;
+      }
+      if (el.dataset && el.dataset.dropsite) {
+        const did = el.dataset.dropsite;
+        state.selectedDropsiteId = state.selectedDropsiteId === did ? null : did;
+        state.selectedGroupId = null;
+        state.selectedShipIdx = null;
+        renderAll(true);
+        return;
+      }
+      el = el.parentNode;
+    }
+    return;
+  }
 
   // ── PROTECT NOMINATION — click a dropsite on the map ──
   if (state.phase === 'protect' && _nomPicking && _nomPicking.key === '__protect__' && (!_netSide || _nomPicking.side === _netSide)) {
@@ -13059,10 +13530,10 @@ board.addEventListener('click', (e) => {
         state.hoverPoint = null;
         state.redeployingShip = null;
         if (state.phase === 'deploy') {
-          // Show the ship at its aimed position locally; CONFIRM button sends the intent.
+          // Auto-dispatch immediately — no per-ship confirm step.
           aship.heading = heading;
-          _pendingDeploy = { gid: a.gid, si: a.si, x: finalX, y: finalY, heading };
-          renderAll(true);
+          aship.offTable = true; aship.x = undefined; aship.y = undefined; aship.deployedRound = undefined;
+          dispatch({ type: 'deployShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
         } else {
           // Play-phase reserve arrival — dispatch intent so the server is authoritative.
           dispatch({ type: 'arriveShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
@@ -13272,11 +13743,6 @@ board.addEventListener('click', (e) => {
     // Vanguard halo (Vanguard ships sit wherever clicked, X" into the board).
     const snapPlace = inBaseZone ? (snapToEdgeLineTangent(zone, pt, def) || pt) : pt;
 
-    // Block any placement while a ship is awaiting confirmation.
-    if (_pendingDeploy) {
-      flashLaunchMsg('Confirm or cancel the current placement first');
-      return;
-    }
 
     // Redeployment: user clicked a specific placed ship to pick it up and move it.
     const rdp = state.redeployingShip;

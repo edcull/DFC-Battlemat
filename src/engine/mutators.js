@@ -1,7 +1,7 @@
 // Pure game-logic mutators and read-only helpers.
 // No DOM calls — rendering is the caller's responsibility.
 
-import { FEATURES, ORDERS, INCH, BOARD_PX, BOARD_IN, ASSET_PROFILES, DROPSITE_BASE, DEPLOYMENTS, APPROACHES, SECONDARY_OBJECTIVES } from './constants.js';
+import { FEATURES, ORDERS, INCH, BOARD_PX, BOARD_IN, ASSET_PROFILES, DROPSITE_BASE, DEPLOYMENTS, APPROACHES, SECONDARY_OBJECTIVES, OBJECTIVES } from './constants.js';
 import { rollD6, rollDie } from './rng.js';
 import { fleetForSide, redFleet, blueFleet, factionName, payloadShips, porterShips, allDefs, getDef, getGroup, assetProfile, fighterRerolls, rebuildFleets, buildScenarioState } from './state.js';
 
@@ -344,6 +344,19 @@ export function dropsiteSizeKey(ds) {
   return 'M';
 }
 
+/* Resolve the scoring Objective key for a given side. Supports asymmetric scenarios
+   (e.g. attacker Raze / defender Protect): state.scenario.objectives = { player1, player2 }
+   overrides the shared state.scenario.objective when present. */
+export function objectiveForSide(state, side) {
+  const sc = state.scenario || {};
+  if (sc.objectives && sc.objectives[side]) return sc.objectives[side];
+  return sc.objective || null;
+}
+/* True if either side's Objective equals `key`. */
+export function objAny(state, key) {
+  return objectiveForSide(state, 'player1') === key || objectiveForSide(state, 'player2') === key;
+}
+
 /* Compute Standard Scoring VP gained this scoring round, per side.
    Objective modifiers:
    • Protect: a side's nominated Dropsite scores DOUBLE while intact; if Levelled, that
@@ -354,7 +367,6 @@ export function dropsiteSizeKey(ds) {
 export function computeStandardScoring(state) {
   const out = { player1: 0, player2: 0 };
   const rows = []; // per-dropsite breakdown for the scoring modal
-  const obj = state.scenario && state.scenario.objective;
   const noms = state.protectNom || {};
   ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => {
     const sz = dropsiteSizeKey(ds);
@@ -362,16 +374,14 @@ export function computeStandardScoring(state) {
     const ctrl = dropsiteController(ds);
     const isLevelled = !!ds.destroyed;
     let ucmGain = 0, shalGain = 0, statusNote = '';
-    if (obj === 'protect') {
-      ['player1','player2'].forEach(s => { if (noms[s] === ds.id && isLevelled) { out[s] -= vp.control; if (s==='player1') ucmGain -= vp.control; else shalGain -= vp.control; statusNote = 'Protect penalty'; } });
-    }
+    ['player1','player2'].forEach(s => { if (objectiveForSide(state, s) === 'protect' && noms[s] === ds.id && isLevelled) { out[s] -= vp.control; if (s==='player1') ucmGain -= vp.control; else shalGain -= vp.control; statusNote = 'Protect penalty'; } });
     if (isLevelled) {
       rows.push({ name: ds.base.name, sz, status: 'Levelled' + (statusNote?' · '+statusNote:''), ctrl: null, player1: ucmGain, player2: shalGain });
       return;
     }
     if (ctrl) {
       let gain = vp.control;
-      if (obj === 'protect' && noms[ctrl] === ds.id) { gain *= 2; statusNote = 'Protected ×2'; }
+      if (objectiveForSide(state, ctrl) === 'protect' && noms[ctrl] === ds.id) { gain *= 2; statusNote = 'Protected ×2'; }
       out[ctrl] += gain;
       if (ctrl === 'player1') ucmGain += gain; else shalGain += gain;
       rows.push({ name: ds.base.name, sz, status: 'Controlled' + (statusNote?' · '+statusNote:''), ctrl, player1: ucmGain, player2: shalGain });
@@ -401,44 +411,46 @@ export function runScoring(state, rng, round) {
     // Stash the per-dropsite breakdown for the scoring modal.
     state.lastScoring = { round, rows: std.rows, player1: std.player1, player2: std.player2 };
   }
-  // Scoring variant bonuses applied at game end (round 6).
+  // Scoring variant bonuses applied at game end (round 6). Each side scores against
+  // its OWN Objective (which may differ in asymmetric scenarios).
   if (round === 6) {
-    const obj = state.scenario && state.scenario.objective;
-    const objName = (obj && OBJECTIVES[obj]) ? OBJECTIVES[obj].name : '';
     const push = (line) => { if (line) log.push(line); };
-    // Attrition: +2 VP per 500 pts destroyed (both sides).
-    if (obj === 'attrition') {
-      ['player1','player2'].forEach(s => push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
-    }
+    const sides = ['player1','player2'];
+    const objNameOf = (s) => { const o = objectiveForSide(state, s); return (o && OBJECTIVES[o]) ? OBJECTIVES[o].name : ''; };
+    // Attrition: +2 VP per 500 pts destroyed.
+    sides.forEach(s => { if (objectiveForSide(state, s) === 'attrition') push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objNameOf(s)}: pts destroyed`, round)); });
     // Raze: +2 VP per 500 pts destroyed, PLUS double Standard Scoring value for each
     // Dropsite Levelled or Ruined that lies ≥24" from the scoring side's own Zone.
-    if (obj === 'raze') {
-      ['player1','player2'].forEach(s => push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objName}: pts destroyed`, round)));
-      const razeVP = { player1: 0, player2: 0 };
+    sides.forEach(s => {
+      if (objectiveForSide(state, s) !== 'raze') return;
+      push(awardVP(state, s, Math.floor(state.score[s].kp / 500) * 2, `${objNameOf(s)}: pts destroyed`, round));
+      let razeVP = 0;
       ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => {
         const remHull = (ds.maxHull || 0) - (ds.damage || 0);
         const levelled = ds.destroyed || remHull <= 0;
         const ruined = !levelled && ds.maxHull && (remHull / ds.maxHull) < 0.5;
         if (!levelled && !ruined) return;
         const vp = (DROPSITE_VP[dropsiteSizeKey(ds)] || DROPSITE_VP.M).control;
-        ['player1','player2'].forEach(s => { if (distFromZoneIn(state, s, inchToPx(ds.y)) >= 24) razeVP[s] += vp; });
+        if (distFromZoneIn(state, s, inchToPx(ds.y)) >= 24) razeVP += vp;
       });
-      ['player1','player2'].forEach(s => push(awardVP(state, s, razeVP[s], 'Raze: distant Levelled/Ruined', round)));
-    }
-    // Breakthrough: Red scores 1 VP per 200 pts flown off; the OTHER side scores kills.
-    if (obj === 'breakthrough') {
+      push(awardVP(state, s, razeVP, 'Raze: distant Levelled/Ruined', round));
+    });
+    // Breakthrough: attacker scores 1 VP per 200 pts flown off; defender scores kill points.
+    if (objAny(state, 'breakthrough')) {
+      const btAttacker = ['player1','player2'].find(s => objectiveForSide(state, s) === 'breakthrough');
+      const btDefender = btAttacker === 'player1' ? 'player2' : 'player1';
       const flown = state.breakthroughFlyoff || { player1: 0, player2: 0 };
-      push(awardVP(state, 'player1', Math.floor((flown.player1 || 0) / 200), `Breakthrough: ${flown.player1} pts flown off`, round));
-      push(awardVP(state, 'player2', Math.floor(state.score.player2.kp / 500) * 2, 'Breakthrough: pts destroyed', round));
+      push(awardVP(state, btAttacker, Math.floor((flown[btAttacker] || 0) / 200), `Breakthrough: ${flown[btAttacker] || 0} pts flown off`, round));
+      push(awardVP(state, btDefender, Math.floor(state.score[btDefender].kp / 500) * 2, 'Breakthrough: pts destroyed', round));
     }
     // Survey: +1 VP per Dropsite Surveyed.
-    if (obj === 'survey') {
+    if (objAny(state, 'survey')) {
       const surv = { player1: 0, player2: 0 };
       ((state.scenarioData && state.scenarioData.dropsites) || []).forEach(ds => (ds.surveyedBy || []).forEach(s => surv[s]++));
-      ['player1','player2'].forEach(s => push(awardVP(state, s, surv[s], 'Survey', round)));
+      sides.forEach(s => { if (objectiveForSide(state, s) === 'survey') push(awardVP(state, s, surv[s], 'Survey', round)); });
     }
     // Extract: 2 VP per Recon Operative still aboard a surviving Ship.
-    if (obj === 'extract' && state.shipReconOps) {
+    if (objAny(state, 'extract') && state.shipReconOps) {
       const ex = { player1: 0, player2: 0 };
       Object.keys(state.shipReconOps).forEach(k => {
         const n = state.shipReconOps[k]; if (!n) return;
@@ -446,8 +458,7 @@ export function runScoring(state, rng, round) {
         const ship = state.groups[gid] && state.groups[gid].ships[parseInt(si)];
         if (ship && !ship.destroyed) ex[getDef(state, gid).side] += n * 2;
       });
-      ['player1','player2'].forEach(s => push(awardVP(state, s, ex[s], 'Recon Operatives aboard', round)));
-      if (state.reconKills) ['player1','player2'].forEach(s => push(awardVP(state, s, state.reconKills[s] || 0, 'destroyed operative-carriers', round)));
+      sides.forEach(s => { if (objectiveForSide(state, s) !== 'extract') return; push(awardVP(state, s, ex[s], 'Recon Operatives aboard', round)); if (state.reconKills) push(awardVP(state, s, state.reconKills[s] || 0, 'destroyed operative-carriers', round)); });
     }
     // Secondary Objectives (each side scores its one chosen scoring secondary).
     log.push(...scoreSecondaries(state, rng));
@@ -508,15 +519,18 @@ export function objectivesBeyondEligible(state, gid, si) {
   return distFromZoneIn(state, enemy, ship.y) <= 6;
 }
 
-/* Breakthrough objective: a Red (player1-slot) Ship that has moved and reached within 6"
-   of the opponent's Zone edge may fly off for 1 VP per 200 pts. */
+/* Breakthrough objective: the attacking side's Ships that have moved and reached within 6"
+   of the opponent's Zone edge may fly off for 1 VP per 200 pts. The attacker is whichever
+   side holds the 'breakthrough' objective (supports asymmetric scenarios). */
 export function breakthroughFlyoffEligible(state, gid, si) {
-  if (!state.scenario || state.scenario.objective !== 'breakthrough') return false;
+  const attacker = ['player1','player2'].find(s => objectiveForSide(state, s) === 'breakthrough');
+  if (!state.scenario || !attacker) return false;
   const def = getDef(state, gid);
-  if (!def || def.side !== 'player1') return false; // only Red flies off for Breakthrough
+  if (!def || def.side !== attacker) return false;
   const ship = state.groups[gid] && state.groups[gid].ships[si];
   if (!ship || ship.destroyed || ship.offTable || !ship.movedThisRound) return false;
-  return distFromZoneIn(state, 'player2', ship.y) <= 6; // within 6" of the opponent's (north) edge
+  const defender = attacker === 'player1' ? 'player2' : 'player1';
+  return distFromZoneIn(state, defender, ship.y) <= 6;
 }
 
 /* Score each side's selected Secondary Objective at game end. Returns log lines. */
@@ -682,9 +696,14 @@ export function rollInitiative(state, rng) {
     player2: 1 + effectiveAdmiral.player2 + cmdBonus.player2 + comms.player2,
   };
   // Pass Tokens: a side 2+ Groups fewer than the leader gets 1, +1 per further fewer.
+  // Count groups with at least one alive ship on the table, OR groups eligible to
+  // arrive/deploy this turn (canActivateOffTable handles play-phase reserve rules).
   const groupCount = (side) => fleetForSide(state, side).filter(def => {
     const g = state.groups[def.id];
-    return g && g.ships.some(s => !s.destroyed && (!s.offTable || canDeployNow(state, def)));
+    if (!g) return false;
+    const hasOnTable = g.ships.some(s => !s.destroyed && !s.offTable);
+    if (hasOnTable) return true;
+    return canActivateOffTable(state, def).eligible;
   }).length;
   const gc = { player1: groupCount('player1'), player2: groupCount('player2') };
   const most = Math.max(gc.player1, gc.player2);
@@ -701,6 +720,19 @@ export function rollInitiative(state, rng) {
     holder: red > blue ? 'player1' : 'player2',
     round: state.round
   };
+  // Pre-activate groups that have no ships eligible to act this round so they
+  // are never presented to players and never need a finishActivation intent.
+  // Done here (server-authoritative) rather than on each client to avoid races.
+  ['player1', 'player2'].forEach(side => {
+    fleetForSide(state, side).forEach(def => {
+      const grp = state.groups[def.id];
+      if (!grp || grp.activated) return;
+      const hasOffTable = grp.ships.some(s => !s.destroyed && s.offTable && !s.attachedTo);
+      const hasActive   = grp.ships.some(s => !s.destroyed && (!s.offTable || s.justArrived))
+                        || (hasOffTable && canActivateOffTable(state, def).eligible);
+      if (!hasActive) grp.activated = true;
+    });
+  });
 }
 
 // ── SECTION C: ASSET AND DROPSITE LOGIC ──
@@ -3094,7 +3126,7 @@ function applyCommitScenario(state, rng) {
   const scenData = buildScenarioState(state.scenario);
   state.scenarioData = scenData;
   // Extract objective: seed Recon Operative tokens on each Dropsite.
-  if (state.scenario.objective === 'extract') {
+  if (objAny(state, 'extract')) {
     scenData.dropsites.forEach(ds => {
       const k = dropsiteSizeKey(ds);
       ds.reconOps = k === 'L' ? 3 : k === 'M' ? 2 : 1;
@@ -3111,9 +3143,10 @@ function applyCommitScenario(state, rng) {
   state.logExpanded = false;
   // Protect: auto-nominate highest-value dropsite nearest each side's zone.
   state.protectNom = { player1: null, player2: null };
-  if (state.scenario.objective === 'protect') {
+  if (objAny(state, 'protect')) {
     const dss = scenData.dropsites.slice();
     ['player1', 'player2'].forEach(side => {
+      if (objectiveForSide(state, side) !== 'protect') return;
       const cands = dss.filter(ds => !Object.values(state.protectNom).includes(ds.id));
       cands.sort((a, b) => {
         const va = (DROPSITE_VP[dropsiteSizeKey(a)] || DROPSITE_VP.M).control;
@@ -3146,7 +3179,7 @@ function applyCommitScenario(state, rng) {
   } else if (needsNomination) {
     state.phase = 'nominations';
     state.nominationsReady = { player1: false, player2: false };
-  } else if (state.scenario && state.scenario.objective === 'protect') {
+  } else if (objAny(state, 'protect')) {
     state.protectNomReady = { player1: false, player2: false };
     state.phase = 'protect';
   } else if (!anyoneNeedsDeployPhase(state)) {
@@ -3169,7 +3202,7 @@ export function applyCommitScenery(state, rng, side) {
   if (state.nominationPhase) {
     state.phase = 'nominations';
     state.nominationsReady = { player1: false, player2: false };
-  } else if (state.scenario && state.scenario.objective === 'protect') {
+  } else if (objAny(state, 'protect')) {
     state.protectNomReady = { player1: false, player2: false };
     state.phase = 'protect';
   } else if (anyoneNeedsDeployPhase(state)) {
@@ -3770,7 +3803,7 @@ export function apply(state, intent, rng) {
       if (!state.nominationsReady.player1 || !state.nominationsReady.player2) return state;
       // Both sides confirmed — advance.
       state.nominationPhase = false;
-      if (state.scenario && state.scenario.objective === 'protect') {
+      if (objAny(state, 'protect')) {
         state.protectNomReady = { player1: false, player2: false };
         state.phase = 'protect';
       } else if (anyoneNeedsDeployPhase(state)) {
@@ -3789,7 +3822,9 @@ export function apply(state, intent, rng) {
     case 'confirmProtectNom': {
       state.protectNomReady = state.protectNomReady || { player1: false, player2: false };
       if (intent.side) state.protectNomReady[intent.side] = true;
-      if (!state.protectNomReady.player1 || !state.protectNomReady.player2) return state;
+      // Only sides whose Objective is Protect need to nominate (asymmetric-safe).
+      const protectSides = ['player1','player2'].filter(s => objectiveForSide(state, s) === 'protect');
+      if (protectSides.some(s => !state.protectNomReady[s])) return state;
       // Both confirmed — advance to deploy or play.
       if (anyoneNeedsDeployPhase(state)) {
         state.deployDone = state.deployDone || { player1: false, player2: false };

@@ -114,6 +114,12 @@ Custom fleet import (`⊕ IMPORT LIST` in setup overlay): `parseNewRecruit` pars
 - Admiral assignments: famous admirals are auto-slotted; non-famous (faction) admirals show a flagship dropdown + faction ability dropdown (only for named faction types like Captain, Rear Admiral). `state.importedFleets[slot].admiralAssignments` holds `[{ level, groupIdx, shipIdx, isFamous, admiralIdx, abilities }]`.
 - `fleetAssignmentsReady(slot)` checks Bioficer payload links and admiral assignments before allowing game start.
 
+### Scenario setup (two tabs)
+The scenario chooser in the setup overlay has two tabs. The active tab is `state.setupTab` (relayed); switching tabs resets the scenario selections.
+- **Standard Scenarios tab:** a dropdown of bespoke standard scenarios (Take and Hold, Erupting Battlefront, Power Grab, Shock and Yaw, Orbital Support, Entrapmoont) plus a RANDOM button. Selecting/rolling one applies a full preset from `SCEN_PRESETS` (in `client/index.html`) and shows a read-only summary of Deployment Type, Approach and Scoring Objective.
+- **Custom / Generate tab:** per-row pickers + ↻ rerolls for Deployment Type, Approach, Layout, Variant and Scoring Objective, plus RANDOMISE ALL. Standard-scenario-only `LAYOUTS`/`VARIANTS` (flagged `bespoke:true`, `d6:0`) are hidden from these generator dropdowns/rerolls and never produced by `generateScenario`; `No Variant` stays available.
+- **Asymmetric scoring:** the Scoring Objective row has an "Asymmetric scoring" toggle. When on, `state.scenario.objectives = { player1, player2 }` overrides the shared `state.scenario.objective`. `objectiveForSide(state, side)` / `objAny(state, key)` (in `mutators.js`) resolve all per-side scoring — Standard Scoring, Raze/Attrition/Survey/Extract bonuses, Protect doubling/penalty/nomination, and Extract seeding. Used by Entrapmoont (attacker Raze / defender Protect).
+
 ### Topbar
 - **`renderBrand()`** — in play phase renders a clickable button showing `{FACTION1} {P1vp} {P1name} VS {P2name} {P2vp} {FACTION2}` (opens VP breakdown modal). In other phases shows plain faction names.
 - Phase breadcrumb nav is always visible.
@@ -170,3 +176,5 @@ Custom fleet import (`⊕ IMPORT LIST` in setup overlay): `parseNewRecruit` pars
 - Asset board movement, undo deploy, scenery placement, and pre-game config still relay full state rather than using server-validated intents.
 - No AI opponent.
 - Faction admiral personal abilities and famous admiral abilities are defined in `db.js` and shown in the AP modal, but are informational only — the abilities themselves (e.g. Mass Driver Volley, Dedicated Survey Teams) must be adjudicated manually by players.
+- Standard-scenario **variant features** (Military Outposts, Orbital Defence Guns, Power Plants, Hangars, Comms Stations) are placed on dropsites, but their in-game effects and any bespoke special rules (e.g. Entrapmoont's Power-Plant blast and the blue team's bonus Military Outpost) are adjudicated manually.
+- Multiplayer/team scenarios (e.g. Entrapmoont, 2–4 players) are modelled as standard 2-player; attacker/defender map to player2/player1, and Red/Blue deployment zones are still assigned randomly at confirm.

@@ -158,6 +158,86 @@ export const LAYOUTS = {
     ],
     rings:[],
     largeObjects:[{ x:24, y:24, diameter:12 }]
+  },
+  take_and_hold: {
+    d6:0, bespoke:true, name:'Take and Hold',
+    scenery:{ micrometeor:4, dense:4, rings:0, largeObjects:0 },
+    dropsites:[
+      ds('ds1','medium_city',    24, 24),
+      ds('ds2','large_city',      6, 24),
+      ds('ds3','large_city',     42, 24),
+      ds('ds4','medium_station', 12, 30),
+      ds('ds5','medium_station', 36, 18)
+    ],
+    rings:[], largeObjects:[]
+  },
+  erupting_battlefront: {
+    d6:0, bespoke:true, name:'Erupting Battlefront',
+    scenery:{ micrometeor:4, dense:0, rings:1, largeObjects:0 },
+    dropsites:[
+      ds('ds1','medium_city', 12, 12),
+      ds('ds2','medium_city', 36, 12),
+      ds('ds3','large_city',  24, 24),
+      ds('ds4','medium_city', 12, 36),
+      ds('ds5','medium_city', 36, 36)
+    ],
+    rings:[{ axis:'horizontal', y:24 }],
+    largeObjects:[]
+  },
+  power_grab: {
+    d6:0, bespoke:true, name:'Power Grab',
+    scenery:{ micrometeor:6, dense:4, rings:0, largeObjects:0 },
+    dropsites:[
+      ds('ds1','large_city',    42,  6),
+      ds('ds2','medium_city',   24, 18),
+      ds('ds3','small_station', 12, 24),
+      ds('ds4','small_station', 36, 24),
+      ds('ds5','medium_city',   24, 30),
+      ds('ds6','large_city',     6, 42)
+    ],
+    rings:[], largeObjects:[]
+  },
+  shock_and_yaw: {
+    d6:0, bespoke:true, name:'Shock and Yaw',
+    scenery:{ micrometeor:'2-5', dense:'4-6', rings:0, largeObjects:0 },
+    dropsites:[
+      ds('ds1','medium_station', 24, 24),
+      ds('ds2','large_station',  40,  6),
+      ds('ds3','large_station',   8, 42),
+      ds('ds4','medium_city',    42, 18),
+      ds('ds5','medium_city',     6, 30),
+      ds('ds6','small_city',     16, 16),
+      ds('ds7','small_city',     32, 32)
+    ],
+    rings:[], largeObjects:[]
+  },
+  orbital_support: {
+    d6:0, bespoke:true, name:'Orbital Support',
+    scenery:{ micrometeor:'2-5', dense:'4-6', rings:0, largeObjects:0 },
+    dropsites:[
+      ds('ds1','medium_station', 24, 24),
+      ds('ds2','large_city',   6, 12),
+      ds('ds3','large_city',  42, 12),
+      ds('ds4','large_city',   6, 36),
+      ds('ds5','large_city',  42, 36),
+      ds('ds6','small_city',  24, 12),
+      ds('ds7','small_city',  24, 36)
+    ],
+    rings:[], largeObjects:[]
+  },
+  entrapmoont: {
+    d6:0, bespoke:true, name:'Entrapmoont',
+    scenery:{ micrometeor:6, dense:0, rings:0, largeObjects:1 },
+    dropsites:[
+      ds('ds1','large_station', 24, 12),
+      ds('ds2','large_station', 24, 36),
+      ds('ds3','small_city',    12, 18),
+      ds('ds4','small_city',    42, 18),
+      ds('ds5','small_city',     6, 30),
+      ds('ds6','small_city',    36, 30)
+    ],
+    rings:[],
+    largeObjects:[{ x:24, y:24, diameter:12 }]
   }
 };
 
@@ -347,6 +427,69 @@ export const VARIANTS = {
         return { ...d, type:newType };
       });
       return { dropsites, features, scenery:{} };
+    }
+  },
+  civic_infrastructure: {
+    d6:0, bespoke:true, name:'Civic Infrastructure',
+    short:'Each Medium City +Power Plant, Hangar & Comms.',
+    desc:'Each Medium City gains a Power Plant, a Hangar and a Comms Station.',
+    apply:(base)=>{
+      const features = {};
+      base.forEach(d=>{
+        if (d.type === 'medium_city') features[d.id] = ['power_plant','hangar','comms_station'];
+      });
+      return { dropsites: base.map(d=>({...d})), features, scenery:{} };
+    }
+  },
+  shock_and_yaw: {
+    d6:0, bespoke:true, name:'Shock and Yaw',
+    short:'Sm City +Hangar · Med City +Mil Outpost · Med Station +2 Power Plants · Lg Station +Comms & ODG.',
+    desc:'Each Small City gains a Hangar; each Medium City a Military Outpost; the central Medium Space Station two Power Plants; each Large Space Station a Comms Station and an Orbital Defence Gun. Special: destroying a Power Plant deals no extra damage to the Medium Space Station, but instead all Groups within 6" gain two Spikes and all Ships within 6" gain a Scanners Offline token.',
+    apply:(base)=>{
+      const features = {};
+      base.forEach(d=>{
+        if (d.type === 'small_city')     features[d.id] = ['hangar'];
+        if (d.type === 'medium_city')    features[d.id] = ['military_outpost'];
+        if (d.type === 'medium_station') features[d.id] = ['power_plant','power_plant'];
+        if (d.type === 'large_station')  features[d.id] = ['comms_station','orbital_defence_gun'];
+      });
+      return {
+        dropsites: base.map(d=>({...d})),
+        features,
+        scenery:{},
+        note:'Power Plant destruction: no extra damage to the Medium Station; all Groups within 6" gain 2 Spikes and all Ships within 6" gain Scanners Offline (adjudicate manually).'
+      };
+    }
+  },
+  orbital_support: {
+    d6:0, bespoke:true, name:'Orbital Support',
+    short:'Med Station/Large Cities +2 Mil Outposts. Small Cities +ODG & Mil Outpost.',
+    desc:'The central Medium Space Station and each Large City gain two Military Outposts; each Small City gains an Orbital Defence Gun and a Military Outpost.',
+    apply:(base)=>{
+      const features = {};
+      base.forEach(d=>{
+        if (d.type === 'medium_station' || d.type === 'large_city') features[d.id] = ['military_outpost','military_outpost'];
+        if (d.type === 'small_city') features[d.id] = ['orbital_defence_gun','military_outpost'];
+      });
+      return { dropsites: base.map(d=>({...d})), features, scenery:{} };
+    }
+  },
+  entrapmoont: {
+    d6:0, bespoke:true, name:'Entrapmoont',
+    short:'Large Stations +Military Outpost & ODG. Small Cities +Military Outpost. Blue may add 1 Military Outpost.',
+    desc:'Each Large Space Station gains a Military Outpost and an Orbital Defence Gun; each Small City gains a Military Outpost. Special: at the start of the first Planning Phase, the Blue (defending) team may place one additional Military Outpost on any Dropsite.',
+    apply:(base)=>{
+      const features = {};
+      base.forEach(d=>{
+        if (d.type === 'large_station') features[d.id] = ['military_outpost','orbital_defence_gun'];
+        if (d.type === 'small_city')    features[d.id] = ['military_outpost'];
+      });
+      return {
+        dropsites: base.map(d=>({...d})),
+        features,
+        scenery:{},
+        note:'Blue (defending) team may place 1 additional Military Outpost on any Dropsite at the start of the first Planning Phase (add manually).'
+      };
     }
   }
 };
