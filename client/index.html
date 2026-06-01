@@ -25,10 +25,10 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  * { font-feature-settings: "zero" 0; }
   body {
     background: var(--bg); color: var(--text);
     font-family: var(--mono); font-size: 12px; line-height: 1.4;
-    font-feature-settings: "zero" 1; /* slashed zero — distinguishes 0 from 8 */
     background-image:
       radial-gradient(ellipse at top, rgba(74,214,255,0.04), transparent 60%),
       linear-gradient(to bottom, var(--bg), #060a0c);
@@ -125,8 +125,8 @@
   /* ============== SETUP OVERLAY ============== */
   .setup-overlay {
     position: absolute; inset: 0;
-    background: rgba(8,16,15,0.93);
-    backdrop-filter: blur(6px);
+    background: var(--bg);
+    backdrop-filter: none;
     display: flex; align-items: center; justify-content: center;
     z-index: 50; overflow-y: auto; padding: 20px;
   }
@@ -971,6 +971,7 @@
 </style>
 </head>
 <body>
+<div id="app-cover" style="position:fixed;inset:0;background:var(--bg);z-index:9999;pointer-events:none;"></div>
 <div class="app">
 
   <header class="topbar">
@@ -1064,7 +1065,6 @@
 // ─── ENGINE IMPORTS ──────────────────────────────────────────────────────────
 import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from '../src/engine/version.js';
 import {
-  UCM_FLEET, SHAL_FLEET, PHR_FLEET, RESISTANCE_FLEET, SCOURGE_FLEET, BIOFICER_FLEET,
   FACTIONS, ORDERS, INCH, BOARD_IN, BOARD_PX,
   DROPSITE_BASE, FEATURES, ds, LAYOUTS, DEPLOYMENTS,
   APPROACH_BEHAVIOURS, APPROACHES, VARIANTS,
@@ -1073,6 +1073,7 @@ import {
 
 import { localRng as _rng, rollD6 as _rollD6, rollDie as _rollDie, makeRng as _makeRng } from '../src/engine/rng.js';
 import { parseNewRecruit } from '../src/fleet/parser.js';
+import { FASTPLAY_LISTS } from '../src/fleet/fastplay/index.js';
 import { findShipDef, ADMIRAL_FACTION_ABILITIES, FAMOUS_ADMIRAL_ABILITIES, FACTION_ADMIRAL_TITLES, FACTION_ADMIRAL_PERSONAL, SHIP_SPECIAL_RULES } from '../src/fleet/db.js';
 
 import {
@@ -1901,7 +1902,7 @@ function renderPanels() {
       payloadDefs.forEach(def => { pts += def.pts; });
       const anyDetached = payloadDefs.some(def => {
         const g = state.groups[def.id];
-        return g && g.ships.some(s => !s.destroyed && !s.offTable && !s.attachedTo);
+        return g && g.ships.some(s => !s.destroyed && !s.offTable && !s.attachedTo && !s.deployedByGid);
       });
       if (anyDetached) {
         grpCount++;
@@ -2064,6 +2065,47 @@ function makeGroupCard(def) {
       renderAll(true);
     }
   });
+
+  // Launched-cell sub-items: cells with deployedByGid === this group are shown
+  // here so the player can select and activate them without leaving the Porter's context.
+  const launchedCells = [];
+  Object.entries(state.groups).forEach(([cgid, cgrp]) => {
+    cgrp.ships.forEach((cs, csi) => {
+      if (cs.deployedByGid === def.id && !cs.destroyed) launchedCells.push({ cgid, csi, cs });
+    });
+  });
+  if (launchedCells.length) {
+    const divider = document.createElement('div');
+    divider.style.cssText = 'border-top:1px solid rgba(255,255,255,0.07);margin:6px -2px 4px;';
+    card.appendChild(divider);
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'font-size:8px;letter-spacing:0.1em;color:var(--text-mute);text-transform:uppercase;padding:0 4px 3px;';
+    hdr.textContent = 'Launched this activation';
+    card.appendChild(hdr);
+    launchedCells.forEach(({ cgid, csi, cs }) => {
+      const acted = cs.movedThisRound || cs.firedThisActivation || (cs.launchedThisRound > 0);
+      const cellDef = getDef(cgid);
+      const isSelCell = state.selectedGroupId === cgid && state.selectedShipIdx === csi;
+      const row = document.createElement('div');
+      row.style.cssText = `display:flex;align-items:center;gap:5px;padding:3px 4px;border-radius:3px;cursor:pointer;${isSelCell ? 'background:rgba(255,255,255,0.07);' : ''}`;
+      row.innerHTML = `
+        <span style="color:var(--text-mute);font-size:11px;">⬡</span>
+        <span style="flex:1;font-size:9.5px;text-transform:uppercase;letter-spacing:0.04em;color:${acted ? 'var(--text-mute)' : 'var(--text-dim)'};">${cellDef ? cellDef.name : 'Cell'}</span>
+        <span class="gc-badge reserve" style="font-size:7.5px;padding:0 4px;">GQ</span>
+        ${acted ? '<span style="color:var(--text-mute);font-size:9px;min-width:10px;text-align:right;">✓</span>' : '<span style="color:var(--hull-warn);font-size:9px;min-width:10px;text-align:right;">!</span>'}
+      `;
+      row.addEventListener('click', e => {
+        e.stopPropagation();
+        selectGroup(cgid);
+        if (state.selectedGroupId === cgid) {
+          state.selectedShipIdx = csi;
+          renderAll(true);
+        }
+      });
+      card.appendChild(row);
+    });
+  }
+
   return card;
 }
 
@@ -2079,7 +2121,7 @@ function makeCellsCard(side, payloadDefs) {
   payloadDefs.forEach(def => {
     const g = state.groups[def.id];
     if (!g) return;
-    g.ships.forEach((s, si) => { if (!s.destroyed && !s.offTable && !s.attachedTo) detached.push({ def, si, ship: s }); });
+    g.ships.forEach((s, si) => { if (!s.destroyed && !s.offTable && !s.attachedTo && !s.deployedByGid) detached.push({ def, si, ship: s }); });
   });
   const first = detached.length ? detached[0] : null;
   if (first && state.selectedGroupId === first.def.id) card.classList.add('active');
@@ -2134,8 +2176,13 @@ function selectGroup(gid) {
       const midActDef = getDef(midActGid);
       const midActIsMine = !_netSide || (midActDef && midActDef.side === _netSide);
       if (midActIsMine) {
-        flashLaunchMsg('Finish the current activation before selecting another Group');
-        return;
+        // Allow switching to a cell group whose ships were deployed by the mid-act Porter.
+        const tGrp = state.groups[gid];
+        const isCellOfMidAct = tGrp && tGrp.ships.some(cs => cs.deployedByGid === midActGid);
+        if (!isCellOfMidAct) {
+          flashLaunchMsg('Finish the current activation before selecting another Group');
+          return;
+        }
       }
     }
   }
@@ -3147,12 +3194,16 @@ function renderDetail() {
       });
     }
     // Reattach: free capacity + a detached same-size payload within 3" of this Porter.
+    // Cannot reattach in the same round a payload was deployed from this group.
     if (freeCap > 0) {
       const candidates = detachedReattachCandidates(def.side, selShip, def.porter.size);
-      if (state.phase === 'play' && launchOk && candidates.length) {
+      const deployedThisRound = payloadShips(def.side).some(p =>
+        !p.ship.attachedTo && p.ship.deployedByGid === gid && p.ship.deployedRound === state.round
+      );
+      if (state.phase === 'play' && launchOk && candidates.length && !deployedThisRound) {
         payloadHTML += `<button class="btn ${sideClass==='shal'?'shal':''}" data-payload-reattach="${gid}|${state.selectedShipIdx}" style="width:100%;margin-top:6px;">⊕ REATTACH ▸ pick within 3"</button>`;
       } else if (state.phase === 'play') {
-        payloadHTML += `<div style="font-size:9px;color:var(--text-mute);margin-top:6px;">Reattach: ${!launchOk ? 'needs a launch-capable Order' : 'no detached payload within 3"'}.</div>`;
+        payloadHTML += `<div style="font-size:9px;color:var(--text-mute);margin-top:6px;">Reattach: ${deployedThisRound ? 'cannot reattach in the same round as deploy' : !launchOk ? 'needs a launch-capable Order' : 'no detached payload within 3"'}.</div>`;
       }
     }
     payloadHTML += `</div>`;
@@ -3298,7 +3349,7 @@ function renderDetail() {
             ${ship.justArrived && !grp.ships.some(s => s.movedThisRound || s.firedThisActivation || (s.launchedThisRound>0) || s.detectorUsed) ? '<br><b style="color:var(--'+sideClass+')">Just deployed:</b> click in your Zone to re-place this ship and re-aim, until the Group acts.' : ''}
           </div>
           <div class="move-actions" style="margin-top:6px;">
-            ${!isOpponent && !grp.activated && !moved && o.moveMax > 0 && (selEffOrder === 'CC' || selEffOrder === 'DC') ? `<button class="btn" data-hold-position="${gid}|${state.selectedShipIdx}" style="width:100%;">⏸ HOLD POSITION (move 0")</button>` : ''}
+            ${!isOpponent && !grp.activated && !moved && !ship.firedThisActivation && !(ship.launchedThisRound > 0) && o.moveMax > 0 && (selEffOrder === 'CC' || selEffOrder === 'DC') ? `<button class="btn" data-end-move="${gid}|${state.selectedShipIdx}" style="width:100%;">END MOVE</button>` : ''}
             ${!isOpponent && objectivesBeyondEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Objectives Beyond)</button>` : ''}
             ${!isOpponent && breakthroughFlyoffEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-bt-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Breakthrough · ${shipPoints(def)} pts)</button>` : ''}
           </div>
@@ -4531,7 +4582,9 @@ function renderAttackModal() {
     const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
     // Damage type, base save, and modified save info for the header/label.
     const _wtype = s.w.type;
-    const _saveTypeHdr = _wtype === 'E' ? 'E Saves' : _wtype === 'K' ? 'K Saves' : 'Core Saves';
+    const _tKey = targetKey(s.targetGid, s.targetSi);
+    const _shieldUp = M.shieldsUp && !!M.shieldsUp[_tKey];
+    const _saveTypeHdr = _shieldUp ? 'Shield Saves' : (_wtype === 'E' ? 'E Saves' : _wtype === 'K' ? 'K Saves' : 'Core Saves');
     const _baseSvStr = _wtype === 'E' ? td.es : _wtype === 'K' ? td.ks : null;
     const _baseSv = (_baseSvStr && _baseSvStr !== '—') ? parseInt(_baseSvStr) : null;
     const _firstWithSv = sr.hitsList.find(h => h.sv != null);
@@ -4540,7 +4593,13 @@ function renderAttackModal() {
     const _mods = [sp.scald ? `Scald-${sp.scald}` : '', sp.reave ? `Reave-${sp.reave}` : '',
       sp.burnthrough && M.hitResult && M.hitResult.crits > 0 ? `Burnthrough-${sp.burnthrough}` : ''].filter(Boolean);
     let _saveInfo = '';
-    if (_baseSv != null) {
+    if (_shieldUp) {
+      const _rawShieldSv = shieldSaveVal(td);
+      _saveInfo = `Shield ${_rawShieldSv}+`;
+      if (_modSv != null && _rawShieldSv != null && _modSv !== _rawShieldSv) {
+        _saveInfo += ` → ${_modSv}+ (Boosted)`;
+      }
+    } else if (_baseSv != null) {
       const _lbl = _wtype === 'E' ? 'ES' : 'KS';
       _saveInfo = `${_lbl} ${_baseSvStr}`;
       if (_modSv != null && _modSv !== _baseSv) {
@@ -6067,8 +6126,7 @@ function openFleetView(slot) {
 
   const imported = state.importedFleets && state.importedFleets[slot];
   const fk = state.fleetChoices && state.fleetChoices[slot];
-  // Show fleet view for imported fleets OR quickplay Bioficer (needs payload setup).
-  if (!imported && !fleetHasPayloads(fk)) return;
+  if (!imported && !fk) return;
 
   // Initialise admiral assignments if not set yet (imported only).
   if (imported && !imported.admiralAssignments) {
@@ -6082,6 +6140,10 @@ function openFleetView(slot) {
   panel.className = 'setup-overlay';
   panel.style.zIndex = '400';
 
+  // Quickplay fleet groups (when no imported list) — parsed from the fastplay file.
+  const qpParsed = !imported && fk && FASTPLAY_LISTS[fk] ? parseNewRecruit(FASTPLAY_LISTS[fk]) : null;
+  const qpFleet = qpParsed ? qpParsed.groups : null;
+
   const groups = imported ? (imported.groups || []) : [];
   const faction = imported ? imported.faction : fk;
   const factionLabel = (faction || '').toUpperCase();
@@ -6089,7 +6151,8 @@ function openFleetView(slot) {
   const admiralsList = (imported && imported.admirals) || [];
   const hasFamous = groups.some(g => g.isFamousAdmiral);
   const hasNonFamous = admiralsList.length > 0;
-  const totalPts = imported ? _fleetTotalPts(imported) : 0;
+  const qpTotal = qpFleet ? qpFleet.reduce((s, g) => s + g.pts * (g.count || 1), 0) : 0;
+  const totalPts = imported ? _fleetTotalPts(imported) : qpTotal;
   const isBioficerImported = !!(imported && imported.faction === 'bioficer');
   const isBioficerQuickplay = !imported && fk === 'bioficer';
 
@@ -6202,63 +6265,78 @@ function openFleetView(slot) {
       </tr>`);
     });
   } else if (isBioficerQuickplay) {
-    // Quickplay Bioficer: use faction fleet.
-    const fleet = FACTIONS['bioficer'] && FACTIONS['bioficer'].fleet;
-    if (fleet) {
-      const porters = [], payloads = [];
-      fleet.forEach(def => {
-        const n = def.groupSize || 1;
-        for (let si = 0; si < n; si++) {
-          if (def.porter) porters.push({ def, si, key: `${def.id}:${si}` });
-          if (def.payload) payloads.push({ def, si, key: `${def.id}:${si}` });
-        }
-      });
-      const portUsed = {};
-      porters.forEach(p => portUsed[p.key] = 0);
-      Object.values(payloadLinks).forEach(pk => { if (portUsed[pk] != null) portUsed[pk]++; });
-      payloads.forEach(pl => {
-        const cur = payloadLinks[pl.key] || '';
-        const porterOpts = porters.map(po => {
-          const cap = po.def.porter.cap || 1;
-          const used = portUsed[po.key] - (cur === po.key ? 1 : 0);
-          const full = used >= cap;
-          const sizeOk = po.def.porter.size === pl.def.payload.size;
-          const dis = (full || !sizeOk) && cur !== po.key;
-          const label = `${po.def.name}${po.def.groupSize>1?` #${po.si+1}`:''}`;
-          return `<option value="${po.key}" ${cur===po.key?'selected':''} ${dis?'disabled':''}>${label} (${portUsed[po.key]}/${cap})${!sizeOk?' ✗':''}</option>`;
-        }).join('');
-        payloadRows.push(`<tr>
-          ${tdS(`${pl.def.name}${pl.def.groupSize>1?` #${pl.si+1}`:''}`,'min-width:160px;')}
-          ${tdS('<span style="color:var(--text-mute);font-size:9px;">Payload</span>','')}
-          ${tdS(`<select class="payload-sel" data-pl-key="${pl.key}" ${selAttrs} style="font-size:10px;background:var(--bg-card,#111);color:inherit;border:1px solid rgba(255,255,255,0.2);padding:2px 6px;border-radius:3px;max-width:200px;"><option value="">— unassigned —</option>${porterOpts}</select>`,'white-space:nowrap;')}
-          ${tdS('—','text-align:right;')}
-        </tr>`);
-      });
-    }
+    // Quickplay Bioficer: rebuild fleet for this slot so defs include porter/payload flags.
+    if (state.activeFleets) state.activeFleets = {};
+    const bfDefs = fleetForSide(slot === 'f1' ? 'player1' : 'player2');
+    const porters = [], payloads = [];
+    bfDefs.forEach(def => {
+      const n = def.groupSize || 1;
+      for (let si = 0; si < n; si++) {
+        if (def.porter)  porters.push({ def, si, key: `${def.baseId}:${si}` });
+        if (def.payload) payloads.push({ def, si, key: `${def.baseId}:${si}` });
+      }
+    });
+    const portUsed = {};
+    porters.forEach(p => portUsed[p.key] = 0);
+    Object.values(payloadLinks).forEach(pk => { if (portUsed[pk] != null) portUsed[pk]++; });
+    payloads.forEach(pl => {
+      const cur = payloadLinks[pl.key] || '';
+      const porterOpts = porters.map(po => {
+        const cap = po.def.porter.cap || 1;
+        const used = portUsed[po.key] - (cur === po.key ? 1 : 0);
+        const full = used >= cap;
+        const sizeOk = po.def.porter.size === pl.def.payload.size;
+        const dis = (full || !sizeOk) && cur !== po.key;
+        const label = `${po.def.name}${po.def.groupSize > 1 ? ` #${po.si + 1}` : ''}`;
+        return `<option value="${po.key}" ${cur === po.key ? 'selected' : ''} ${dis ? 'disabled' : ''}>${label} (${portUsed[po.key]}/${cap})${!sizeOk ? ' ✗' : ''}</option>`;
+      }).join('');
+      payloadRows.push(`<tr>
+        ${tdS(`${pl.def.name}${pl.def.groupSize > 1 ? ` #${pl.si + 1}` : ''}`, 'min-width:160px;')}
+        ${tdS('<span style="color:var(--text-mute);font-size:9px;">Payload</span>', '')}
+        ${tdS(`<select class="payload-sel" data-pl-key="${pl.key}" ${selAttrs} style="font-size:10px;background:var(--bg-card,#111);color:inherit;border:1px solid rgba(255,255,255,0.2);padding:2px 6px;border-radius:3px;max-width:200px;"><option value="">— unassigned —</option>${porterOpts}</select>`, 'white-space:nowrap;')}
+        ${tdS(`${pl.def.pts} pts`, 'text-align:right;font-weight:600;')}
+      </tr>`);
+    });
   }
 
   // ── SHIPS SECTION (exclude famous admirals — they appear in ADMIRALS) ──────
-  const shipRows = groups
-    .filter(grp => !grp.isFamousAdmiral)
-    .map((grp, _unused, _arr) => {
-      const i = groups.indexOf(grp);
-      const isNFAdm = assignments.some(a => !a.isFamous && a.groupIdx === i);
-      const def = findShipDef(faction, grp.name);
-      const role = def ? def.role : '—';
-      const rowBg = isNFAdm ? 'background:rgba(255,181,71,0.08);' : '';
-      const badge = isNFAdm ? '★ ' : '';
-      const displayName = pluralName(grp.name, grp.count);
-      const countStr = grp.count > 1 ? `${grp.count}× @ ${grp.pts} pts ea` : `1×`;
-      const grpPts = grp.pts * grp.count;
-      const optStr = grp.options && grp.options.length
-        ? `<div style="font-size:9px;color:var(--text-mute);margin-top:1px;">${grp.options.join(', ')}</div>` : '';
-      return `<tr style="${rowBg}">
-        ${tdS(`<span style="color:var(--hull-warn)">${badge}</span><span>${displayName}</span>${optStr}`,'min-width:160px;max-width:260px;')}
-        ${tdS(role,'color:var(--text-mute);font-size:9px;white-space:nowrap;')}
-        ${tdS(countStr,'font-size:9px;white-space:nowrap;text-align:right;')}
-        ${tdS(`${grpPts} pts`,'text-align:right;white-space:nowrap;font-weight:600;')}
-      </tr>`;
-    }).join('');
+  const shipRows = imported
+    ? groups
+        .filter(grp => !grp.isFamousAdmiral)
+        .map((grp, _unused, _arr) => {
+          const i = groups.indexOf(grp);
+          const isNFAdm = assignments.some(a => !a.isFamous && a.groupIdx === i);
+          const def = findShipDef(faction, grp.name);
+          const role = def ? def.role : '—';
+          const rowBg = isNFAdm ? 'background:rgba(255,181,71,0.08);' : '';
+          const badge = isNFAdm ? '★ ' : '';
+          const displayName = pluralName(grp.name, grp.count);
+          const countStr = grp.count > 1 ? `${grp.count}× @ ${grp.pts} pts ea` : `1×`;
+          const grpPts = grp.pts * grp.count;
+          const optStr = grp.options && grp.options.length
+            ? `<div style="font-size:9px;color:var(--text-mute);margin-top:1px;">${grp.options.join(', ')}</div>` : '';
+          return `<tr style="${rowBg}">
+            ${tdS(`<span style="color:var(--hull-warn)">${badge}</span><span>${displayName}</span>${optStr}`,'min-width:160px;max-width:260px;')}
+            ${tdS(role,'color:var(--text-mute);font-size:9px;white-space:nowrap;')}
+            ${tdS(countStr,'font-size:9px;white-space:nowrap;text-align:right;')}
+            ${tdS(`${grpPts} pts`,'text-align:right;white-space:nowrap;font-weight:600;')}
+          </tr>`;
+        }).join('')
+    : (qpFleet || []).map(grp => {
+        const dbDef = findShipDef(fk, grp.name);
+        if (dbDef && dbDef.payload) return ''; // payload ships shown in PAYLOADS section
+        const count = grp.count || 1;
+        const countStr = count > 1 ? `${count}× @ ${grp.pts} pts ea` : `1×`;
+        const grpPts = grp.pts * count;
+        const optStr = grp.options && grp.options.length
+          ? `<div style="font-size:9px;color:var(--text-mute);margin-top:1px;">${grp.options.join(', ')}</div>` : '';
+        return `<tr>
+          ${tdS(`${grp.name}${optStr}`,'min-width:160px;max-width:260px;')}
+          ${tdS(dbDef ? dbDef.role : '—','color:var(--text-mute);font-size:9px;white-space:nowrap;')}
+          ${tdS(countStr,'font-size:9px;white-space:nowrap;text-align:right;')}
+          ${tdS(`${grpPts} pts`,'text-align:right;white-space:nowrap;font-weight:600;')}
+        </tr>`;
+      }).join('');
 
   // ── SECONDARIES ───────────────────────────────────────────────────────────
   const secondaryRows = (imported && imported.secondaries && imported.secondaries.length)
@@ -6301,7 +6379,7 @@ function openFleetView(slot) {
           <tfoot>
             <tr style="border-top:1px solid rgba(255,255,255,0.15);">
               <td colspan="3" style="padding:6px 8px;text-align:right;color:var(--text-mute);font-size:9px;">
-                ${groups.length} groups${admiralsList.length > 0 ? ` + ${admiralsList.length} admiral${admiralsList.length > 1 ? 's' : ''}` : ''}
+                ${imported ? groups.length : (qpFleet ? qpFleet.filter(g => { const d = findShipDef(fk, g.name); return !d || !d.payload; }).length : 0)} groups${admiralsList.length > 0 ? ` + ${admiralsList.length} admiral${admiralsList.length > 1 ? 's' : ''}` : ''}
               </td>
               <td style="padding:6px 8px;text-align:right;font-weight:700;">${totalPts} pts</td>
             </tr>
@@ -6386,17 +6464,19 @@ function renderPayloadAssign() {
   if (!state.payloadAssign) return;
   const slot = state.payloadAssign.slot;            // 'f1' | 'f2'
   const fk = state.fleetChoices[slot];
-  const fleet = FACTIONS[fk] && FACTIONS[fk].fleet;
-  if (!fleet) { state.payloadAssign = null; return; }
+  if (!fk) { state.payloadAssign = null; return; }
+  if (state.activeFleets) state.activeFleets = {};
+  const defs = fleetForSide(slot === 'f1' ? 'player1' : 'player2');
+  if (!defs.length) { state.payloadAssign = null; return; }
   const links = state.payloadLinks[slot] || (state.payloadLinks[slot] = {});
 
-  // Enumerate ship-slots.
+  // Enumerate ship-slots using the built fleet defs (baseId as key).
   const porters = [], payloads = [];
-  fleet.forEach(def => {
+  defs.forEach(def => {
     const n = def.groupSize || 1;
     for (let si = 0; si < n; si++) {
-      if (def.porter) porters.push({ def, si, key: `${def.id}:${si}` });
-      if (def.payload) payloads.push({ def, si, key: `${def.id}:${si}` });
+      if (def.porter)  porters.push({ def, si, key: `${def.baseId}:${si}` });
+      if (def.payload) payloads.push({ def, si, key: `${def.baseId}:${si}` });
     }
   });
   // Capacity used per porter (from links).
@@ -7431,7 +7511,7 @@ function renderSetupOverlay() {
     <div class="setup-card">
       <div class="setup-header">
         <h2 class="setup-title">SCENARIO SETUP</h2>
-        <div class="setup-sub">D6 · 6-Round Game</div>
+        <div class="setup-sub">D6 · 6-Round Game${_netRoom ? ` · <span style="font-family:var(--mono);letter-spacing:0.08em;font-size:14px;color:var(--shal);">${_netRoom}</span>` : ''}</div>
       </div>
       <div class="setup-body">
         <div class="faction-select">
@@ -7448,7 +7528,7 @@ function renderSetupOverlay() {
             </select>
             ${secondaryPickers('f1')}
             <button class="btn" data-import-fleet="f1" style="width:100%;margin-top:5px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f1 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
-            ${(state.importedFleets&&state.importedFleets.f1)||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1) ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} SETUP / VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
+            ${state.fleetChoices?.f1 ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} ${state.importedFleets?.f1||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
           </div>
           <div class="faction-slot">
             <div class="faction-lbl" style="color:var(--shal)">${_netSide === 'player2' ? '▶ YOUR NAME' : _netSide === 'player1' ? 'Opponent' : 'Player 2'}${p2Ready ? ' <span style="color:var(--hull-good);font-size:9px;">✓ READY</span>' : ''}</div>
@@ -7463,7 +7543,7 @@ function renderSetupOverlay() {
             </select>
             ${secondaryPickers('f2')}
             <button class="btn" data-import-fleet="f2" style="width:100%;margin-top:5px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f2 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
-            ${(state.importedFleets&&state.importedFleets.f2)||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2) ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} SETUP / VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
+            ${state.fleetChoices?.f2 ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} ${state.importedFleets?.f2||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
           </div>
         </div>
         <div style="font-size:9px;color:var(--text-mute);margin:-4px 0 10px;text-align:center;">Red and Blue deployment sides are assigned randomly when you confirm.</div>
@@ -7592,6 +7672,8 @@ function renderSetupOverlay() {
       state.payloadLinks[which] = {};
       // Clear any imported fleet when the dropdown is changed manually
       if (state.importedFleets) state.importedFleets[which] = null;
+      // Rebuild fleets so groups and activeFleets reflect the new faction immediately.
+      rebuildFleets();
       // Auto-set colour to faction default when a fleet is chosen; pick random free colour if default is taken.
       if (sel.value && FACTION_COLORS[sel.value]) {
         state.playerColors = state.playerColors || { f1: null, f2: null };
@@ -7656,6 +7738,20 @@ function renderSetupOverlay() {
       openFleetView(btn.dataset.viewFleet);
     });
   });
+  // Hotseat: single button fires both readySetup intents.
+  const hsReadyBtn = overlay.querySelector('#btn-hotseat-ready');
+  if (hsReadyBtn) {
+    hsReadyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state.fleetChoices.f1 || !state.fleetChoices.f2) { flashLaunchMsg('Select both fleets first'); return; }
+      if (!state.scenario || ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k])) {
+        flashLaunchMsg('Select all scenario options first'); return;
+      }
+      dispatch({ type: 'readySetup', side: 'player1' });
+      dispatch({ type: 'readySetup', side: 'player2' });
+    });
+  }
+  // Online: per-side ready buttons.
   overlay.querySelectorAll('[data-ready-setup]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -7694,8 +7790,8 @@ function renderSetupOverlay() {
   }
   const exitBtn = overlay.querySelector('#exit-to-menu');
   if (exitBtn) exitBtn.addEventListener('click', () => {
-    overlay.remove();
-    showModeSelector();
+    showModeSelector(); // appends mode selector overlay first
+    overlay.remove();   // then removes setup overlay — no visible gap
   });
 }
 
@@ -8082,6 +8178,10 @@ function renderTopbarControls() {
 
 
 function renderAll(localOnly = false) {
+  // Remove the startup cover on the first render — by now the setup overlay
+  // is already in the DOM, so nothing flashes underneath.
+  const _cover = document.getElementById('app-cover');
+  if (_cover) _cover.remove();
   // Wrap ALL rendering in try/catch so the relay always fires even if a render
   // function throws — a stuck _netReceiving=true would silence all relay.
   try {
@@ -8649,11 +8749,20 @@ function _handle3dClick(e) {
         if (!_gLBest) { flashLaunchMsg('Click a chained Voidgate'); return; }
         if (gateRemaining(_gLBest.ship, _gLBest.def) <= 0) { flashLaunchMsg('That Voidgate has no Gateship value left'); return; }
         const _gLLayer = _gLBest.ship.layer || 'orbit';
-        const _gLReachable = (state.scenarioData.dropsites || []).some(d => {
+        const _gLAllDs = state.scenarioData.dropsites || [];
+        const _gLReachable = _gLAllDs.some(d => {
           const dl = d.base.layer === 'Atmosphere' ? 'atmosphere' : 'orbit';
           return dl === _gLLayer && Math.hypot(inchToPx(d.x) - _gLBest.x, inchToPx(d.y) - _gLBest.y) <= _gLGATEPX + 2;
         });
-        if (!_gLReachable) { flashLaunchMsg('No same-layer dropsite within 3" of that Voidgate'); return; }
+        if (!_gLReachable) {
+          const _gLWrongLayer = _gLAllDs.some(d =>
+            Math.hypot(inchToPx(d.x) - _gLBest.x, inchToPx(d.y) - _gLBest.y) <= _gLGATEPX + 2
+          );
+          flashLaunchMsg(_gLWrongLayer
+            ? `Voidgate is in ${_gLLayer} — nearby Dropsite is on a different layer`
+            : 'No Dropsite within 3" of that Voidgate');
+          return;
+        }
         dispatch({ type: 'selectGate', gid: L.gid, si: L.si, gateSel: { x: _gLBest.x, y: _gLBest.y, si: _gLBest.si, gid: _gLBest.def.id, layer: _gLLayer } });
         flashLaunchMsg('Voidgate selected — click a dropsite within 3"');
         return;
@@ -8918,8 +9027,8 @@ function _handle3dClick(e) {
   })();
 
   // Dropsite selection — project onto orbit (station) or ground (city) plane and pick nearest.
-  // Suppressed during arrival/deployment placement and while a ship is ready to move.
-  if (!_inArrivalMode && !_inMoveMode && state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
+  // Suppressed during arrival/deployment placement, while a ship is ready to move, and during payload cell placement.
+  if (!_inArrivalMode && !_inMoveMode && !state.payloadDetach && state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
     const dss = state.scenarioData.dropsites;
     let bestDs = null, bestDist = Infinity;
     const HIT_PX = 8 * INCH; // generous radius — cities/stations are large and camera angle shifts projection
@@ -9268,13 +9377,14 @@ function init3d() {
   _3d = { renderer, scene, camera, controls, dyn, animId, ro };
 
   // Interaction: disambiguate click from OrbitControls drag by checking pointer delta.
-  let _pdPos = null;
+  let _pdPos = null, _pdDelta = 0;
   canvas.addEventListener('pointerdown', e => { _pdPos = { x: e.clientX, y: e.clientY }; });
   canvas.addEventListener('pointerup', e => {
     if (!_pdPos) return;
     const dx = e.clientX - _pdPos.x, dy = e.clientY - _pdPos.y;
+    _pdDelta = Math.hypot(dx, dy);
     _pdPos = null;
-    if (Math.hypot(dx, dy) < 5) _handle3dClick(e);
+    if (_pdDelta < 5) _handle3dClick(e);
   });
   canvas.addEventListener('pointermove', _handle3dMousemove);
   canvas.addEventListener('pointerleave', () => {
@@ -9282,6 +9392,8 @@ function init3d() {
   });
   canvas.addEventListener('contextmenu', e => {
     e.preventDefault();
+    if (_pdDelta >= 5) { _pdDelta = 0; return; } // right-drag pan — don't cancel
+    _pdDelta = 0;
     if (state.phase === 'scenery' && state.sceneryPlace) {
       const sp = state.sceneryPlace;
       if (sp.pending) { sp.pending = null; sp.angle = 0; state.hoverPoint = null; renderAll(true); }
@@ -9311,9 +9423,12 @@ function init3d() {
     if (state.assetMove) { state.assetMove = null; renderAll(true); return; } // deselect is local-only
     if (state.extracting) { state.extracting = null; flashLaunchMsg('Extract cancelled'); renderAll(); return; }
     if (state.featureAttack) { state.featureAttack = null; flashLaunchMsg('Targeting cancelled'); renderAll(true); return; }
-    if (state.aiming || state.vectoredSecondMove) {
-      state.aiming = null; state.vectoredSecondMove = null; state.hoverPoint = null; renderAll(); return;
+    if (state.aiming) {
+      if (state.aiming.mode === 'course_change') { dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si }); }
+      else { state.aiming = null; state.hoverPoint = null; renderAll(); }
+      return;
     }
+    if (state.vectoredSecondMove) { dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid }); return; }
     if (state.battalionDeploy) { state.battalionDeploy = null; renderAll(); return; }
     if (state.payloadDetach) { state.payloadDetach = null; flashLaunchMsg('Detach cancelled'); renderAll(true); return; }
     if (state.payloadReattach) { state.payloadReattach = null; flashLaunchMsg('Reattach cancelled'); renderAll(); return; }
@@ -9328,7 +9443,7 @@ function init3d() {
       const _rTrail = _rGrp && (_rGrp.moveTrail || []);
       const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
       if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
-      else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
+      else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(true); }
       return;
     }
   });
@@ -9712,6 +9827,56 @@ function _3dDashedCircle(cx, cz, r, y, color, opacity, dashSize, gapSize) {
   return line;
 }
 
+// Render a movement cone (fan shape) at world height wy.
+function _3dMoveCone(group, cx, cz, headingDeg, minR, maxR, turnDeg, wy, color, fillOpacity, strokeOpacity) {
+  const half  = Math.max(0.5, turnDeg);
+  const a1    = (headingDeg - half) * Math.PI / 180;
+  const a2    = (headingDeg + half) * Math.PI / 180;
+  const steps = Math.max(8, Math.ceil(Math.abs(a2 - a1) * 16));
+
+  const shape = new THREE.Shape();
+  if (minR > 0) {
+    shape.moveTo(cx + Math.cos(a1) * minR, cz + Math.sin(a1) * minR);
+    shape.lineTo(cx + Math.cos(a1) * maxR, cz + Math.sin(a1) * maxR);
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; shape.lineTo(cx + Math.cos(a) * maxR, cz + Math.sin(a) * maxR); }
+    shape.lineTo(cx + Math.cos(a2) * minR, cz + Math.sin(a2) * minR);
+    for (let i = steps; i >= 0; i--) { const a = a1 + (a2 - a1) * i / steps; shape.lineTo(cx + Math.cos(a) * minR, cz + Math.sin(a) * minR); }
+  } else {
+    shape.moveTo(cx, cz);
+    shape.lineTo(cx + Math.cos(a1) * maxR, cz + Math.sin(a1) * maxR);
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; shape.lineTo(cx + Math.cos(a) * maxR, cz + Math.sin(a) * maxR); }
+    shape.closePath();
+  }
+  const fillGeo = new THREE.ShapeGeometry(shape, steps);
+  fillGeo.rotateX(Math.PI / 2);
+  fillGeo.translate(0, wy, 0);
+  group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: fillOpacity, side: THREE.DoubleSide, depthWrite: false })));
+
+  const outPts = [];
+  if (minR > 0) {
+    outPts.push(new THREE.Vector3(cx + Math.cos(a1) * minR, wy, cz + Math.sin(a1) * minR));
+    outPts.push(new THREE.Vector3(cx + Math.cos(a1) * maxR, wy, cz + Math.sin(a1) * maxR));
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; outPts.push(new THREE.Vector3(cx + Math.cos(a) * maxR, wy, cz + Math.sin(a) * maxR)); }
+    outPts.push(new THREE.Vector3(cx + Math.cos(a2) * maxR, wy, cz + Math.sin(a2) * maxR));
+    outPts.push(new THREE.Vector3(cx + Math.cos(a2) * minR, wy, cz + Math.sin(a2) * minR));
+    for (let i = steps; i >= 0; i--) { const a = a1 + (a2 - a1) * i / steps; outPts.push(new THREE.Vector3(cx + Math.cos(a) * minR, wy, cz + Math.sin(a) * minR)); }
+    outPts.push(outPts[0]);
+  } else {
+    outPts.push(new THREE.Vector3(cx, wy, cz));
+    outPts.push(new THREE.Vector3(cx + Math.cos(a1) * maxR, wy, cz + Math.sin(a1) * maxR));
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; outPts.push(new THREE.Vector3(cx + Math.cos(a) * maxR, wy, cz + Math.sin(a) * maxR)); }
+    outPts.push(new THREE.Vector3(cx, wy, cz));
+  }
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(outPts), new THREE.LineBasicMaterial({ color, transparent: true, opacity: strokeOpacity })));
+
+  // Forward centre line
+  const fwdA = headingDeg * Math.PI / 180;
+  group.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(cx, wy, cz), new THREE.Vector3(cx + Math.cos(fwdA) * (maxR + 4), wy, cz + Math.sin(fwdA) * (maxR + 4))]),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: strokeOpacity * 0.6 })
+  ));
+}
+
 // Render weapon arc wedge(s) for one weapon onto group at world Y = wy.
 // dimFactor scales fill/outline opacity for mode-2 enemy arcs.
 function _sync3dWeaponArc(group, ship, def, w, wy, dimFactor = 1) {
@@ -9776,14 +9941,16 @@ function _sync3dWeaponArc(group, ship, def, w, wy, dimFactor = 1) {
 
 // Main overlay pass: scan rings, weapon arcs, sig auras, coherency, launch radius.
 function _sync3dOverlays(group) {
-  const selGid = state.selectedGroupId;
+  // When no local selection, fall back to opponent's peerView so the movement
+  // overlay (coherency rings, sig auras) shows on both clients after applyShipOrder.
+  const selGid = state.selectedGroupId || (state.peerView && state.peerView.gid) || null;
   if (!selGid) return;
   const def = getDef(selGid);
   const grp = state.groups[selGid];
   if (!def || !grp) return;
 
   const sideColHex = def.side === 'player1' ? 0x4488ff : 0xff8844;
-  const selSi      = state.selectedShipIdx;
+  const selSi      = state.selectedGroupId ? state.selectedShipIdx : (state.peerView ? state.peerView.si : null);
   const selOrd     = effectiveOrder(def, grp, selSi);
   const movingActive = (selSi !== null && selOrd && ORDERS[selOrd] && ORDERS[selOrd].moveMax > 0)
     || (state.aiming && state.aiming.gid === selGid)
@@ -10063,6 +10230,31 @@ function _sync3dOverlays(group) {
       const _pdWy  = _3D_LAYER_Y[_pdShip.layer] ?? _3D_LAYER_Y.orbit;
       const _pdCol = _3dSideColor(getDef(state.payloadDetach.porterGid)?.side || 'player1');
       group.add(_3dDashedCircle(_pdShip.x - 288, _pdShip.y - 288, 3 * INCH, _pdWy, _pdCol, 0.70, 5, 3));
+    }
+  }
+
+  // Peer movement cone — opponent's selected ship when it hasn't moved yet.
+  // Mirrors the 2D peerView cone drawn in renderBoard() which is hidden in 3D mode.
+  if (_netSide && state.peerView && state.peerView.gid && state.peerView.gid !== state.selectedGroupId) {
+    const pGid = state.peerView.gid;
+    const pSi  = state.peerView.si;
+    const pLT  = state.peerView.layerToggle;
+    const pDef = getDef(pGid);
+    const pGrp = state.groups[pGid];
+    if (pDef && pGrp && pSi !== null) {
+      const pShip = pGrp.ships[pSi];
+      const pOrd  = effectiveOrder(pDef, pGrp, pSi);
+      if (pShip && !pShip.destroyed && !pShip.offTable && pOrd && ORDERS[pOrd] && ORDERS[pOrd].moveMax > 0 && !pShip.movedThisRound) {
+        const o    = ORDERS[pOrd];
+        const normalMaxR = effectiveMaxMovePx(pDef, pShip, pOrd);
+        const lm   = layerMove(normalMaxR, pShip, pLT);
+        const maxR = lm.maxPx;
+        let   minR = o.moveMin * pDef.thrust * INCH;
+        if (minR > maxR) minR = 0;
+        const pCol = pDef.side === 'player1' ? 0x4488ff : 0xff8844;
+        const pWy  = _3D_LAYER_Y[pShip.layer] ?? _3D_LAYER_Y.orbit;
+        _3dMoveCone(group, pShip.x - 288, pShip.y - 288, pShip.heading, minR, maxR, o.turnLimit || 0, pWy, pCol, 0.035, 0.20);
+      }
     }
   }
 }
@@ -11389,21 +11581,34 @@ function renderAimHint() {
   const board = document.querySelector('.board-wrap');
   let el = document.getElementById('aim-hint');
   if (el) el.remove();
-  let msg = '';
+  let msg = '', showEndMoveBtn = false;
   if (state.aiming) {
     if (state.aiming.mode === 'deploy') msg = 'Move mouse to aim · click to set facing (any angle)';
     else if (state.aiming.mode === 'vectored') msg = 'Vectored pivot — aim (±45°) · click to set, then move again';
-    else if (state.aiming.mode === 'course_change') msg = 'Course Change — bonus turn (±45°) · click to set facing';
+    else if (state.aiming.mode === 'course_change') { msg = 'Course Change — bonus turn (±45°) · click to set facing'; showEndMoveBtn = true; }
   } else if (state.vectoredSecondMove) {
-    msg = 'Vectored — click ahead to move with remaining thrust (no further turn) · right-click or press Esc to skip';
+    msg = 'Vectored — click ahead to use remaining thrust (no further turn)';
+    showEndMoveBtn = true;
   }
   if (!msg) return;
   el = document.createElement('div');
   el.id = 'aim-hint';
   el.className = 'deploy-hint';
   el.style.bottom = '12px';
-  el.innerHTML = `<span><b>${msg}</b></span>`;
+  const endMoveBtn = showEndMoveBtn
+    ? `<button class="hud-btn" id="end-move-btn" style="padding:3px 10px;white-space:nowrap;">END MOVE</button>`
+    : '';
+  el.innerHTML = `<span><b>${msg}</b></span>${endMoveBtn}`;
   board.appendChild(el);
+  if (showEndMoveBtn) {
+    document.getElementById('end-move-btn').addEventListener('click', () => {
+      if (state.vectoredSecondMove) {
+        dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid });
+      } else if (state.aiming && state.aiming.mode === 'course_change') {
+        dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si });
+      }
+    });
+  }
 }
 
 function renderFeatureAttackHUD() {
@@ -11811,10 +12016,10 @@ document.addEventListener('click', (e) => {
     if (def) flashLaunchMsg(`${def.name} returned off-table`);
     return;
   }
-  if (e.target.matches('[data-hold-position]')) {
-    const [gid, si] = e.target.dataset.holdPosition.split('|');
+  if (e.target.matches('[data-end-move]')) {
+    const [gid, si] = e.target.dataset.endMove.split('|');
     dispatch({ type: 'holdPosition', gid, si: parseInt(si) });
-    renderAll(); return;
+    return;
   }
   if (e.target.matches('[data-clear-trail]')) {
     const [gid, si] = e.target.dataset.clearTrail.split('|');
@@ -12287,11 +12492,20 @@ function resolveLaunchClick(e) {
       if (gateRemaining(best.ship, best.def) <= 0) { flashLaunchMsg('That Voidgate has no Gateship value left'); return false; }
       // Must be within 3" of at least one same-layer dropsite.
       const gLayer = best.ship.layer || 'orbit';
-      const reachable = (state.scenarioData.dropsites || []).some(d => {
+      const allDs = state.scenarioData.dropsites || [];
+      const reachable = allDs.some(d => {
         const dl = d.base.layer === 'Atmosphere' ? 'atmosphere' : 'orbit';
         return dl === gLayer && Math.hypot(inchToPx(d.x) - best.x, inchToPx(d.y) - best.y) <= GATE_REACH + 2;
       });
-      if (!reachable) { flashLaunchMsg('No same-layer dropsite within 3" of that Voidgate'); return false; }
+      if (!reachable) {
+        const wrongLayer = allDs.some(d =>
+          Math.hypot(inchToPx(d.x) - best.x, inchToPx(d.y) - best.y) <= GATE_REACH + 2
+        );
+        flashLaunchMsg(wrongLayer
+          ? `Voidgate is in ${gLayer} — nearby Dropsite is on a different layer`
+          : 'No Dropsite within 3" of that Voidgate');
+        return false;
+      }
       dispatch({ type: 'selectGate', gid: L.gid, si: L.si, gateSel: { x: best.x, y: best.y, si: best.si, gid: best.def.id, layer: gLayer } });
       flashLaunchMsg('Voidgate selected — now click a dropsite within 3"');
       return true;
@@ -12445,7 +12659,9 @@ function flashLaunchMsg(msg, success) {
   el = document.createElement('div');
   el.id = 'launch-msg';
   el.className = 'deploy-hint';
-  el.style.bottom = '44px';
+  el.style.bottom = 'auto';
+  el.style.top = '60px';
+  el.style.zIndex = '50';
   el.style.color = success ? 'var(--hull-good)' : 'var(--hull-warn)';
   el.innerHTML = `<span><b>${msg}</b></span>`;
   board.appendChild(el);
@@ -12520,11 +12736,15 @@ board.addEventListener('contextmenu', (e) => {
     renderAll();
     return;
   }
-  if (state.aiming || state.vectoredSecondMove) {
+  if (state.aiming) {
     e.preventDefault();
-    state.aiming = null;
-    state.vectoredSecondMove = null;
-    renderAll();
+    if (state.aiming.mode === 'course_change') { dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si }); }
+    else { state.aiming = null; renderAll(); }
+    return;
+  }
+  if (state.vectoredSecondMove) {
+    e.preventDefault();
+    dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid });
     return;
   }
   if (state.battalionDeploy) {
@@ -12576,7 +12796,7 @@ board.addEventListener('contextmenu', (e) => {
     const _rTrail = _rGrp && (_rGrp.moveTrail || []);
     const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
     if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
-    else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
+    else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(true); }
     return;
   }
 });
@@ -13489,6 +13709,13 @@ board.addEventListener('touchstart', (e) => {
 const _netParams = new URLSearchParams(location.search);
 const _netRoom   = (_netParams.get('room') || '').toUpperCase();
 const _netSide   = (_netParams.get('side') || '').toLowerCase(); // 'player1' | 'player2' | '' (hotseat)
+// Hotseat save room ID — generated once when the game moves past setup, persists for that session.
+let _hotseatRoomId = null;
+function _genId() { return Array.from({length:4}, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join(''); }
+function _hotseatSave() {
+  if (_netSide || !_hotseatRoomId || state.phase === 'setup') return;
+  fetch('/api/saves/hotseat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ roomId: _hotseatRoomId, state }) }).catch(() => {});
+}
 // Return the local player's board-side key ('player1' | 'player2').
 function _gs() { return _netSide; }
 let   _netWs            = null;
@@ -13579,6 +13806,7 @@ function _netApplyRemote(remoteState) {
     detector:          state.detector,              // local-only detector targeting cursor
     extracting:        state.extracting,            // local-only extract targeting cursor
     featureAttack:     state.featureAttack,          // local-only dropsite weapon targeting
+    peerView:          state.peerView,               // preserve opponent's view state through intent broadcasts
     // Preserve fromDropsite launches — committed via intent, must survive relay responses
     launching:         (state.launching && (state.launching.fromDropsite || state.launching.type === 'gate_dropship')) ? state.launching : (remoteState.launching || null),
     // Preserve the locally-selected dsId inside dropsiteActivation — it's UI-only
@@ -13717,6 +13945,10 @@ function dispatch(intent) {
   const side = (_netSide ? _gs() : null) || _intentSide(intent);
   if (!_isLegal(state, intent, side)) return;
   if (_netSide) {
+    // Apply targeting-UI intents locally even in online mode so two-click flows
+    // (voidgate select → dropsite select) work without waiting for the server round-trip.
+    const _optimisticLocal = ['selectGate', 'cancelLaunch', 'beginLaunch'];
+    if (_optimisticLocal.includes(intent.type)) { _apply(state, intent, rng); renderAll(); }
     if (_netWs && _netConnected) {
       console.log('%c[intent]', 'color:#4caf50;font-weight:bold', intent.type, intent);
       _netPendingIntent = true;
@@ -13727,8 +13959,11 @@ function dispatch(intent) {
   } else {
     _apply(state, intent, rng);
     renderAll();
+    // Generate a hotseat room ID the first time the game moves past setup.
+    if (!_hotseatRoomId && state.phase !== 'setup') _hotseatRoomId = _genId();
+    _hotseatSave();
     // Bug 4: after a ship action, auto-finish the activation if all ships have acted.
-    const autoFinishTriggers = ['moveShip', 'holdPosition', 'fireWeapons', 'launchAsset', 'surveySite'];
+    const autoFinishTriggers = ['moveShip', 'holdPosition', 'endVectoredMove', 'fireWeapons', 'launchAsset', 'surveySite'];
     if (autoFinishTriggers.includes(intent.type)) maybeAutoFinish(intent.gid);
   }
 }
@@ -13806,13 +14041,14 @@ function _intentSide(intent) {
 // ---------------------------------------------------------------------------
 
 async function showModeSelector() {
-  // Fetch saved games upfront; silently ignore errors (server may not be running).
-  let saves = [];
-  try {
-    const r = await fetch('/api/saves');
-    if (r.ok) saves = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
-  } catch {}
+  // Strip room/side/replay params from the URL without a page reload.
+  if (location.search) history.replaceState({}, '', location.pathname);
+  // Reset game state — the opaque overlay covers everything.
+  Object.assign(state, createState());
+  rebuildFleets();
 
+  // Append the overlay immediately so there is no gap between any outgoing
+  // overlay being removed and this one appearing.
   const overlay = document.createElement('div');
   overlay.id = 'mode-selector';
   overlay.className = 'setup-overlay';
@@ -13863,18 +14099,23 @@ async function showModeSelector() {
         </div>
       </div>`;
     } else if (view === 'saves') {
-      const rows = saves.map(s => `
+      const makeRow = s => `
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);line-height:1.5;">${fmtSave(s)}</div>
           <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="btn-primary" data-ms-resume="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;">▶ RESUME</button>
             <button class="btn" data-ms-replay="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;${!s.hasReplay ? 'opacity:0.35;cursor:not-allowed;' : ''}" ${!s.hasReplay ? 'disabled title="No replay data for this save"' : ''}>↺ REPLAY</button>
           </div>
-        </div>`).join('');
+        </div>`;
+      const sectionHdr = label => `<div style="font-size:9px;letter-spacing:0.1em;color:var(--text-mute);padding:4px 2px 2px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:2px;">${label}</div>`;
+      const hotseatSaves = saves.filter(s => s.isHotseat);
+      const onlineSaves  = saves.filter(s => !s.isHotseat);
+      const hsSection  = hotseatSaves.length ? sectionHdr('HOTSEAT') + hotseatSaves.map(makeRow).join('') : '';
+      const netSection = onlineSaves.length  ? sectionHdr('ONLINE')  + onlineSaves.map(makeRow).join('')  : '';
       html = `<div class="setup-card" style="max-width:440px;">
         <div class="setup-header"><h2 class="setup-title">SAVED GAMES</h2></div>
         <div class="setup-body" style="padding:16px;display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto;">
-          ${rows}
+          ${hsSection}${netSection}
         </div>
         <div class="setup-footer"><button class="btn" id="ms-back">← Back</button></div>
       </div>`;
@@ -13911,9 +14152,24 @@ async function showModeSelector() {
     wire(view);
   }
 
+  function dismiss() {
+    overlay.remove();
+  }
+
   function wire(view) {
     if (view === 'main') {
-      overlay.querySelector('#ms-hotseat').onclick = () => overlay.remove();
+      overlay.querySelector('#ms-hotseat').onclick = () => {
+        if (_netSide || _netParams.get('room') || _netParams.get('replay')) {
+          sessionStorage.setItem('startHotseat', '1');
+          location.href = location.pathname;
+          return;
+        }
+        dismiss();
+        _hotseatRoomId = null;
+        Object.assign(state, createState());
+        rebuildFleets();
+        renderAll();
+      };
       overlay.querySelector('#ms-host').onclick    = () => { render('hosting'); doHost(); };
       overlay.querySelector('#ms-join').onclick    = () => render('join');
       const savesBtn = overlay.querySelector('#ms-saves');
@@ -13921,9 +14177,22 @@ async function showModeSelector() {
     }
     if (view === 'saves') {
       overlay.querySelectorAll('[data-ms-resume]').forEach(btn => {
-        btn.onclick = () => {
+        btn.onclick = async () => {
           const id = btn.dataset.msResume;
           const meta = saves.find(s => s.roomId === id);
+          if (meta && meta.isHotseat) {
+            // Hotseat resume: restore state locally, no WebSocket needed.
+            btn.disabled = true; btn.textContent = '…';
+            try {
+              const save = await fetch(`/api/saves/${id}`).then(r => r.json());
+              _hotseatRoomId = id;
+              dismiss();
+              Object.assign(state, save.currentState);
+              rebuildFleets();
+              renderAll();
+            } catch (err) { alert('Could not load save: ' + err.message); btn.disabled = false; btn.textContent = '▶ RESUME'; }
+            return;
+          }
           render('resuming');
           doResume(id, meta);
         };
@@ -13935,7 +14204,7 @@ async function showModeSelector() {
           try {
             const data = await fetch(`/api/rooms/${id}/replay`).then(r => r.json());
             if (data.error) { alert(data.error); btn.disabled = false; btn.textContent = '↺ REPLAY'; return; }
-            overlay.remove();
+            dismiss();
             loadReplay(data);
           } catch (err) {
             alert('Could not load replay: ' + err.message);
@@ -14084,8 +14353,20 @@ async function showModeSelector() {
     }
   }
 
+  // Show with no saves first so there is no async gap between old and new overlay.
+  let saves = [];
   render('main');
+  wire('main');
   document.body.appendChild(overlay);
+
+  // Fetch saves in background and refresh if any are found.
+  try {
+    const r = await fetch('/api/saves');
+    if (r.ok) {
+      const fetched = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
+      if (fetched.length) { saves = fetched; render('main'); wire('main'); }
+    }
+  } catch {}
 }
 
 document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
@@ -14095,17 +14376,17 @@ document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
 // ---------------------------------------------------------------------------
 
 if (_netRoom && (_netSide === 'player1' || _netSide === 'player2')) {
-  // Online mode: connect — room/status badge is shown in the event log header.
+  // Online mode: connect — skip initial render, wait for server state broadcast.
   _netConnect();
 } else if (!_netRoom) {
-  // No URL params: show the mode selector before the game starts.
-  showModeSelector();
+  if (sessionStorage.getItem('startHotseat')) {
+    sessionStorage.removeItem('startHotseat');
+    renderAll(); // hotseat: go straight to setup
+  } else {
+    renderAll(); // render board behind mode selector before it appears
+    showModeSelector();
+  }
 }
-
-/* ==========================================================================
-   INITIAL RENDER
-   ========================================================================== */
-renderAll();
 
 </script>
 </body></html>

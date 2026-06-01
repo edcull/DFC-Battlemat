@@ -24,6 +24,7 @@ export async function saveRoom(room) {
     round:             room.state.round,
     playerNames:       room.state.playerNames,
     factions:          room.state.factions,
+    isHotseat:         room.isHotseat || false,
     playStartState:    room.playStartState,
     playStartRngState: room.playStartRngState,
     currentState:      structuredClone(room.state),
