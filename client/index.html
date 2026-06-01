@@ -43,6 +43,9 @@
     height: 100vh;
     gap: 0;
   }
+  /* Pin panels and board to row 3 so they always occupy the 1fr row even when
+     #replay-bar (display:none) is absent from the grid and the auto row collapses. */
+  .panel, .board-wrap { grid-row: 3; }
   /* During Setup the side panels are hidden; collapse their columns so the board
      area (and the centred scenario overlay) spans the full width. Panels keep
      visibility:hidden (not display:none) so the board stays in its centre track. */
@@ -1091,7 +1094,7 @@
   </aside>
 
   <main class="board-wrap">
-    <svg id="board" viewBox="0 0 576 576" preserveAspectRatio="xMidYMid meet"></svg>
+    <svg id="board" viewBox="0 0 576 576" preserveAspectRatio="xMidYMid meet" overflow="visible"></svg>
     <canvas id="board3d"></canvas>
     <div class="board-hud">
       <div class="hud-item" id="hud-active">SELECT A GROUP →</div>
@@ -1197,6 +1200,7 @@ import {
   resolveBattalionCombat as _resolveBattalionCombat,
   aegisValueForGroup as _aegisValueForGroup,
   surveyableDropsite as _surveyableDropsite, extractableDropsite as _extractableDropsite,
+  assessableDropsite as _assessableDropsite,
   objectiveForSide as _objectiveForSide, objAny as _objAny,
   eligibleEscort as _eligibleEscort, commandShipBonus as _commandShipBonus,
   sideHasCommsUplink as _sideHasCommsUplink, destroyFeature as _destroyFeature,
@@ -1403,6 +1407,7 @@ function resolveBattalionCombat()                          { _resolveBattalionCo
 function aegisValueForGroup(targetGid)                     { return _aegisValueForGroup(state, targetGid); }
 function surveyableDropsite(ship, side)                    { return _surveyableDropsite(state, ship, side); }
 function extractableDropsite(ship, side)                   { return _extractableDropsite(state, ship, side); }
+function assessableDropsite(ship, side)                    { return _assessableDropsite(state, ship, side); }
 function objectiveForSide(side)                            { return _objectiveForSide(state, side); }
 function objAny(key)                                       { return _objAny(state, key); }
 function eligibleEscort(tGid, tSi)                         { return _eligibleEscort(state, tGid, tSi); }
@@ -1481,12 +1486,13 @@ function renderEventLog() {
 
   const badge = _chatUnread > 0 ? `<span class="chat-unread">${_chatUnread}</span>` : '';
   const inSetup = state.phase !== 'play';
-  // During setup, force chat tab and default-expanded; event log tab is hidden
-  if (inSetup && _activeLogTab === 'log') _activeLogTab = 'chat';
+  // During setup (online only), force chat tab; in hotseat always use log tab.
+  if (!isOnline && _activeLogTab === 'chat') _activeLogTab = 'log';
+  if (isOnline && inSetup && _activeLogTab === 'log') _activeLogTab = 'chat';
   const expanded = inSetup ? _setupChatExpanded : _logExpanded;
   const tabBar = `<div class="log-tab-bar">
     ${netDot ? `<div style="display:flex;align-items:center;gap:4px;padding:0 7px;border-right:1px solid var(--border);">${netDot}</div>` : ''}
-    <button class="log-tab-btn${_activeLogTab === 'chat' ? ' active' : ''}" id="log-tab-chat">CHAT ${badge}</button>
+    ${isOnline ? `<button class="log-tab-btn${_activeLogTab === 'chat' ? ' active' : ''}" id="log-tab-chat">CHAT ${badge}</button>` : ''}
     ${inSetup ? '' : `<button class="log-tab-btn${_activeLogTab === 'log' ? ' active' : ''}" id="log-tab-log">EVENT LOG <span style="font-size:7.5px;color:var(--text-mute);">${(state.eventLog||[]).length}</span></button>`}
     <button class="log-tab-btn" id="log-expand" style="flex:0 0 auto;padding:4px 9px;margin-left:auto;" title="${expanded ? 'Collapse' : 'Expand'}">${expanded ? '▾' : '▴'}</button>
   </div>`;
@@ -1728,12 +1734,37 @@ function renderStaticScenery() {
                 fill="rgba(212,166,71,0.65)" letter-spacing="2">PLANETARY RING</text>`;
     }
   });
-  (state.scenarioData.largeObjects || []).forEach(obj => {
-    const cx = inchToPx(obj.x), cy = inchToPx(obj.y), r = inchToPx(obj.diameter / 2);
-    html += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#4a5560"
-              stroke="#7a8a94" stroke-width="1.2"/>`;
-    html += `<circle cx="${cx}" cy="${cy}" r="${r * 0.4}" fill="#5a6670"/>`;
+  // Large objects — Moonskipper overrides position from state.moonPos; Moonswipe from state.moonswipe.positions.
+  const _isMoonSkipper = state.scenario && state.scenario.layout === 'se1_moonskipper';
+  const _isMoonSwipe = state.scenario && state.scenario.layout === 'se1_moonswipe';
+  const _largeObjs = (state.scenarioData.largeObjects || []).map((obj, i) => {
+    if (_isMoonSkipper && i === 0 && state.moonPos) return { ...obj, x: state.moonPos.x, y: state.moonPos.y };
+    if (_isMoonSwipe && state.moonswipe && state.moonswipe.positions[i]) return { ...obj, x: state.moonswipe.positions[i].x, y: state.moonswipe.positions[i].y };
+    return obj;
   });
+  _largeObjs.forEach((obj, i) => {
+    const cx = inchToPx(obj.x), cy = inchToPx(obj.y), r = inchToPx(obj.diameter / 2);
+    const isSelected = _isMoonSwipe && state.moonswipe && state.moonswipe.selected === i;
+    const isMoved = _isMoonSwipe && state.moonswipe && state.moonswipe.moved.includes(i);
+    // Solid base fill, then radial highlights for depth.
+    html += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${isMoved ? '#3a5060' : '#5a6878'}" stroke="${isSelected ? 'rgba(255,220,40,0.9)' : '#8a9aaa'}" stroke-width="${isSelected ? 2.5 : 1.5}"/>`;
+    html += `<circle cx="${cx - r*0.2}" cy="${cy - r*0.2}" r="${r * 0.55}" fill="#6a7888" opacity="0.7"/>`;
+    html += `<circle cx="${cx - r*0.3}" cy="${cy - r*0.3}" r="${r * 0.22}" fill="#8a9aaa" opacity="0.4"/>`;
+    if (isSelected) html += `<circle cx="${cx}" cy="${cy}" r="${r + inchToPx(6)}" fill="none" stroke="rgba(255,220,40,0.35)" stroke-width="1" stroke-dasharray="4 3" pointer-events="none"/>`;
+    if (_isMoonSwipe && !isMoved && !state.moonswipe?.done) html += `<text x="${cx}" y="${cy + r + 9}" font-family="var(--mono)" font-size="6" fill="rgba(255,220,40,0.7)" text-anchor="middle" pointer-events="none">MOVE</text>`;
+  });
+  // Moonbreaker: render expanding cloud when moon is broken.
+  if (state.scenario && state.scenario.layout === 'se1_moonbreaker' && state.moonBrokenRound != null) {
+    const roundsAfterBreak = (state.round || 1) - state.moonBrokenRound - 1;
+    const cloudDiam = 12 + 6 * Math.max(0, roundsAfterBreak);
+    const ccx = inchToPx(24), ccy = inchToPx(24), cr = inchToPx(cloudDiam / 2);
+    html += `<circle cx="${ccx}" cy="${ccy}" r="${cr}" fill="rgba(120,180,230,0.10)"
+              stroke="rgba(150,200,240,0.8)" stroke-width="1.2" stroke-dasharray="4 3"
+              pointer-events="none"/>`;
+    html += `<text x="${ccx}" y="${ccy - cr - 3}" font-family="var(--mono)" font-size="6.5" font-weight="700"
+              fill="rgba(150,200,240,0.85)" text-anchor="middle" stroke="var(--bg)" stroke-width="2" paint-order="stroke"
+              pointer-events="none">MICROMETEOR ${cloudDiam}"</text>`;
+  }
   const sceneryPiece = (s, ghost) => {
     const cx = inchToPx(s.x), cy = inchToPx(s.y);
     const w = inchToPx(6), h = inchToPx(3);
@@ -1772,6 +1803,57 @@ function renderStaticScenery() {
         `<circle cx="${state.hoverPoint.x}" cy="${state.hoverPoint.y}" r="5" fill="none" stroke="var(--hull-crit)" stroke-width="1.5"/>`;
     }
   }
+
+  // Focal point rings (scenario-defined, e.g. RSE 8" station zones).
+  const _lay = state.scenario && state.scenario.layout && LAYOUTS[state.scenario.layout];
+  if (_lay && _lay.focalPoints) {
+    _lay.focalPoints.forEach(fp => {
+      if (fp.diameter != null) {
+        const cx = inchToPx(fp.x), cy = inchToPx(fp.y), r = inchToPx(fp.diameter / 2);
+        html += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="rgba(255,210,60,0.04)"
+                  stroke="rgba(255,210,60,0.55)" stroke-width="1" stroke-dasharray="5 4"
+                  pointer-events="none"/>`;
+        html += `<text x="${cx}" y="${cy - r - 3}" font-family="var(--mono)" font-size="6"
+                  fill="rgba(255,210,60,0.6)" text-anchor="middle" pointer-events="none">FOCAL ${fp.diameter}"</text>`;
+      }
+    });
+  }
+
+  // Dynamic debris fields (from station destruction).
+  (state.scenarioData.dynamicDebris || []).forEach(dd => {
+    const cx = inchToPx(dd.x), cy = inchToPx(dd.y), r = inchToPx(dd.diameter / 2);
+    html += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="rgba(225,120,90,0.12)"
+              stroke="rgba(235,140,100,0.9)" stroke-width="1.2" stroke-dasharray="4 3"
+              pointer-events="none"/>`;
+    for (let i = 0; i < 6; i++) {
+      const dx = Math.sin(i * 1.9) * r * 0.55, dy = Math.cos(i * 1.4) * r * 0.45;
+      html += `<circle cx="${cx + dx}" cy="${cy + dy}" r="2" fill="rgba(235,140,100,0.6)" pointer-events="none"/>`;
+    }
+    html += `<text x="${cx}" y="${cy - r - 3}" font-family="var(--mono)" font-size="6" font-weight="700"
+              fill="rgba(235,140,100,0.9)" text-anchor="middle" stroke="var(--bg)" stroke-width="2" paint-order="stroke"
+              pointer-events="none">DEBRIS / FOCAL</text>`;
+  });
+
+  // Station–city power links (RSE: yellow dotted line while city has ≥1 power plant).
+  if (_lay && _lay.stationCityLinks && state.scenarioData.dropsites) {
+    Object.entries(_lay.stationCityLinks).forEach(([stId, ctId]) => {
+      const st = state.scenarioData.dropsites.find(d => d.id === stId);
+      const ct = state.scenarioData.dropsites.find(d => d.id === ctId);
+      if (!st || !ct || st.destroyed || ct.destroyed) return;
+      const hasPlant = (ct.features || []).some((fk, fi) => fk === 'power_plant' && !(ct.destroyedFeatures || []).includes(fi));
+      if (!hasPlant) return;
+      const x1 = inchToPx(st.x), y1 = inchToPx(st.y);
+      const x2 = inchToPx(ct.x), y2 = inchToPx(ct.y);
+      html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+                stroke="rgba(255,220,40,0.7)" stroke-width="1.2" stroke-dasharray="6 4"
+                pointer-events="none"/>`;
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      html += `<text x="${mx}" y="${my - 4}" font-family="var(--mono)" font-size="5.5"
+                fill="rgba(255,220,40,0.75)" text-anchor="middle" stroke="var(--bg)" stroke-width="2" paint-order="stroke"
+                pointer-events="none">BS 5+</text>`;
+    });
+  }
+
   return html;
 }
 
@@ -2453,7 +2535,7 @@ function renderDropsiteDetail(ds) {
   </div>`;
 
   // When this Dropsite is being activated by the controlling side, its Feature cards
-  // gain ENGAGE / LAUNCH buttons (added inline below) and a Finish button at the bottom.
+  // gain targeting hints / LAUNCH buttons (added inline below) and a Finish button at the bottom.
   const daActive = state.dropsiteActivation && state.dropsiteActivation.dsId === ds.id;
   const daSide = daActive ? state.dropsiteActivation.side : null;
 
@@ -2552,7 +2634,7 @@ function renderDropsiteDetail(ds) {
             <div class="weapon-stats">${w.scan} scan · Att ${w.att} · Lock ${w.lock} · Dmg ${w.dmg} · ${w.type}</div>
             ${w.special && w.special !== '—' ? `<div class="weapon-special">${w.special}</div>` : ''}
             ${aiming ? `<div class="weapon-special" style="color:var(--hull-crit)">Click an enemy ship in range · right-click cancels</div>`
-              : wpnClickable ? `<div class="weapon-special" style="color:var(--text-mute)">Click to ENGAGE ▸ then click a target ship</div>` : ''}
+              : wpnClickable ? `<div class="weapon-special" style="color:var(--text-mute)">Click to target 🎯 then click an enemy ship</div>` : ''}
           </div>`;
         }
         if (f.launch && f.launch.length) {
@@ -2932,6 +3014,29 @@ function renderDetail() {
     </div>
   `;
 
+  // Orbital Decay tokens — shown only in orbital decay scenarios, per selected ship.
+  const _odLay = state.scenario && state.scenario.layout;
+  const _isOdScen = _odLay === 'se1_one_with_almost_nothing' || _odLay === 'se1_almost_nothing_at_all';
+  if (_isOdScen && state.selectedShipIdx !== null) {
+    const _odShip = grp.ships[state.selectedShipIdx];
+    if (_odShip && !_odShip.destroyed) {
+      const _odN = _odShip.orbitalDecayTokens || 0;
+      statsHTML += `
+        <div class="panel-section">
+          <div class="spike-row">
+            <span class="label" style="color:rgba(150,200,240,0.9)">☢ Orbital Decay</span>
+            <div class="spike-controls">
+              ${!isOpponent ? `<button class="spike-btn" data-od-d="${gid}" data-od-si="${state.selectedShipIdx}" style="color:rgba(150,200,240,0.9)">−</button>` : ''}
+              <div class="spike-val ${_odN > 0 ? 'warn' : ''}" style="${_odN > 0 ? 'color:rgba(150,200,240,1)' : ''}">${_odN}</div>
+              ${!isOpponent ? `<button class="spike-btn" data-od-u="${gid}" data-od-si="${state.selectedShipIdx}" style="color:rgba(150,200,240,0.9)">+</button>` : ''}
+            </div>
+          </div>
+          ${_odN > 0 ? `<div style="font-size:8.5px;color:rgba(150,200,240,0.7);margin-top:2px;">${_odN}× D3 dmg at end of activation${def.tonnage === 'C' ? ' (Colossal: 2D3 each)' : ''}</div>` : ''}
+        </div>
+      `;
+    }
+  }
+
   // Crippling effects pane — shown when the selected ship has active effects.
   {
     const _cSi  = state.selectedShipIdx;
@@ -3211,6 +3316,31 @@ function renderDetail() {
           <button class="btn-finish-act" ${surveyMoveOk ? `data-survey="${state.selectedGroupId}|${state.selectedShipIdx}|${near.id}" style="background:linear-gradient(180deg,#3a7a8a 0%,#2a5a68 100%);border-color:#4a8a9a;color:#fff;"` : 'disabled style="opacity:0.5;"'}>⌖ SURVEY ${near.base.name}</button>
           <div class="weapon-special" style="color:var(--text-mute)">${surveyMoveOk ? 'Forgoes attacking/launching this round.' : 'Move first.'}</div>
         </div>`;
+      }
+    }
+  }
+
+  // Assess action: Capital Ship on GQ within 6" of an eligible Dropsite (Assess objective).
+  let assessHTML = '';
+  {
+    const selShip = state.selectedShipIdx !== null ? grp.ships[state.selectedShipIdx] : null;
+    if (objectiveForSide(def.side) === 'assess' && selShip && !selShip.destroyed && !selShip.offTable
+        && isCapital(def) && state.phase === 'play' && !isOpponent) {
+      const eff = effectiveOrder(def, grp, state.selectedShipIdx);
+      if (eff === 'GQ') {
+        const near = assessableDropsite(selShip, def.side);
+        if (near) {
+          const acted = selShip.firedThisActivation || (selShip.launchedThisRound > 0) || selShip.hasAssessed;
+          const moveOk = selShip.movedThisRound || !(ORDERS[eff] || {}).moveMax;
+          const sr = near.siteRules || [];
+          const zone = state.deployZone && state.deployZone[def.side];
+          const vpNote = (zone && sr.includes(`double_assess_${zone}`)) ? '2 VP' : '1 VP';
+          assessHTML = `<div class="panel-section">
+            <div class="panel-title">Assess</div>
+            <button class="btn-finish-act" ${(!acted && moveOk) ? `data-assess="${state.selectedGroupId}|${state.selectedShipIdx}|${near.id}" style="background:linear-gradient(180deg,#5a3a8a 0%,#3a1a68 100%);border-color:#7a5aaa;color:#fff;"` : 'disabled style="opacity:0.5;"'}>⌖ ASSESS ${near.base.name} (${vpNote})</button>
+            <div class="weapon-special" style="color:var(--text-mute)">${acted ? 'Already acted.' : !moveOk ? 'Move first.' : 'Cannot attack or launch assets this activation.'}</div>
+          </div>`;
+        }
       }
     }
   }
@@ -3544,7 +3674,7 @@ function renderDetail() {
     }
   }
 
-  div.innerHTML = statsHTML + deployPromptHTML + deployGateHTML + ordersHTML + formationHTML + weaponsHTML + surveyHTML + extractHTML + launchHTML + payloadHTML + shipsHTML + moveHTML;
+  div.innerHTML = statsHTML + deployPromptHTML + deployGateHTML + ordersHTML + formationHTML + weaponsHTML + surveyHTML + assessHTML + extractHTML + launchHTML + payloadHTML + shipsHTML + moveHTML;
 }
 
 /* ==========================================================================
@@ -4739,6 +4869,8 @@ function renderAttackModal() {
         <div class="am-line"><b>${_bdsName}</b> — ${sr.hitsList.length} hit${sr.hitsList.length!==1?'s':''} · ${_svType} ${_svStr}</div>
         ${sr.primDice.length ? `<div class="am-line" style="font-size:9px;color:var(--text-mute)">City saves (${_svStr} each):</div>
           <div class="am-dice">${sr.primDice.map(d=>`<span class="am-die ${d.ok?'hit':'miss'}" title="vs ${d.sv}+">${d.r}</span>`).join('')}</div>` : `<div class="am-line" style="font-size:9px;color:var(--text-mute)">No saves (${_svType} —)</div>`}
+        ${sr.bsDice && sr.bsDice.length ? `<div class="am-line" style="font-size:9px;color:rgba(255,220,80,0.85)">Station BS (${sr.bsVal}+ while city has Power Plant):</div>
+          <div class="am-dice">${sr.bsDice.map(d=>`<span class="am-die ${d.ok?'hit':'miss'}">${d.r}</span>`).join('')}</div>` : ''}
         <div class="am-line"><b>${sr.unsaved}</b> unsaved → <b style="color:var(--hull-crit)">${sr.dmg} hull damage</b> · 1 battalion per hull point (collateral)</div>`;
       footer = isAttacker ? `<button class="btn" data-am-cancel="1">Abort</button>
         <button class="btn-primary ${sideClass==='shal'?'shal':''}" data-am-next="apply">Apply Bombardment Damage ▸</button>` : '';
@@ -7070,12 +7202,92 @@ function renderVPBreakdown() {
   overlay = document.createElement('div');
   overlay.id = 'vpbreak-overlay';
   overlay.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:480px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  // Kill Points preview block
+  let kpBlock = '';
+  if (objAny('kill_points')) {
+    const kpRow = (side) => {
+      const kp = state.score[side].kp;
+      const proj = Math.floor(kp / 500) * 2;
+      const col = `var(--${sideCssKey(side)})`;
+      return `<div style="display:flex;gap:8px;align-items:baseline;font-size:10px;padding:2px 0;">
+        <span style="color:${col};min-width:70px;font-weight:700;">${factionName(side)}</span>
+        <span style="flex:1;color:var(--text-dim);">${kp} Kill Points</span>
+        <b style="color:${col};">+${proj} VP projected</b>
+      </div>`;
+    };
+    kpBlock = `<div style="background:rgba(110,201,122,0.06);border:1px solid rgba(110,201,122,0.2);border-radius:5px;padding:7px 11px;margin-bottom:12px;">
+      <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">KILL POINTS (game end)</div>
+      ${kpRow('player1')}${kpRow('player2')}
+      <div style="font-size:9px;color:var(--text-mute);margin-top:3px;">+2 VP per 500 Kill Points at game end.</div>
+    </div>`;
+  }
+  // Assess status block
+  let assessBlock = '';
+  if (objAny('assess')) {
+    const dss = (state.scenarioData && state.scenarioData.dropsites) || [];
+    const assessRow = (side) => {
+      const assessed = (state.assessedDropsites && state.assessedDropsites[side]) || [];
+      const col = `var(--${sideCssKey(side)})`;
+      const names = assessed.map(id => { const d = dss.find(x => x.id === id); return d ? d.base.name : id; });
+      return `<div style="font-size:10px;padding:2px 0;">
+        <span style="color:${col};font-weight:700;">${factionName(side)}:</span>
+        <span style="color:var(--text-dim);">${names.length ? names.join(', ') : 'none yet'}</span>
+        <b style="color:${col};float:right;">${assessed.length} VP</b>
+      </div>`;
+    };
+    assessBlock = `<div style="background:rgba(90,58,138,0.08);border:1px solid rgba(122,90,170,0.3);border-radius:5px;padding:7px 11px;margin-bottom:12px;">
+      <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">ASSESS (dropsites assessed this game)</div>
+      ${assessRow('player1')}${assessRow('player2')}
+    </div>`;
+  }
+  // Focal Points live preview
+  let focalBlock = '';
+  const _fps = state.scenarioData && state.scenarioData.focalPoints;
+  if (_fps && _fps.length) {
+    const _FOCAL_HIGH = {L:1,M:4,H:7,C:11}, _FOCAL_LOW = {L:0,M:1,H:3,C:5};
+    const fpRows = _fps.map((fp, fi) => {
+      const special = fp.special || [];
+      const totals = {player1:0, player2:0};
+      Object.keys(state.groups).forEach(gid => {
+        const def = getDef(gid);
+        if (!def) return;
+        state.groups[gid].ships.forEach(ship => {
+          if (ship.destroyed || ship.offTable) return;
+          const zone = state.deployZone && state.deployZone[def.side];
+          if (zone && (special.includes('north') || special.includes('south')) && !special.includes(zone)) return;
+          const isCrippled = ship.hull <= ship.maxHull / 2;
+          const useLow = (special.includes('low_crippled') && isCrippled)
+                      || (zone && special.includes(`low_${zone}`))
+                      || (zone && special.includes(`low_${zone}_crippled`) && isCrippled);
+          const t = def.tonnage || 'L';
+          totals[def.side] += useLow ? (_FOCAL_LOW[t]||0) : (_FOCAL_HIGH[t]||1);
+        });
+      });
+      const label = fp.label || `Focal Point ${fi+1}`;
+      const max = Math.max(totals.player1, totals.player2);
+      const p1vp = totals.player1===max&&max>0?3:(totals.player1>0&&max>0&&totals.player1>=max/2?1:0);
+      const p2vp = totals.player2===max&&max>0?3:(totals.player2>0&&max>0&&totals.player2>=max/2?1:0);
+      return `<div style="font-size:10px;padding:2px 0;border-bottom:1px solid var(--border);margin-bottom:2px;">
+        <b style="color:var(--text-dim);">${label}</b>
+        <span style="float:right;color:var(--text-mute);">if scored now:</span>
+        <div style="display:flex;gap:12px;margin-top:2px;">
+          <span style="color:var(--ucm);">${factionName('player1')}: <b>${totals.player1}</b> val &#8594; <b>${p1vp} VP</b></span>
+          <span style="color:var(--shal);">${factionName('player2')}: <b>${totals.player2}</b> val &#8594; <b>${p2vp} VP</b></span>
+        </div>
+      </div>`;
+    }).join('');
+    focalBlock = `<div style="background:rgba(232,184,79,0.06);border:1px solid rgba(232,184,79,0.2);border-radius:5px;padding:7px 11px;margin-bottom:12px;">
+      <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">FOCAL POINTS (live ship values — scored R4 &amp; R6)</div>
+      ${fpRows}
+    </div>`;
+  }
   overlay.innerHTML = `
     <div class="setup-header"><h2 class="setup-title">VICTORY POINTS</h2>
       <div class="setup-sub">Round ${state.round} / 6 · VP decides the game (Kill Points break ties)</div></div>
     <div class="setup-body" style="overflow-y:auto;flex:1;">
       ${objBlock}
       ${secBlock}
+      ${kpBlock}${assessBlock}${focalBlock}
       <div style="display:flex;gap:18px;">${sideBlock('player1')}${sideBlock('player2')}</div>
     </div>
     <div class="setup-footer"><button class="btn-primary" id="vpbreak-close" style="width:100%;">CLOSE</button></div>`;
@@ -7493,6 +7705,7 @@ function renderSetupOverlay() {
   let overlay = document.getElementById('setup-overlay');
   if (overlay) overlay.remove();
   if (state.phase !== 'setup') return;
+  ensureMoonswipe();
 
   // Pre-fill player name from logged-in username (only if still at the default).
   if (currentUser?.username) {
@@ -7581,7 +7794,7 @@ function renderSetupOverlay() {
   // Raze / defender Protect); otherwise a single shared objective applies.
   const asym = !!scen.objectives;
   const objOptionList = (selKey) => `<option value="" ${!selKey?'selected':''}>— select —</option>` +
-    Object.keys(OBJECTIVES).map(k => { const o = OBJECTIVES[k]; const d6 = o.d6 === 0 ? '—' : o.d6; return `<option value="${k}" ${k===selKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${o.name}</option>`; }).join('');
+    Object.keys(OBJECTIVES).filter(k => !OBJECTIVES[k].bespoke || k === selKey).map(k => { const o = OBJECTIVES[k]; const d6 = o.d6 === 0 ? '—' : o.d6; return `<option value="${k}" ${k===selKey?'selected':''}>${d6==='—'?'':'['+d6+'] '}${o.name}</option>`; }).join('');
   const asymToggleRow = `<div class="scen-row full-width" style="grid-template-rows:auto;padding:6px 14px;">
       <label style="grid-column:1/-1;display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-dim);">
         <input type="checkbox" data-asym-toggle ${asym?'checked':''}> ⇄ Asymmetric scoring — each side has its own Objective
@@ -7598,14 +7811,14 @@ function renderSetupOverlay() {
     </div>` : '';
   const objectiveSection = (asym ? asymPickerRow : makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)) + asymToggleRow;
 
-  // ---- Two-tab layout: Standard scenarios vs Custom generation ----
+  // ---- Three-tab layout: Standard scenarios · Scenario Expansion 1 · Custom generation ----
   // Tab is shared (relayed) state so both clients stay on the same tab.
-  const setupTab = (state.setupTab === 'custom') ? 'custom' : 'standard';
+  const setupTab = ['custom','expansion'].includes(state.setupTab) ? state.setupTab : 'standard';
   const lockStyle = (payloadsLocked || anyReady) ? 'opacity:0.4;pointer-events:none;filter:grayscale(0.6);' : '';
   const lockAttr  = (payloadsLocked || anyReady) ? 'disabled' : '';
   const tabBtn = (key, label) => `<button data-setup-tab="${key}" style="flex:1;padding:8px 6px;font:inherit;font-size:11px;font-weight:700;letter-spacing:0.04em;cursor:pointer;background:none;border:none;border-bottom:2px solid ${setupTab===key?'var(--ucm)':'transparent'};color:${setupTab===key?'var(--ucm)':'var(--text-mute)'};">${label}</button>`;
   const tabsBar = `<div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);">
-      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('custom','⚙ GENERATE SCENARIO')}
+      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('expansion','⊕ SCENARIO EXPANSION 1')}${tabBtn('custom','⚙ CUSTOM / GENERATE')}
     </div>`;
 
   // Standard tab: dropdown + random button + a read-only summary of the chosen scenario
@@ -7640,6 +7853,67 @@ function renderSetupOverlay() {
         <button class="btn" data-preset="random" ${lockAttr} title="Apply a random standard scenario">⚄ RANDOM</button>
       </div>
       ${standardSummary()}
+    </div>`;
+
+  // Scenario Expansion 1 tab — behaves like the Standard tab (dropdown + RANDOM +
+  // read-only summary), driven by EXPANSION_PRESETS. The summary adds a Scenery row
+  // and a Special Rules note (several expansion effects are adjudicated manually).
+  const SE1_SCENARIOS = [
+    ['ready_salted_earth','Ready Salted Earth'], ['erupting_quarters','Erupting Quarters'],
+    ['latitudinal_lanes','Latitudinal Lanes'], ['lagrange_points','Lagrange Points'],
+    ['when_backfields_meet','When Backfields Meet'], ['very_important_moon','Very Important Moon'],
+    ['moonshot','Moonshot'], ['moonwreck','Moonwreck'], ['moonbreaker','Moonbreaker'],
+    ['moonguard','Moonguard'], ['moonswipe','Moonswipe'], ['moonskipper','Moonskipper'],
+    ['one_with_almost_nothing','One With (Almost) Nothing'], ['almost_nothing_at_all','(Almost) Nothing At All']
+  ];
+  // Special-rules briefings, keyed by layout. Shows per-scenario bespoke effects and
+  // whether they are engine-scored or still adjudicated manually.
+  const SE1_NOTES = {
+    se1_ready_salted_earth: 'Scenario Space Stations are Focal Points (range 8"); Ships below half Hull use Low Value. A destroyed Station leaves a 4" Debris Field that becomes a Focal Point. Each Station is paired with a Small City and has 5+ BS while that City keeps a Power Plant. <i>Focal-point VP and debris placement are engine-scored. Station 5+ BS is adjudicated manually.</i>',
+    se1_erupting_quarters: 'Each board quarter is a Focal Point. Friendly Crippled Ships, and friendly Ships in the board quarter containing your deployment zone, use their Low Value. <i>Focal-point VP is engine-scored at R4 &amp; R6.</i>',
+    se1_latitudinal_lanes: 'Each Dropsite is a Focal Point (range 6"). You may Assess the three Dropsites closest to your opponent. Ships within range of the three Dropsites closest to your own zone use Low Value. <i>Focal-point VP and Assess scoring are engine-scored.</i>',
+    se1_lagrange_points: 'Each Large Station is a Focal Point (range 8"); Crippled Ships use Low Value. <i>Focal-point VP and Kill Points are both engine-scored.</i>',
+    se1_when_backfields_meet: 'Asymmetric: Red scores Normal from blue &amp; unmarked Cities; Blue from red &amp; unmarked Cities. All players Assess; double from your own colour. Each player may Demolish their own colour. <i>Normal Scoring restriction, Assess, and Demolish-on-level are all engine-scored.</i>',
+    se1_very_important_moon: 'The Large Object (moon) is a Focal Point (range 6" from its edge). At game end, score 1 VP for each of your Groups on the table containing a Crippled Ship outside the Focal Point\'s range. <i>Engine-scored at game end.</i>',
+    se1_moonshot: 'Each Scenario Dropsite is a Focal Point (range 6") scoring Normal Scoring, in addition to Kill Points. <i>Focal-point VP and Kill Points are both engine-scored.</i>',
+    se1_moonwreck: 'Each Dropsite is a Focal Point (range 6"). You may Demolish the highlighted Dropsites in your opponent\'s board half. <i>Focal-point VP is engine-scored at R4 &amp; R6. Demolish VP is engine-scored on Ruin/Level.</i>',
+    se1_moonbreaker: 'Each yellow location on the moon is a separate Small City (no features). Control the majority of moon Dropsites at game end for Normal Scoring (engine-scored). Red may Demolish the yellow Dropsites; once all are Levelled the moon breaks apart and the central 12" becomes a Micrometeor Cloud (1K+1E hit each End Phase, with saves), widening 6"/round. <i>Moon breaking and cloud damage are engine-scored. Demolish VP is engine-scored.</i>',
+    se1_moonguard: 'Defender has 25% more points (game size unchanged). Each player picks one of Annihilate, Take Prizes or Decapitate as a bonus Secondary (select in setup below). It is scored independently at game end; duplicates must be completed separately. <i>Bonus secondary is engine-scored at game end.</i>',
+    se1_moonswipe: '2–4 players (modelled as 2). Each Dropsite is a Focal Point (range 6"). Before deployment, players alternate moving each Large Object up to 6" (not onto a City or Station). <i>Large-object repositioning: click moons in setup. Focal-point VP is engine-scored at R4 &amp; R6.</i>',
+    se1_moonskipper: 'The marked Space Stations closest to your opponent are Focal Points (range 6"). The moon tracks diagonally each End Phase; Ships in its 12" path are destroyed. <i>Moon movement, ship destruction, and focal-point VP are all engine-scored.</i>',
+    se1_one_with_almost_nothing: 'Only Orbit is used — ships cannot enter atmosphere. Orbital Decay tokens deal D3 damage per token (Colossal 2D3) at end of activation. +1 VP per enemy Admiral destroyed at game end, in addition to Kill Points. <i>Decay token damage, Admiral VP, and Kill Points are engine-scored. Token assignment is manual.</i>',
+    se1_almost_nothing_at_all: 'Only Orbit is used — ships cannot enter atmosphere. Orbital Decay tokens deal D3 damage per token (Colossal 2D3) at end of activation. Your opponent\'s board quarter is a Focal Point; friendly Crippled Ships use Low Value. <i>Decay token damage and Focal Points scoring are engine-scored. Token assignment is manual.</i>'
+  };
+  const expansionSummary = () => {
+    if (!scen.deployment && !scen.approach && !scen.objective) {
+      return `<div class="scen-extra-note" style="text-align:center;color:var(--text-mute);">Pick an expansion scenario above, or roll a random one.</div>`;
+    }
+    const dep = scen.deployment ? DEPLOYMENTS[scen.deployment] : null;
+    const ap  = scen.approach ? APPROACHES[scen.approach] : null;
+    const objTitle = scen.objective ? OBJECTIVES[scen.objective].name : '';
+    const objSub = scen.objective ? OBJECTIVES[scen.objective].short : '';
+    const lay = scen.layout ? LAYOUTS[scen.layout] : null;
+    let scenerySub = '';
+    if (lay) {
+      const lo = (lay.largeObjects || []).length;
+      scenerySub = `${lay.scenery.micrometeor} Micrometeor Cloud${lay.scenery.micrometeor==1?'':'s'} · ${lay.scenery.dense} Debris Field${lay.scenery.dense==1?'':'s'}${lo?` · ${lo} Large Object${lo==1?'':'s'}`:''} · ${lay.dropsites.length} Dropsite${lay.dropsites.length==1?'':'s'}`;
+    }
+    const note = (scen.layout && SE1_NOTES[scen.layout]) ? `<div class="scen-extra-note"><b>Special Rules:</b> ${SE1_NOTES[scen.layout]}</div>` : '';
+    return sumRow('Deployment Type', dep ? dep.name : '', dep ? (dep.short || dep.desc) : '') +
+           sumRow('Approach', ap ? ap.name : '', cardSummary.approach()) +
+           sumRow('Scoring Objective', objTitle, objSub) +
+           (lay ? sumRow('Scenery &amp; Dropsites', lay.name, scenerySub) : '') +
+           note;
+  };
+  const expansionTab = `<div style="${lockStyle}">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+        <select class="scen-dropdown" data-exp-preset-select style="flex:1;" ${lockAttr} title="Apply a Scenario Expansion 1 scenario">
+          <option value="">⊕ Select expansion scenario…</option>
+          ${SE1_SCENARIOS.map(([k,n]) => `<option value="${k}"${scen.layout===`se1_${k}`?' selected':''}>${n}</option>`).join('')}
+        </select>
+        <button class="btn" data-exp-preset="random" ${lockAttr} title="Apply a random expansion scenario">⚄ RANDOM</button>
+      </div>
+      ${expansionSummary()}
     </div>`;
 
   // Custom tab: the full generation grid + RANDOMISE ALL.
@@ -7681,7 +7955,13 @@ function renderSetupOverlay() {
               ${Object.entries(PLAYER_COLORS).map(([k,c]) => { const taken = k === (state.playerColors&&state.playerColors.f2); return `<option value="${k}" ${(state.playerColors&&state.playerColors.f1)===k?'selected':''} ${taken?'disabled':''}>${c.label}</option>`; }).join('')}
             </select>
             ${secondaryPickers('f1')}
-            <button class="btn" data-import-fleet="f1" style="width:100%;margin-top:5px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f1 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
+            ${(state.scenario && state.scenario.layout === 'se1_moonguard') ? `
+              <div style="font-size:9px;color:rgba(255,220,40,0.8);margin-top:4px;margin-bottom:1px;letter-spacing:0.05em;">MOONGUARD BONUS SECONDARY</div>
+              <select class="fleet-dropdown" data-moonguard-sec="f1" style="margin-top:2px;font-size:9.5px;" ${f1Lock ? 'disabled' : ''}>
+                <option value="">— Bonus secondary —</option>
+                ${['annihilate','take_prizes','decapitate'].map(k => `<option value="${k}" ${(state.moonguardSecondaryChoice&&state.moonguardSecondaryChoice.f1)===k?'selected':''}>${SECONDARY_OBJECTIVES[k]?SECONDARY_OBJECTIVES[k].name:k}</option>`).join('')}
+              </select>` : ''}
+            <button class="btn" data-import-fleet="f1" style="width:100%;margin-top:5px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f1 ? '✏ EDIT IMPORT' : '≡ IMPORT LIST'}</button>
             ${state.fleetChoices?.f1 ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} ${state.importedFleets?.f1||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
           </div>
           <div class="faction-slot">
@@ -7696,18 +7976,38 @@ function renderSetupOverlay() {
               ${Object.entries(PLAYER_COLORS).map(([k,c]) => { const taken = k === (state.playerColors&&state.playerColors.f1); return `<option value="${k}" ${(state.playerColors&&state.playerColors.f2)===k?'selected':''} ${taken?'disabled':''}>${c.label}</option>`; }).join('')}
             </select>
             ${secondaryPickers('f2')}
-            <button class="btn" data-import-fleet="f2" style="width:100%;margin-top:5px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f2 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
+            ${(state.scenario && state.scenario.layout === 'se1_moonguard') ? `
+              <div style="font-size:9px;color:rgba(255,220,40,0.8);margin-top:4px;margin-bottom:1px;letter-spacing:0.05em;">MOONGUARD BONUS SECONDARY</div>
+              <select class="fleet-dropdown" data-moonguard-sec="f2" style="margin-top:2px;font-size:9.5px;" ${f2Lock ? 'disabled' : ''}>
+                <option value="">— Bonus secondary —</option>
+                ${['annihilate','take_prizes','decapitate'].map(k => `<option value="${k}" ${(state.moonguardSecondaryChoice&&state.moonguardSecondaryChoice.f2)===k?'selected':''}>${SECONDARY_OBJECTIVES[k]?SECONDARY_OBJECTIVES[k].name:k}</option>`).join('')}
+              </select>` : ''}
+            <button class="btn" data-import-fleet="f2" style="width:100%;margin-top:5px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f2 ? '✏ EDIT IMPORT' : '≡ IMPORT LIST'}</button>
             ${state.fleetChoices?.f2 ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} ${state.importedFleets?.f2||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
           </div>
         </div>
         <div style="font-size:9px;color:var(--text-mute);margin:-4px 0 10px;text-align:center;">Red and Blue deployment sides are assigned randomly when you confirm.</div>
+        ${(() => {
+          const ms = state.moonswipe;
+          if (!ms) return '';
+          const totalObjs = ms.positions.length;
+          const remaining = totalObjs - ms.moved.length;
+          if (ms.done) return `<div class="scen-extra-note" style="background:rgba(100,200,100,0.08);border-left-color:var(--hull-good);color:var(--hull-good);text-align:center;">✓ Large Objects repositioned — proceed when ready.</div>`;
+          const turnName = ms.turn === 'f1' ? (state.playerNames && state.playerNames.f1 || 'Player 1') : (state.playerNames && state.playerNames.f2 || 'Player 2');
+          const myTurn = !_netSide || (_netSide === 'player1' ? ms.turn === 'f1' : ms.turn === 'f2');
+          return `<div class="scen-extra-note" style="background:rgba(255,220,40,0.06);border-left-color:rgba(255,220,40,0.7);">
+            <b>MOONSWIPE — Move Large Objects</b><br>
+            <span style="color:rgba(255,220,40,0.85);">${turnName}</span>: click a moon to select, then click where to place it (max 6"). ${remaining} object${remaining!==1?'s':''} remaining.<br>
+            ${myTurn ? `<button class="btn" id="moonswipe-pass" style="margin-top:5px;font-size:9.5px;">Pass (skip move)</button>` : '<span style="color:var(--text-mute);font-size:9px;">Waiting for opponent…</span>'}
+          </div>`;
+        })()}
         ${payloadsLocked ? `<div class="scen-extra-note" style="background:rgba(255,181,71,0.08);border-left-color:var(--hull-warn);color:var(--hull-warn);text-align:center;">
           ${!bothFleetsSelected
             ? 'Select <b>both fleets</b> above before choosing a scenario.'
             : 'Complete fleet setup (admiral &amp; payload assignment) before choosing a scenario. Use <b>⚠ SETUP / VIEW FLEET</b> above.'}
         </div>` : ''}
         ${tabsBar}
-        ${setupTab === 'custom' ? customTab : standardTab}
+        ${setupTab === 'custom' ? customTab : setupTab === 'expansion' ? expansionTab : standardTab}
       </div>
       <div class="setup-footer">
         <button class="btn" id="exit-to-menu">← Back</button>
@@ -7737,7 +8037,7 @@ function renderSetupOverlay() {
   overlay.querySelectorAll('[data-setup-tab]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      state.setupTab = (btn.dataset.setupTab === 'custom') ? 'custom' : 'standard';
+      state.setupTab = ['custom','expansion'].includes(btn.dataset.setupTab) ? btn.dataset.setupTab : 'standard';
       state.scenario = { deployment: null, approach: null, layout: null, variant: null, objective: null };
       renderAll(); // relays in setup phase → opponent's view follows
     });
@@ -7780,6 +8080,41 @@ function renderSetupOverlay() {
       e.stopPropagation();
       const keys = Object.keys(SCEN_PRESETS);
       applyPreset(keys[Math.floor(Math.random() * keys.length)]);
+    });
+  });
+  // Scenario Expansion 1 presets — set every scenario row at once (no asymmetric objectives).
+  const EXPANSION_PRESETS = {
+    ready_salted_earth:      { deployment:'line',             approach:'all_imminent',           layout:'se1_ready_salted_earth',     variant:'none', objective:'demolish'     },
+    erupting_quarters:       { deployment:'from_corners',     approach:'all_imminent',           layout:'se1_erupting_quarters',      variant:'none', objective:'kill_points'  },
+    latitudinal_lanes:       { deployment:'line',             approach:'all_staggered',          layout:'se1_latitudinal_lanes',      variant:'none', objective:'assess'       },
+    lagrange_points:         { deployment:'midboard',         approach:'close_enough',           layout:'se1_lagrange_points',        variant:'none', objective:'kill_points'  },
+    when_backfields_meet:    { deployment:'table_corners',    approach:'all_backline',           layout:'se1_when_backfields_meet',   variant:'none', objective:'normal'       },
+    very_important_moon:     { deployment:'table_corners',    approach:'all_imminent',           layout:'se1_very_important_moon',    variant:'none', objective:'normal'       },
+    moonshot:                { deployment:'table_corners',    approach:'close_enough',           layout:'se1_moonshot',               variant:'none', objective:'kill_points'  },
+    moonwreck:               { deployment:'line',             approach:'column',                 layout:'se1_moonwreck',              variant:'none', objective:'normal'       },
+    moonbreaker:             { deployment:'attacker_defender',approach:'exp_attacker_staggered', layout:'se1_moonbreaker',            variant:'none', objective:'normal'       },
+    moonguard:               { deployment:'defender_edge',    approach:'exp_defender_imminent',  layout:'se1_moonguard',              variant:'none', objective:'normal'       },
+    moonswipe:               { deployment:'diagonal_corners', approach:'standoff',               layout:'se1_moonswipe',              variant:'none', objective:'normal'       },
+    moonskipper:             { deployment:'table_corners',    approach:'all_staggered',          layout:'se1_moonskipper',            variant:'none', objective:'normal'       },
+    one_with_almost_nothing: { deployment:'line',             approach:'all_staggered',          layout:'se1_one_with_almost_nothing',variant:'none', objective:'kill_points'  },
+    almost_nothing_at_all:   { deployment:'table_corners',    approach:'all_staggered',          layout:'se1_almost_nothing_at_all',  variant:'none', objective:'focal_points' }
+  };
+  const applyExpansionPreset = (key) => {
+    const preset = EXPANSION_PRESETS[key];
+    if (!preset) return;
+    const next = { ...state.scenario, ...preset };
+    delete next.objectives; // expansion presets use a single shared objective
+    state.scenario = next;
+    renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
+  };
+  overlay.querySelectorAll('[data-exp-preset-select]').forEach(sel => {
+    sel.addEventListener('change', (e) => { e.stopPropagation(); applyExpansionPreset(sel.value); });
+  });
+  overlay.querySelectorAll('[data-exp-preset="random"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const keys = Object.keys(EXPANSION_PRESETS);
+      applyExpansionPreset(keys[Math.floor(Math.random() * keys.length)]);
     });
   });
   // Picker dropdown — change (or clear) the chosen option for a scenario row.
@@ -7875,6 +8210,31 @@ function renderSetupOverlay() {
       netRelaySetup();
     });
   });
+  // Moonguard bonus secondary pickers.
+  overlay.querySelectorAll('[data-moonguard-sec]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      state.moonguardSecondaryChoice = state.moonguardSecondaryChoice || { f1: null, f2: null };
+      state.moonguardSecondaryChoice[sel.dataset.moonguardSec] = sel.value || null;
+      renderAll();
+      netRelaySetup();
+    });
+  });
+  // Moonswipe pass button.
+  const _msPassBtn = overlay.querySelector('#moonswipe-pass');
+  if (_msPassBtn) {
+    _msPassBtn.addEventListener('click', () => {
+      if (!state.moonswipe || state.moonswipe.done) return;
+      const ms = state.moonswipe;
+      // Find the next unmoved object and mark it as "moved in place" (no move).
+      const nextUnmoved = ms.positions.findIndex((_, i) => !ms.moved.includes(i));
+      if (nextUnmoved >= 0) ms.moved.push(nextUnmoved);
+      ms.selected = null;
+      if (ms.moved.length >= ms.positions.length) ms.done = true;
+      else ms.turn = ms.turn === 'f1' ? 'f2' : 'f1';
+      renderAll();
+      netRelaySetup();
+    });
+  }
   // Editable player name inputs.
   overlay.querySelectorAll('[data-player-name]').forEach(inp => {
     inp.addEventListener('input', () => {
@@ -8225,7 +8585,17 @@ function renderBrand() {
   const brandEl = document.querySelector('.brand');
   if (!brandEl) return;
   if (state.phase === 'setup') {
-    brandEl.innerHTML = `<span id="brand-red">DFC</span><span class="vs">VS</span><span class="shal-name" id="brand-blue">FLEET OPS</span>`;
+    const f1 = state.fleetChoices?.f1 && FACTIONS[state.fleetChoices.f1];
+    const f2 = state.fleetChoices?.f2 && FACTIONS[state.fleetChoices.f2];
+    if (f1 || f2) {
+      const c1 = PLAYER_COLORS[state.playerColors?.f1 || FACTION_COLORS[state.fleetChoices?.f1] || 'blue']?.hex || '#4ad6ff';
+      const c2 = PLAYER_COLORS[state.playerColors?.f2 || FACTION_COLORS[state.fleetChoices?.f2] || 'red']?.hex || '#ff5252';
+      const n1 = f1 ? f1.name.toUpperCase() : 'DFC';
+      const n2 = f2 ? f2.name.toUpperCase() : 'FLEET OPS';
+      brandEl.innerHTML = `<span id="brand-red" style="color:${c1}">${n1}</span><span class="vs">VS</span><span id="brand-blue" style="color:${c2}">${n2}</span>`;
+    } else {
+      brandEl.innerHTML = `<span id="brand-red">DFC</span><span class="vs">VS</span><span class="shal-name" id="brand-blue">FLEET OPS</span>`;
+    }
     return;
   }
   if (state.phase === 'play' && state.score) {
@@ -8327,6 +8697,7 @@ function renderAll(localOnly = false) {
     renderBrand();
     renderPhaseNav();
     renderTopbarControls();
+    renderUserChip();
     renderPanels();
     renderDetail();
     renderBoard();
@@ -8858,16 +9229,15 @@ function _handle3dClick(e) {
       state.hoverPoint = null;
       renderAll(true);
     } else {
-      // Second click: commit with the current aimed angle.
+      // Second click: dispatch server-authoritative placement.
       const _scAngle = headingToward(_sp.pending.x, _sp.pending.y, _scPt.x, _scPt.y);
-      state.scenarioData.placedScenery = state.scenarioData.placedScenery || [];
-      state.scenarioData.placedScenery.push({ type: _sp.type, x: _sp.pending.x / INCH, y: _sp.pending.y / INCH, angle: _scAngle });
+      const _scX = _sp.pending.x / INCH, _scY = _sp.pending.y / INCH, _scType = _sp.type;
       _sp.pending = null; _sp.angle = 0; state.hoverPoint = null;
-      // Switch type if quota for this type is filled.
-      const _scPlaced = state.scenarioData.placedScenery.filter(s => s.type === _sp.type).length;
-      if (_scPlaced >= ((state.scenarioData.sceneryTargets || {})[_sp.type] || 0))
-        _sp.type = _sp.type === 'micrometeor' ? 'dense' : 'micrometeor';
-      if (state.sceneryTurn) state.sceneryTurn = state.sceneryTurn === 'player1' ? 'player2' : 'player1';
+      // Advance local type display immediately for responsive UI.
+      const _scPlaced = (state.scenarioData.placedScenery || []).filter(s => s.type === _scType).length + 1;
+      if (_scPlaced >= ((state.scenarioData.sceneryTargets || {})[_scType] || 0))
+        _sp.type = _scType === 'micrometeor' ? 'dense' : 'micrometeor';
+      dispatch({ type: 'placeScenery', sceneryType: _scType, x: _scX, y: _scY, angle: _scAngle });
       renderAll();
     }
     return;
@@ -9207,82 +9577,14 @@ function _handle3dClick(e) {
       return; // suppress ship/dropsite selection during asset phase
     }
 
-    // Move the selected asset to the clicked point.
+    // Move the selected asset — server-authoritative via assetMove intent.
     const _aSel = (state.launchedAssets || []).find(x => x.id === state.assetMove.id);
     if (!_aSel) { state.assetMove = null; renderAll(); return; }
     if (_aSel.moved) return;
     if (_aSel.kind === 'mine') { flashLaunchMsg('Mines cannot move once launched'); state.assetMove = null; renderAll(); return; }
     const _apt = (_aSel.kind === 'torpedo') ? _aptGround : _aptOrbit;
     if (!_apt) return;
-    const _aThrPx = (_aSel._t2tRange ? _aSel._t2tRange : assetThrust(_aSel)) * INCH;
-
-    // Auto-move-and-lock for bombers / fire ships / torpedoes.
-    if (_aSel.kind === 'bomber' || _aSel.kind === 'fireship' || _aSel.kind === 'torpedo') {
-      const _aHitShip = enemyShipAtPoint(_aSel.side, _apt);
-      if (_aHitShip && (_aHitShip.ship.layer || 'orbit') !== 'atmosphere') {
-        const _aContact = 1 * INCH + shipBaseRadiusPx(_aHitShip.def);
-        const _aDist = Math.hypot(_aHitShip.ship.x - _aSel.x, _aHitShip.ship.y - _aSel.y);
-        let _aLx, _aLy;
-        if (_aDist <= _aContact) { _aLx = _aSel.x; _aLy = _aSel.y; }
-        else { const ux = (_aHitShip.ship.x - _aSel.x)/_aDist, uy = (_aHitShip.ship.y - _aSel.y)/_aDist; _aLx = _aHitShip.ship.x - ux*_aContact; _aLy = _aHitShip.ship.y - uy*_aContact; }
-        if (Math.hypot(_aLx - _aSel.x, _aLy - _aSel.y) > _aThrPx + 2) { flashLaunchMsg('Target out of move range'); return; }
-        const _aOx = _aSel.x, _aOy = _aSel.y;
-        _aSel._preMove = { x: _aSel.x, y: _aSel.y, t2tRange: _aSel._t2tRange };
-        _aSel.x = _aLx; _aSel.y = _aLy; _aSel.moved = true; _aSel._t2tRange = undefined;
-        const _aTn = _aHitShip.def.name + (_aHitShip.grp.ships.length > 1 ? ` #${_aHitShip.si + 1}` : '');
-        flashLaunchMsg(`${_aSel.kind} → base contact, locked onto ${_aTn}`, true);
-        applyAssetScenery(_aSel, _aOx, _aOy);
-        if (_aSel.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); }
-        else { dispatch({ type: 'assetLockTarget', assetId: _aSel.id, gid: _aHitShip.gid, si: _aHitShip.si }); }
-        state.assetMove = null;
-        afterAssetMove();
-        if (_aSel.count > 0 && state.assetActiveSide && !state.attackModal && state.launchedAssets.includes(_aSel)) {
-          dispatch({ type: 'selectAssetMove', assetId: _aSel.id, count: _aSel.count });
-        }
-        renderAll(); return;
-      }
-    }
-
-    if (Math.hypot(_apt.x - _aSel.x, _apt.y - _aSel.y) > _aThrPx + 2) { flashLaunchMsg('Out of move range'); return; }
-    const _aMoveCount = state.assetMove.count;
-    const _aOx2 = _aSel.x, _aOy2 = _aSel.y;
-    let _aMover;
-    if (_aMoveCount < _aSel.count) {
-      _aSel.count -= _aMoveCount;
-      _aMover = { id: 'a' + (state._assetId = (state._assetId||0)+1), kind: _aSel.kind, count: _aMoveCount, side: _aSel.side, x: _apt.x, y: _apt.y, moved: true };
-      state.launchedAssets.push(_aMover);
-    } else {
-      _aSel._preMove = { x: _aSel.x, y: _aSel.y, t2tRange: _aSel._t2tRange };
-      _aSel.x = _apt.x; _aSel.y = _apt.y; _aSel.moved = true; _aSel._t2tRange = undefined; _aMover = _aSel;
-    }
-    applyAssetScenery(_aMover, _aOx2, _aOy2);
-    if (_aMover.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); state.assetMove = null; afterAssetMove(); renderAll(); return; }
-    if (_aMover.kind === 'fighter') {
-      const _aEnemy = _aMover.side === 'player1' ? 'player2' : 'player1';
-      const _aFoe = state.launchedAssets.find(x => x.id !== _aMover.id && x.side === _aEnemy && Math.hypot(x.x - _aMover.x, x.y - _aMover.y) <= shipBaseRadiusPx({tonnage:'L'}));
-      if (_aFoe) {
-        const _aMb = _aMover.count, _aFb = _aFoe.count, _aFk = _aFoe.kind, _aRem = Math.min(_aMover.count, _aFoe.count);
-        _aMover.count -= _aRem; _aFoe.count -= _aRem;
-        state.launchedAssets = state.launchedAssets.filter(x => x.count > 0);
-        state.dogfightResult = { attackerSide: _aMover.side, foeSide: _aEnemy, foeKind: _aFk, attackerBefore: _aMb, attackerAfter: _aMover.count, foeBefore: _aFb, foeAfter: _aFoe.count, removed: _aRem };
-        state.assetMove = null; afterAssetMove(); renderAll(); return;
-      }
-    }
-    const _aMerge = state.launchedAssets.find(x => x.id !== _aMover.id && x.kind === _aMover.kind && x.side === _aMover.side && Math.hypot(x.x - _aMover.x, x.y - _aMover.y) <= shipBaseRadiusPx({tonnage:'L'}));
-    if (_aMerge) {
-      _aMerge.count += _aMover.count; _aMerge.moved = true;
-      state.launchedAssets = state.launchedAssets.filter(x => x.id !== _aMover.id);
-      flashLaunchMsg(`Combined into ${_aMerge.count} ${_aMerge.kind}s`, true);
-    } else {
-      flashLaunchMsg(`Moved ${_aMover.count} ${_aMover.kind}${_aMover.count>1?'s':''}`, true);
-    }
-    state.assetMove = null;
-    const _aMoverContact = _aMover.count > 0 && (_aMover.kind === 'bomber' || _aMover.kind === 'fireship' || _aMover.kind === 'torpedo') && enemyShipsInBaseContact(_aMover.side, _aMover.x, _aMover.y).length > 0;
-    const _aSideBefore = state.assetActiveSide, _aTypeBefore = state.assetPhase?.assetType;
-    afterAssetMove();
-    if (_aMoverContact && state.assetActiveSide === _aSideBefore && state.assetPhase?.assetType === _aTypeBefore && !state.attackModal && state.launchedAssets.includes(_aMover)) {
-      dispatch({ type: 'selectAssetMove', assetId: _aMover.id, count: _aMover.count });
-    }
+    dispatch({ type: 'assetMove', assetId: _aSel.id, x: _apt.x, y: _apt.y, count: state.assetMove.count });
     renderAll(); return;
   }
   // ─────────────────────────────────────────────────────────────────────────────
@@ -10685,11 +10987,14 @@ function _sync3dOverlays(group) {
 function _3dSceneryHash() {
   const sd = state.scenarioData;
   if (!sd) return '';
-  const dps = (sd.dropsites || []).map(d => `${d.id}:${d.damage || 0}:${d.destroyed ? 1 : 0}`).join(',');
+  const dps = (sd.dropsites || []).map(d => `${d.id}:${d.damage || 0}:${d.destroyed ? 1 : 0}:${(d.destroyedFeatures || []).length}`).join(',');
   const sc  = (sd.placedScenery || []).length;
-  const los = (sd.largeObjects || []).length;
+  const _moonPosKey = state.moonPos ? `${Math.round(state.moonPos.x*10)},${Math.round(state.moonPos.y*10)}` : '';
+  const _msPos = state.moonswipe ? (state.moonswipe.positions || []).map(p => `${Math.round(p.x*10)},${Math.round(p.y*10)}`).join(';') : '';
+  const los = (sd.largeObjects || []).map(lo => `${Math.round((lo.x||0)*10)},${Math.round((lo.y||0)*10)}`).join(';') + _moonPosKey + _msPos;
   const rng = (sd.rings || []).length;
-  return `${dps}|${sc}|${los}|${rng}`;
+  const fps = (sd.focalPoints || []).length;
+  return `${dps}|${sc}|${los}|${rng}|${fps}`;
 }
 
 // Ground asset launch lines — persistent dashed trajectories ship (→ voidgate) → dropsite.
@@ -10926,15 +11231,24 @@ function _sync3dStaticScenery(group) {
     }
   });
 
-  // Asteroids / large objects — float at orbital layer
-  (sd.largeObjects || []).forEach(lo => {
+  // Asteroids / large objects — float at orbital layer.
+  // Apply the same position overrides as 2D (Moonskipper moonPos, Moonswipe repositioning).
+  const _3dLargeObjs = (sd.largeObjects || []).map((lo, i) => {
+    const layKey = state.scenario && state.scenario.layout;
+    if (layKey === 'se1_moonskipper' && i === 0 && state.moonPos) return { ...lo, x: state.moonPos.x, y: state.moonPos.y };
+    if (layKey === 'se1_moonswipe' && state.moonswipe && state.moonswipe.positions[i]) return { ...lo, x: state.moonswipe.positions[i].x, y: state.moonswipe.positions[i].y };
+    return lo;
+  });
+  _3dLargeObjs.forEach(lo => {
     const wx = lo.x * INCH - 288, wz = lo.y * INCH - 288;
     const r = Math.max(4, (lo.diameter / 2) * INCH);
     // Scale segments with radius so large moons stay smooth
     const segs = Math.min(64, Math.max(24, Math.round(r * 1.2)));
+    // MeshStandardMaterial with emissive fill: prevents pure-black shadowed faces,
+    // making the sphere read as a solid body rather than a thin shell.
     const asteroid = new THREE.Mesh(
       new THREE.SphereGeometry(r, segs, Math.round(segs * 0.7)),
-      new THREE.MeshLambertMaterial({ color: 0x707070 })
+      new THREE.MeshStandardMaterial({ color: 0x686868, roughness: 1.0, metalness: 0, emissive: 0x1a1a1a, emissiveIntensity: 1.0 })
     );
     asteroid.position.set(wx, _3D_LAYER_Y.orbit, wz);
 
@@ -10972,8 +11286,8 @@ function _sync3dStaticScenery(group) {
 
       // Raised rim torus
       const rimGeo = new THREE.TorusGeometry(cr * 1.05, cr * 0.04, 4, 20);
-      const rim = new THREE.Mesh(rimGeo, new THREE.MeshLambertMaterial({
-        color: 0x909090, polygonOffset: true, polygonOffsetFactor: -12, polygonOffsetUnits: -1
+      const rim = new THREE.Mesh(rimGeo, new THREE.MeshStandardMaterial({
+        color: 0x909090, roughness: 1, metalness: 0, polygonOffset: true, polygonOffsetFactor: -12, polygonOffsetUnits: -1
       }));
       rim.position.copy(surfacePos(1.001));
       rim.quaternion.setFromUnitVectors(faceDir, dir);
@@ -11024,6 +11338,48 @@ function _sync3dStaticScenery(group) {
       group.add(mesh);
     }
   });
+
+  // Focal point auras — dashed gold ring + translucent fill disc at orbit layer.
+  // Dynamic debris focal points (from destroyed stations) remain at orbit level where the station was.
+  (sd.focalPoints || []).forEach(fp => {
+    if (fp.diameter == null) return;
+    const wx = fp.x * INCH - 288, wz = fp.y * INCH - 288;
+    const r  = (fp.diameter / 2) * INCH;
+    const wy = _3D_LAYER_Y.orbit;
+    const fillGeo = new THREE.CircleGeometry(r, 64);
+    fillGeo.rotateX(-Math.PI / 2);
+    fillGeo.translate(wx, wy, wz);
+    group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({
+      color: 0xffd23c, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false
+    })));
+    group.add(_3dDashedCircle(wx, wz, r, wy, 0xffd23c, 0.55, 8, 5));
+  });
+
+  // Station–city power links — dashed yellow line from station (orbit) down to paired city (ground)
+  // while the city still has at least one live power plant (same condition as the 2D overlay).
+  const _sclLay = state.scenario && state.scenario.layout && LAYOUTS[state.scenario.layout];
+  if (_sclLay && _sclLay.stationCityLinks && sd.dropsites) {
+    Object.entries(_sclLay.stationCityLinks).forEach(([stId, ctId]) => {
+      const st = sd.dropsites.find(d => d.id === stId);
+      const ct = sd.dropsites.find(d => d.id === ctId);
+      if (!st || !ct || st.destroyed || ct.destroyed) return;
+      const hasPlant = (ct.features || []).some(
+        (fk, fi) => fk === 'power_plant' && !(ct.destroyedFeatures || []).includes(fi)
+      );
+      if (!hasPlant) return;
+      const sx = st.x * INCH - 288, sz = st.y * INCH - 288;
+      const cx = ct.x * INCH - 288, cz = ct.y * INCH - 288;
+      const linkLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(sx, _3D_LAYER_Y.orbit, sz),
+          new THREE.Vector3(cx, 0, cz),
+        ]),
+        new THREE.LineDashedMaterial({ color: 0xffdc28, transparent: true, opacity: 0.65, dashSize: 9, gapSize: 6 })
+      );
+      linkLine.computeLineDistances();
+      group.add(linkLine);
+    });
+  }
 
 }
 
@@ -11077,6 +11433,20 @@ function _sync3dSceneryDynamic(group) {
       _addGhostCloud(state.hoverPoint.x - 288, state.hoverPoint.y - 288, 0, 0.38, col);
     }
   }
+
+  // Moonbreaker: expanding micrometeor cloud at orbit layer when moon is broken.
+  if (state.scenario && state.scenario.layout === 'se1_moonbreaker' && state.moonBrokenRound != null) {
+    const roundsAfterBreak = (state.round || 1) - state.moonBrokenRound - 1;
+    const cloudDiam = 12 + 6 * Math.max(0, roundsAfterBreak);
+    const cloudR = (cloudDiam / 2) * INCH;
+    const fillGeo = new THREE.CircleGeometry(cloudR, 64);
+    fillGeo.rotateX(-Math.PI / 2);
+    fillGeo.translate(0, _3D_LAYER_Y.orbit, 0);
+    group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({
+      color: 0x96c8f0, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false
+    })));
+    group.add(_3dDashedCircle(0, 0, cloudR, _3D_LAYER_Y.orbit, 0x96c8f0, 0.65, 8, 5));
+  }
 }
 
 // City dropsite
@@ -11128,19 +11498,11 @@ function _add3dCity(group, wx, wz, sk, dead, ds) {
     }
   }
 
-  // City glow — light blue point light (red if dead/burning)
-  const cityGlowIntensity = sk === 'L' ? 180 : sk === 'M' ? 100 : 55;
-  const cityGlowDist      = sk === 'L' ? 160 : sk === 'M' ? 110 : 70;
-  const cityLight = new THREE.PointLight(dead ? 0xff4400 : 0x44aaff, cityGlowIntensity, cityGlowDist);
-  cityLight.position.set(wx, sk === 'L' ? 22 : sk === 'M' ? 14 : 8, wz);
-  group.add(cityLight);
 }
 
 // Station dropsite
 function _add3dStation(group, wx, wz, sk, dead) {
   const wy     = _3D_LAYER_Y.orbit;
-  const glowCol = dead ? 0xff3300 : 0x60c8ff;
-
   if (_glbStation) {
     // Scale factors relative to the normalised L template (L=1.0, M=0.68, S=0.45)
     const scaleF = sk === 'L' ? 1.0 : sk === 'M' ? 0.68 : 0.45;
@@ -11211,10 +11573,6 @@ function _add3dStation(group, wx, wz, sk, dead) {
       .translateX(wx).translateY(wy - spineH + B * 0.42).translateZ(wz));
   }
 
-  const light = new THREE.PointLight(glowCol, sk === 'L' ? 120 : sk === 'M' ? 70 : 40,
-                                              sk === 'L' ? 140 : sk === 'M' ? 90 : 55);
-  light.position.set(wx, wy, wz);
-  group.add(light);
 }
 
 // Read faction colour from the player's chosen colour (player1 / player2)
@@ -12126,6 +12484,15 @@ document.addEventListener('click', (e) => {
     if (grp.spikes > 0) dispatch({ type: 'adjustSpike', gid, delta: -1 });
     return;
   }
+  // Orbital Decay token controls
+  if (e.target.matches('[data-od-u]')) {
+    dispatch({ type: 'adjustOrbitalDecay', gid: e.target.dataset.odU, si: parseInt(e.target.dataset.odSi), delta: 1 });
+    return;
+  }
+  if (e.target.matches('[data-od-d]')) {
+    dispatch({ type: 'adjustOrbitalDecay', gid: e.target.dataset.odD, si: parseInt(e.target.dataset.odSi), delta: -1 });
+    return;
+  }
   // Dropsite damage controls
   if (e.target.matches('[data-ds-damage-u]')) {
     const did = e.target.dataset.dsDamageU;
@@ -12323,6 +12690,15 @@ document.addEventListener('click', (e) => {
     const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === dsId);
     if (ds) flashLaunchMsg(`${def.name} surveyed ${ds.base ? ds.base.name : dsId}`, true);
     dispatch({ type: 'surveySite', gid, si: parseInt(si), dsId });
+    renderAll(); return;
+  }
+  if (e.target.matches('[data-assess]') || (e.target.closest && e.target.closest('[data-assess]'))) {
+    const btn = e.target.matches('[data-assess]') ? e.target : e.target.closest('[data-assess]');
+    const [gid, si, dsId] = btn.dataset.assess.split('|');
+    const def = getDef(gid);
+    const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === dsId);
+    if (ds) flashLaunchMsg(`${def.name} assessed ${ds.base ? ds.base.name : dsId}`, true);
+    dispatch({ type: 'assessDropsite', gid, si: parseInt(si), dsId });
     renderAll(); return;
   }
   if (e.target.closest && e.target.closest('[data-extract-start]')) {
@@ -13235,8 +13611,92 @@ board.addEventListener('contextmenu', (e) => {
   }
 });
 
+/* ── MOONSWIPE — pre-deployment large object repositioning ─────────────────── */
+
+/* Ensure state.moonswipe is initialised when a moonswipe scenario is active.
+   Called from renderSetupOverlay so it's always in sync with scenario selection. */
+function ensureMoonswipe() {
+  const isMoonswipe = state.scenario && state.scenario.layout === 'se1_moonswipe';
+  if (!isMoonswipe) { state.moonswipe = null; return; }
+  if (state.moonswipe) return; // already initialised
+  const objs = (state.scenarioData && state.scenarioData.largeObjects) || [];
+  state.moonswipe = {
+    turn: 'f1',        // whose turn: f1 | f2
+    moved: [],         // indices of large objects already moved this round
+    selected: null,    // index of currently selected large object
+    done: false,       // all objects moved → repositioning complete
+    positions: objs.map(o => ({ x: o.x, y: o.y })), // current overridden positions
+  };
+}
+
+/* Handle a board click during moonswipe repositioning.
+   First click selects a large object (or cancels); second click moves it. */
+function handleMoonswipeClick(pt) {
+  if (!state.moonswipe || state.moonswipe.done) return;
+  const ms = state.moonswipe;
+  const mySlot = _netSide === 'player2' ? 'f2' : 'f1'; // online: only own turn
+  if (_netSide && ms.turn !== mySlot) return;
+
+  const pxToIn = px => px / INCH;
+  const ptIn = { x: pxToIn(pt.x), y: pxToIn(pt.y) };
+
+  if (ms.selected === null) {
+    // Select a large object that hasn't been moved yet.
+    const objs = ms.positions;
+    for (let i = 0; i < objs.length; i++) {
+      if (ms.moved.includes(i)) continue;
+      const dx = ptIn.x - objs[i].x, dy = ptIn.y - objs[i].y;
+      const diam = (state.scenarioData.largeObjects[i] && state.scenarioData.largeObjects[i].diameter) || 6;
+      if (Math.hypot(dx, dy) <= diam / 2 + 1) { ms.selected = i; renderAll(); return; }
+    }
+    // Clicked elsewhere — deselect.
+    ms.selected = null;
+    renderAll();
+    return;
+  }
+
+  // Second click: move the selected object (max 6", no overlap with dropsites).
+  const i = ms.selected;
+  const orig = ms.positions[i];
+  const dist = Math.hypot(ptIn.x - orig.x, ptIn.y - orig.y);
+  const newX = dist > 6 ? orig.x + (ptIn.x - orig.x) / dist * 6 : ptIn.x;
+  const newY = dist > 6 ? orig.y + (ptIn.y - orig.y) / dist * 6 : ptIn.y;
+
+  // Overlap check: can't land on a city or station base.
+  const objDiam = (state.scenarioData.largeObjects[i] && state.scenarioData.largeObjects[i].diameter) || 6;
+  const objR = objDiam / 2;
+  const blocked = (state.scenarioData.dropsites || []).some(ds => {
+    const dsDiam = { small: 3, medium: 4, large: 5 }[ds.base && ds.base.size] || 3;
+    return Math.hypot(newX - ds.x, newY - ds.y) < objR + dsDiam / 2;
+  });
+  if (blocked) { flashLaunchMsg('Cannot place over a Dropsite'); ms.selected = null; renderAll(); return; }
+
+  ms.positions[i] = { x: newX, y: newY };
+  ms.moved.push(i);
+  ms.selected = null;
+
+  // Advance turn (alternate: f1 → f2 → f1 → ...) until all objects moved.
+  if (ms.moved.length >= ms.positions.length) {
+    ms.done = true;
+  } else {
+    ms.turn = ms.turn === 'f1' ? 'f2' : 'f1';
+  }
+  renderAll();
+  netRelaySetup();
+}
+
 board.addEventListener('click', (e) => {
-  if (state.phase === 'setup') return; // overlay handles
+  if (state.phase === 'setup') {
+    // Moonswipe: allow large object repositioning during setup.
+    if (state.moonswipe && !state.moonswipe.done) {
+      const rect = board.getBoundingClientRect();
+      const svgW = parseFloat(board.getAttribute('viewBox').split(' ')[2]);
+      const scale = svgW / rect.width;
+      const pt = { x: (e.clientX - rect.left) * scale, y: (e.clientY - rect.top) * scale };
+      handleMoonswipeClick(pt);
+    }
+    return;
+  }
 
   // In replay mode allow ship/dropsite selection for viewing only — no game actions.
   if (_replayMode) {
@@ -13489,120 +13949,13 @@ board.addEventListener('click', (e) => {
       }
       return;
     }
-    // Move the selected (sub-)group to the clicked point.
+    // Move the selected asset — server-authoritative via assetMove intent.
     const a = state.launchedAssets.find(x => x.id === state.assetMove.id);
     if (!a) { state.assetMove = null; renderAll(); return; }
-    if (a.moved) { return; } // already moved — board click does nothing (use Reset Move first)
+    if (a.moved) return;
     if (a.kind === 'mine') { flashLaunchMsg('Mines cannot move once launched'); state.assetMove = null; renderAll(); return; }
     const pt = svgPointFromEvent(e);
-    const thrPx = (a._t2tRange ? a._t2tRange : assetThrust(a)) * INCH;
-    // ── AUTO-MOVE-AND-LOCK (bombers / fire ships / torpedoes) ──
-    // Clicking a valid enemy ship in move range flies the whole stack to base contact
-    // of that ship and locks the attack in one action. Excludes Descent ships in atmo.
-    if (a.kind === 'bomber' || a.kind === 'fireship' || a.kind === 'torpedo') {
-      const hit = enemyShipAtPoint(a.side, pt);
-      if (hit && (hit.ship.layer || 'orbit') !== 'atmosphere') {
-        const contactPx = 1 * INCH + shipBaseRadiusPx(hit.def); // base-contact distance
-        const dToShip = Math.hypot(hit.ship.x - a.x, hit.ship.y - a.y);
-        // Compute the landing point: along the line toward the ship, at base contact.
-        let lx, ly;
-        if (dToShip <= contactPx) { lx = a.x; ly = a.y; } // already in contact — stay put
-        else {
-          const ux = (hit.ship.x - a.x) / dToShip, uy = (hit.ship.y - a.y) / dToShip;
-          lx = hit.ship.x - ux * contactPx; ly = hit.ship.y - uy * contactPx;
-        }
-        const travel = Math.hypot(lx - a.x, ly - a.y);
-        if (travel > thrPx + 2) { flashLaunchMsg('Target out of move range'); return; }
-        // Move the whole stack to the contact point (split-on-attack isn't used here —
-        // the entire selected stack commits to the attack).
-        const aOrigX2 = a.x, aOrigY2 = a.y;
-        a._preMove = { x: a.x, y: a.y, t2tRange: a._t2tRange };
-        a.x = lx; a.y = ly; a.moved = true; a._t2tRange = undefined;
-        const tn = hit.def.name + (hit.grp.ships.length > 1 ? ` #${hit.si + 1}` : '');
-        flashLaunchMsg(`${a.kind} → base contact, locked onto ${tn}`, true);
-        // Resolve scenery attrition along the path (same rules as a normal move).
-        applyAssetScenery(a, aOrigX2, aOrigY2);
-        if (a.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); }
-        else { dispatch({ type: 'assetLockTarget', assetId: a.id, gid: hit.gid, si: hit.si }); }
-        state.assetMove = null;
-        afterAssetMove();
-        // Keep it selected (if its stage still holds) so the lock is visible/clearable.
-        if (a.count > 0 && state.assetActiveSide && !state.attackModal &&
-            (state.launchedAssets || []).includes(a)) {
-          dispatch({ type: 'selectAssetMove', assetId: a.id, count: a.count });
-        }
-        renderAll(); return;
-      }
-    }
-    if (Math.hypot(pt.x - a.x, pt.y - a.y) > thrPx + 2) { flashLaunchMsg('Out of move range'); return; }
-    const moveCount = state.assetMove.count;
-    const aOrigX = a.x, aOrigY = a.y; // path origin for scenery checks
-    // Split: if moving fewer than the whole stack, leave the remainder behind.
-    let mover;
-    if (moveCount < a.count) {
-      a.count -= moveCount;
-      mover = { id: 'a' + (state._assetId = (state._assetId||0)+1), kind: a.kind, count: moveCount, side: a.side, x: pt.x, y: pt.y, moved: true };
-      state.launchedAssets.push(mover);
-    } else {
-      a._preMove = { x: a.x, y: a.y, t2tRange: a._t2tRange }; // snapshot for Reset Move
-      a.x = pt.x; a.y = pt.y; a.moved = true; a._t2tRange = undefined; mover = a;
-    }
-    // ── SCENERY ATTRITION (assets count as moving in Orbit) ──
-    {
-      applyAssetScenery(mover, aOrigX, aOrigY);
-      if (mover.count <= 0) { state.launchedAssets = state.launchedAssets.filter(x => x.count > 0); state.assetMove = null; afterAssetMove(); renderAll(); return; }
-    }
-    // Fighter combat: if a moving FIGHTER ends on an enemy launch asset, remove
-    // equal numbers from each (Fighters vs Fighters/Bombers — equal removal).
-    if (mover.kind === 'fighter') {
-      const enemySide = mover.side === 'player1' ? 'player2' : 'player1';
-      const foe = state.launchedAssets.find(x =>
-        x.id !== mover.id && x.side === enemySide &&
-        Math.hypot(x.x - mover.x, x.y - mover.y) <= shipBaseRadiusPx({tonnage:'L'}));
-      if (foe) {
-        const moverBefore = mover.count, foeBefore = foe.count;
-        const removed = Math.min(mover.count, foe.count);
-        mover.count -= removed;
-        foe.count -= removed;
-        const foeKind = foe.kind;
-        // Remove emptied stacks.
-        state.launchedAssets = state.launchedAssets.filter(x => x.count > 0);
-        // Show a result modal with the numbers and losses (dismissed before play continues).
-        state.dogfightResult = {
-          attackerSide: mover.side, foeSide: enemySide, foeKind,
-          attackerBefore: moverBefore, attackerAfter: mover.count,
-          foeBefore: foeBefore, foeAfter: foe.count, removed
-        };
-        state.assetMove = null;
-        afterAssetMove();
-        renderAll();
-        return;
-      }
-    }
-    // Combine: if the mover ends on another same-kind, same-faction stack, merge.
-    const target = state.launchedAssets.find(x =>
-      x.id !== mover.id && x.kind === mover.kind && x.side === mover.side &&
-      Math.hypot(x.x - mover.x, x.y - mover.y) <= shipBaseRadiusPx({tonnage:'L'}));
-    if (target) {
-      target.count += mover.count;
-      target.moved = true;
-      state.launchedAssets = state.launchedAssets.filter(x => x.id !== mover.id);
-      flashLaunchMsg(`Combined into ${target.count} ${target.kind}s`, true);
-      mover = target; // surviving stack (for possible re-selection below)
-    } else {
-      flashLaunchMsg(`Moved ${mover.count} ${mover.kind}${mover.count>1?'s':''}`, true);
-    }
-    state.assetMove = null;
-    // If this attacker moved into base contact of an enemy ship, keep it selected so
-    // the LOCK-target button is immediately available (only while its side/stage holds).
-    const moverInContact = mover && (mover.kind === 'bomber' || mover.kind === 'fireship' || mover.kind === 'torpedo')
-      && mover.count > 0 && enemyShipsInBaseContact(mover.side, mover.x, mover.y).length > 0;
-    const sideBefore = state.assetActiveSide, typeBefore = state.assetPhase.assetType;
-    afterAssetMove();
-    if (moverInContact && state.assetActiveSide === sideBefore && state.assetPhase.assetType === typeBefore && !state.attackModal
-        && (state.launchedAssets || []).includes(mover)) {
-      dispatch({ type: 'selectAssetMove', assetId: mover.id, count: mover.count });
-    }
+    dispatch({ type: 'assetMove', assetId: a.id, x: pt.x, y: pt.y, count: state.assetMove.count });
     renderAll();
     return;
   }

@@ -1,6 +1,6 @@
 # DFC Fleet Ops
 
-**App v0.1.1** &nbsp;·&nbsp; Rulebook v2.3.1 &nbsp;·&nbsp; Errata v1.3
+**App v0.2.0** &nbsp;·&nbsp; Rulebook v2.3.1 &nbsp;·&nbsp; Errata v1.3
 
 A browser-based tactical assistant for **Dropfleet Commander**. The client (`client/index.html`) requires a small static server to load ES modules; an optional Node.js server adds online two-player rooms.
 
@@ -112,7 +112,14 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 - **Raze** — double standard scoring for Levelled/Ruined Dropsites ≥24" from own zone; pts-destroyed
 - **Asymmetric scoring** — each side can score against its own objective (e.g. attacker Raze / defender Protect), resolved per-side throughout
 - All seven **secondary objectives** with manual nomination and ★ markers
-- VP toasts on every award; clicking the faction/VP topbar display opens full breakdown with objective description
+- VP toasts on every award; clicking the faction/VP topbar display opens full breakdown with objective description, Kill Points projection, Assess tracker, and live Focal Points values
+
+**Scenario Expansion 1 scoring (all engine-scored):**
+- **Normal** — identical VP table to Standard Scoring (Small 2/0, Medium 3/1, Large 4/2 for Control/Contest), scored on R4 & R6
+- **Demolish** — immediate High VP when you Level a Dropsite (2/3/4 by size), immediate Low VP when you Ruin it (0/1/2); no R4/R6 dropsite scoring. Dropsites track a two-stage Ruin → Level lifecycle
+- **Kill Points** — +2 VP per 500 pts of Ships & Admirals destroyed at game end
+- **Focal Points** — ship value totals (Light 1/Medium 4/Heavy 7/Colossal 11; Low values 0/1/3/5) checked per focal point on R4 & R6; highest value wins 3 VP, ≥ half wins 1 VP. Fires for any scenario that defines focal points, alongside any other objective
+- **Assess** — Capital Ship on General Quarters within 6" of an eligible Dropsite (marked in the layout) may Assess it instead of attacking/launching; 1 VP (or 2 VP for `double_assess` dropsites). Engine-gated and server-authoritative
 
 ### Admiral abilities (core four)
 | Cost | Ability |
@@ -170,7 +177,7 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 2. Pick an **Order** — all other same-side groups lock immediately
 3. Move each ship in the group (in any order)
 4. Assign weapon targets (click weapon card → click enemy ship)
-5. Click **🔥 ENGAGE** to open the attack modal and resolve shooting
+5. Click **⊕ ENGAGE** to open the attack modal and resolve shooting
 6. Launch assets, use Detector, or Extract as appropriate
 7. Click **FINISH ACTIVATION ▸** — AP is spent, side flips to opponent
 
@@ -187,12 +194,17 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 ## Known limitations
 
 - **Admiral faction abilities** (Mass Driver Volley, Dedicated Survey Teams, etc.) are shown in the AP modal for reference but are adjudicated manually — the engine does not enforce their effects.
-- **Online play** requires running the Node server. Most actions are server-authoritative; remaining relay items: asset board movement, DA feature attack opening, undo deploy, scenery placement, pre-game setup.
+- **Online play** requires running the Node server. All in-game actions are server-authoritative; only the pre-game setup overlay (fleet choices, scenario, player names) remains as intentional relay.
 - **Wrong-side online clicks** silently no-op + resync rather than having buttons visually disabled.
 - **No AI opponent.**
 - A few §12 Dropsite interactions (Collateral Damage, attack-damage → feature removal) are partially implemented and worth confirming in play.
 - **Standard-scenario variant features** (Military Outposts, ODGs, Power Plants, Hangars, Comms) are placed on dropsites, but their in-game effects and any bespoke special rules are adjudicated manually.
 - **Team scenarios** (e.g. Entrapmoont, 2–4 players) are modelled as standard 2-player.
+- **SE1 scenarios — engine-scored:** focal-point VP at R4 & R6 (all scenarios with layout-defined focal points), Moonskipper moon path + ship destruction, Moonbreaker moon-break detection + expanding Micrometeor Cloud (1K+1E per End Phase with saves), Moonswipe pre-deployment Large Object repositioning, Very Important Moon end-game crippled-outside-focal VP, Moonguard bonus Secondary Objective, Orbital Decay activation damage (tokens assigned manually via ship panel; rolls automatic), Ready Salted Earth station BS save + debris field placement, Kill Points, Demolish VP.
+- **SE1 scenarios — still manually adjudicated** (surfaced as Special Rules notes in the scenario summary):
+  - **When Backfields Meet**: asymmetric colour-city ownership, Assess scoring per colour, Demolish-on-level colour restrictions
+  - **Orbital Decay token assignment** (both "(Almost) Nothing" scenarios): players add/remove tokens via the ship detail panel; damage rolls are automatic at end of activation
+  - **Latitudinal Lanes**: Assess scoring (which dropsites each side may assess)
 
 ---
 
@@ -203,28 +215,31 @@ package.json                    — Node project + deps; npm start / npm run dev
 server.js                       — Node server: Express + session middleware + REST API + WebSocket upgrade
 client/
   index.html                    — Module-based client (imports src/engine/ and src/fleet/; hotseat + online)
+  assets/
+    *.glb                       — 3D ship models (per faction × frigate/cruiser) + station + city size variants
 src/
   api.js                        — REST routes + WebSocket message handler
   auth.js                       — Auth routes: POST /api/auth/register|login|logout, GET /api/auth/me
   admin.js                      — Admin routes: /api/admin/users|rooms|saves (role=admin required)
   db.js                         — SQLite layer (better-sqlite3): users, saves, room_slots tables + helpers
   rooms.js                      — In-memory room lifecycle (slots, spectators, broadcast, TTL)
-  saves.js                      — Dual-write persistence: SQLite primary + saves/<ID>.json backup
+  saves.js                      — SQLite persistence: saveRoom(), loadAllSaves() helpers
   engine/
     constants.js                — All fleet defs, ORDERS, LAYOUTS, ASSET_PROFILES, SECONDARY_OBJECTIVES, etc.
     rng.js                      — Seeded PRNG + Math.random wrapper for local play
     state.js                    — createState() factory, buildSideFleet(), rebuildFleets()
     mutators.js                 — All state-mutating functions (movement, combat, scoring, AP…)
     gating.js                   — Intent legality: isLegal() + legalActions()
+    version.js                  — APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION constants
   fleet/
     db.js                       — Full ship/weapon DB + admiral ability data for all 6 factions
     parser.js                   — New Recruit list parser: parseNewRecruit(text)
 data/
   dfc.db                        — SQLite database (auto-created; stores users, saves, sessions)
-saves/
-  *.json                        — JSON save backups (auto-created)
 reference/
-  *.pdf                         — Faction fleet stat sheets and rulebook (source of truth for rules/data)
+  *.pdf                         — Faction fleet stat sheets (all 6 factions) + rulebook v2.3.1
+plans/
+  *.md                          — Design/planning documents (not deployed)
 ```
 
 ---

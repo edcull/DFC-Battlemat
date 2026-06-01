@@ -136,6 +136,17 @@ Quickplay ships are cloned with side-prefixed IDs (`'ucm:u1'`, `'shal:s1'`) into
 
 Custom fleet import (`⊕ IMPORT LIST` in setup overlay): `parseNewRecruit` parses the New Recruit export text into groups + admiral entries; `buildSideFleet` then uses `findShipDef` to look up each ship from `db.js`, applying hardpoint options via `applyHardpointOptions`.
 
+## Activation Flow
+
+1. **Select a group** — click a ship on the board or a group card in the left panel
+2. **Pick an Order** — all other same-side groups lock immediately (cannot activate until this group finishes)
+3. **Move each ship** in the group (in any order); ships show their move cone and snap to valid headings
+4. **Assign weapon targets** — click a weapon card to enter targeting mode, then click an enemy ship to lock; repeat for each weapon slot
+5. **⊕ ENGAGE** — appears in the ship detail panel once at least one target is locked; click to open the attack modal and resolve shooting
+6. **Finish Activation** — after all shots resolve, click FINISH to mark the group activated and advance the active side
+
+The `⊕ ENGAGE (N)` button shows the count of locked targets. In online mode only the active side can click it; the opponent sees the attack modal open on their screen simultaneously (server-authoritative via the `fireWeapons` intent family).
+
 ## Client UI
 
 ### Setup overlay
@@ -145,10 +156,11 @@ Custom fleet import (`⊕ IMPORT LIST` in setup overlay): `parseNewRecruit` pars
 - Admiral assignments: famous admirals are auto-slotted; non-famous (faction) admirals show a flagship dropdown + faction ability dropdown (only for named faction types like Captain, Rear Admiral). `state.importedFleets[slot].admiralAssignments` holds `[{ level, groupIdx, shipIdx, isFamous, admiralIdx, abilities }]`.
 - `fleetAssignmentsReady(slot)` checks Bioficer payload links and admiral assignments before allowing game start.
 
-### Scenario setup (two tabs)
-The scenario chooser in the setup overlay has two tabs. The active tab is `state.setupTab` (relayed); switching tabs resets the scenario selections.
+### Scenario setup (three tabs)
+The scenario chooser in the setup overlay has three tabs. The active tab is `state.setupTab` (relayed; one of `'standard'` | `'expansion'` | `'custom'`); switching tabs resets the scenario selections.
 - **Standard Scenarios tab:** a dropdown of bespoke standard scenarios (Take and Hold, Erupting Battlefront, Power Grab, Shock and Yaw, Orbital Support, Entrapmoont) plus a RANDOM button. Selecting/rolling one applies a full preset from `SCEN_PRESETS` (in `client/index.html`) and shows a read-only summary of Deployment Type, Approach and Scoring Objective.
-- **Custom / Generate tab:** per-row pickers + ↻ rerolls for Deployment Type, Approach, Layout, Variant and Scoring Objective, plus RANDOMISE ALL. Standard-scenario-only `LAYOUTS`/`VARIANTS` (flagged `bespoke:true`, `d6:0`) are hidden from these generator dropdowns/rerolls and never produced by `generateScenario`; `No Variant` stays available.
+- **Scenario Expansion 1 tab:** behaves like the Standard tab — a dropdown of the 14 Scenario Expansion 1 scenarios (Ready Salted Earth, Erupting Quarters, Latitudinal Lanes, Lagrange Points, When Backfields Meet, Very Important Moon, Moonshot, Moonwreck, Moonbreaker, Moonguard, Moonswipe, Moonskipper, One With (Almost) Nothing, (Almost) Nothing At All) plus a RANDOM button. Selecting/rolling one applies a full preset from `EXPANSION_PRESETS` and shows a read-only summary of Deployment Type, Approach, Scoring Objective, a Scenery & Dropsites row, and a **Special Rules** briefing (`SE1_NOTES`) listing bespoke effects. Each scenario's layout is a bespoke `LAYOUTS` entry (`se1_*`, transcribed from the official maps) with dropsite positions, features, focal point definitions, and `siteRules` tags. The expansion adds three engine-enforced approach types wired into `canActivateOffTable`: **Imminent** (R1 L+M only, R2 also H, R3+ any), **Backline** (R1 H+C only, R2+ any, Vanguard as normal), **Staggered** (X groups per round: 1/2/3/4+ for Skirmish/Clash/Battle/Reconquest, computed from fleet pts). Two bespoke deployment types are added: `defender_edge` (Moonguard — south 12" zone / north edge contact) and `diagonal_corners` (Moonswipe — each side gets two diagonally-opposite corners). Five SE1 scoring objectives are engine-scored: **Normal** (control/contest on R4/R6, same VP table as Standard), **Demolish** (immediate High VP on Level, Low VP on Ruin; no R4/R6 dropsite scoring), **Focal Points** (R4/R6; ship values by tonnage L=1/M=4/H=7/C=11; highest wins 3 VP, ≥half wins 1 VP), **Kill Points** (game-end +2 VP/500 pts destroyed), **Assess** (Capital Ship on GQ within 6" of eligible dropsite, 1 VP each, forfeits attack/launch). Dropsites carry `siteRules` arrays controlling per-site scoring: `assess`/`assess_south`/`assess_north` (Assess eligibility), `double_assess_south`/`double_assess_north` (2 VP for Assessing), `demolish_south`/`demolish_north` (Demolish VP restricted to that zone's player). Focal points fire on R4/R6 whenever `state.scenarioData.focalPoints` is non-empty, regardless of primary objective, so scenarios with both focal points and another scoring method (Moonshot, Moonwreck) both score correctly. The VP breakdown modal (`renderVPBreakdown`) shows Kill Points projections, Assess tracker, and a live Focal Points preview alongside the scoreLog.
+- **Custom / Generate tab:** per-row pickers + ↻ rerolls for Deployment Type, Approach, Layout, Variant and Scoring Objective, plus RANDOMISE ALL. Standard-scenario-only and expansion-only `LAYOUTS`/`APPROACHES`/`VARIANTS`/`OBJECTIVES` (flagged `bespoke:true`, `d6:0`) are hidden from these generator dropdowns/rerolls and never produced by `generateScenario`; `No Variant` stays available.
 - **Asymmetric scoring:** the Scoring Objective row has an "Asymmetric scoring" toggle. When on, `state.scenario.objectives = { player1, player2 }` overrides the shared `state.scenario.objective`. `objectiveForSide(state, side)` / `objAny(state, key)` (in `mutators.js`) resolve all per-side scoring — Standard Scoring, Raze/Attrition/Survey/Extract bonuses, Protect doubling/penalty/nomination, and Extract seeding. Used by Entrapmoont (attacker Raze / defender Protect).
 
 ### Auth overlay & user chip
@@ -195,24 +207,22 @@ A **user chip** (`#topbar-user`) in the top-right of the topbar shows the logged
 - Combat modal: `attackStep`, `attackReroll`, `attackFighterReroll`, `finishAttack`, `attackDeclare`
 - Launches: `launchAsset`, `cancelLaunch`
 - Scoring / round: `advanceRound`
-- Activation extras: `surveySite`, `extractRecon`, `breakthroughFlyoff`, `objectivesFlyoff`
+- Activation extras: `surveySite`, `extractRecon`, `breakthroughFlyoff`, `objectivesFlyoff`, `assessDropsite`
 - Asset phase: `resolveBoarding`, `startAssetMove`, `assetT2T`, `assetLockTarget`, `assetUntarget`, `assetResetMove`
 - Battalion combat: `startBattalionCombat`, `bcPickDropsite`, `bcAssignGround`, `bcSkipAssign`, `bcToDestroy`, `bcFinish`, `daDestroyFeature`
 - DA transitions: `daFinishDropsite`, `daSwitchSide`, `daEnd`
 
 **Still on relay (remaining work):**
-- Asset board movement (board click during asset step); asset stage-advance buttons
-- DA feature attack modal opening
-- Undo deploy
-- Scenery placement board click
-- Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes)
+- Pre-game setup overlay (fleet/admiral/colour/secondary/scenario/player-name changes) — intentionally kept as relay
 
 ## Known Limitations
 
 - Online play requires running the Node server.
 - Wrong-side online clicks silently no-op + resync rather than having buttons visually disabled.
-- Asset board movement, undo deploy, scenery placement, and pre-game config still relay full state rather than using server-validated intents.
+- Pre-game setup overlay (fleet choices, names, colours, scenario) still relays full state — intentional collaborative config with no server legality to enforce.
 - No AI opponent.
 - Faction admiral personal abilities and famous admiral abilities are defined in `db.js` and shown in the AP modal, but are informational only — the abilities themselves (e.g. Mass Driver Volley, Dedicated Survey Teams) must be adjudicated manually by players.
 - Standard-scenario **variant features** (Military Outposts, Orbital Defence Guns, Power Plants, Hangars, Comms Stations) are placed on dropsites, but their in-game effects and any bespoke special rules (e.g. Entrapmoont's Power-Plant blast and the blue team's bonus Military Outpost) are adjudicated manually.
-- Multiplayer/team scenarios (e.g. Entrapmoont, 2–4 players) are modelled as standard 2-player; attacker/defender map to player2/player1, and Red/Blue deployment zones are still assigned randomly at confirm.
+- Multiplayer/team scenarios (e.g. Entrapmoont, Moonswipe, 2–4 players) are modelled as standard 2-player; attacker/defender map to player2/player1, and Red/Blue deployment zones are still assigned randomly at confirm.
+- **Scenario Expansion 1** — all 14 scenarios selectable with faithful dropsite layouts, features, and focal point geometry. Engine-scored: Imminent/Backline/Staggered approach gating; Normal/Demolish/Kill Points/Focal Points/Assess scoring; Ruin/Level dropsite lifecycle; per-zone `siteRules` for Assess, Demolish, and Normal Scoring eligibility (incl. WBM asymmetric `score_north`/`score_south`); board-quarter focal value scoring (Erupting Quarters, (Almost) Nothing At All); Moonskipper moon movement and ship destruction; Moonbreaker cloud damage and moon-majority scoring; Moonswipe pre-deployment Large Object repositioning (click moons in setup); Moonguard bonus secondary scoring; VIM crippled-groups-outside-focal-point VP; One With (Almost) Nothing +1VP per Admiral. Still adjudicated manually: RSE station 5+ BS while paired City has Power Plant; Orbital Decay token assignment (damage per token is engine-scored); standard variant-feature in-game effects (ODGs, Power Plants, etc.).
+- **Dropsite Ruin/Level lifecycle** — `ds.ruined` is set on first hull breach (damage resets to overflow); `ds.destroyed` on second breach. Demolish VP fires immediately on each event. The older `ds.destroyed`-only model has been replaced.

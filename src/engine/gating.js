@@ -11,9 +11,9 @@
 // apply() dispatcher in mutators.js — every intent type apply() handles must
 // have a matching case here.
 
-import { ORDERS, INCH } from './constants.js';
-import { getDef } from './state.js';
-import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, sideNeedsDeployPhase, transportValue, shipInNetwork } from './mutators.js';
+import { ORDERS, INCH, FEATURES } from './constants.js';
+import { getDef, assetThrust } from './state.js';
+import { nextUndeployedShipIdx, activeGroupIdForSide, moveCone, headingVec, weaponCanTarget, firingOriginShip, pointInWeaponArc, targetingRangePx, effectiveScan, dsBattalions, deploySideAllowed, sideNeedsDeployPhase, transportValue, shipInNetwork, isCapital, objectiveForSide, sceneryValid } from './mutators.js';
 
 const INTENT_TYPES = ['pass', 'endRound', 'commitScenario'];
 
@@ -279,6 +279,7 @@ export function isLegal(state, intent, side) {
       if (!def || def.side !== side) return false;
       const ship = grp.ships[si];
       if (!ship || ship.destroyed || ship.offTable) return false;
+      if (ship.hasAssessed) return false;
       if (!kind || !(count > 0)) return false;
       return true;
     }
@@ -547,6 +548,29 @@ export function isLegal(state, intent, side) {
       if (Math.hypot(exShip.x - exDs.x * INCH, exShip.y - exDs.y * INCH) > 6 * INCH) return false;
       return true;
     }
+    case 'assessDropsite': {
+      if (state.phase !== 'play') return false;
+      const { gid: asGid, si: asSi, dsId: asDsId } = intent;
+      const asGrp = state.groups[asGid];
+      if (!asGrp || asGrp.activated) return false;
+      const asDef = getDef(state, asGid);
+      if (!asDef || asDef.side !== side) return false;
+      if (objectiveForSide(state, side) !== 'assess') return false;
+      if (!isCapital(asDef)) return false;
+      const asShip = asGrp.ships[asSi];
+      if (!asShip || asShip.destroyed || asShip.offTable) return false;
+      if (asShip.firedThisActivation || (asShip.launchedThisRound > 0) || asShip.hasAssessed) return false;
+      if (asGrp.order !== 'GQ') return false;
+      const asDs = state.scenarioData?.dropsites?.find(d => d.id === asDsId);
+      if (!asDs || asDs.destroyed) return false;
+      const asAssessed = (state.assessedDropsites && state.assessedDropsites[side]) || [];
+      if (asAssessed.includes(asDsId)) return false;
+      const asSr = asDs.siteRules || [];
+      const asZone = state.deployZone && state.deployZone[side];
+      if (!(asSr.includes('assess') || (asZone && asSr.includes(`assess_${asZone}`)))) return false;
+      if (Math.hypot(asShip.x - asDs.x * INCH, asShip.y - asDs.y * INCH) > 6 * INCH) return false;
+      return true;
+    }
     case 'assetStageDone': {
       if (!state.assetPhase || state.assetPhase.step !== 'assets') return false;
       if (state.assetActiveSide !== intent.side || state.assetPhase.assetType !== intent.type) return false;
@@ -561,6 +585,41 @@ export function isLegal(state, intent, side) {
       const doneSides = state.assetPhase.doneSides || [];
       if (doneSides.includes(intent.side)) return false; // already confirmed
       return true;
+    }
+    case 'placeScenery': {
+      if (state.phase !== 'scenery') return false;
+      const { sceneryType, x, y } = intent;
+      if (!['micrometeor', 'dense'].includes(sceneryType)) return false;
+      if (state.sceneryTurn && state.sceneryTurn !== side) return false;
+      const placed = ((state.scenarioData && state.scenarioData.placedScenery) || []).filter(s => s.type === sceneryType).length;
+      const target = ((state.scenarioData && state.scenarioData.sceneryTargets) || {})[sceneryType] || 0;
+      if (placed >= target) return false;
+      return sceneryValid(state, sceneryType, x, y).ok;
+    }
+    case 'assetMove': {
+      if (!state.assetPhase || state.assetPhase.step !== 'assets') return false;
+      const { assetId, x, y } = intent;
+      const asset = (state.launchedAssets || []).find(a => a.id === assetId);
+      if (!asset || asset.moved || asset.count <= 0) return false;
+      if (side && asset.side !== side) return false;
+      if (state.assetActiveSide && asset.side !== state.assetActiveSide) return false;
+      if (asset.kind === 'mine') return false;
+      const thrPx = assetThrust(state, asset) * INCH;
+      return Math.hypot(x - asset.x, y - asset.y) <= thrPx + 2;
+    }
+    case 'fireFeatureWeapon': {
+      if (state.phase !== 'da') return false;
+      if (!state.daActiveSide || (side && state.daActiveSide !== side)) return false;
+      const { dsId, fi, targetGid, targetSi } = intent;
+      const fwDs = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+      if (!fwDs) return false;
+      const fwFk = fwDs.features && fwDs.features[fi];
+      if (!fwFk || !FEATURES[fwFk] || !FEATURES[fwFk].weapon) return false;
+      if ((fwDs.destroyedFeatures || []).includes(fi)) return false;
+      const fwTg = state.groups && state.groups[targetGid];
+      if (!fwTg) return false;
+      const fwTs = fwTg.ships && fwTg.ships[targetSi];
+      return !!(fwTs && !fwTs.destroyed && !fwTs.offTable);
     }
     case 'startAssetMove':
     case 'assetT2T':
@@ -601,6 +660,17 @@ export function isLegal(state, intent, side) {
       if (!grp) return false;
       if (delta !== 1 && delta !== -1) return false;
       if (side && grp.def.side !== side) return false;
+      return true;
+    }
+
+    case 'adjustOrbitalDecay': {
+      const { gid, si, delta } = intent;
+      const grp = state.groups && state.groups[gid];
+      if (!grp) return false;
+      if (delta !== 1 && delta !== -1) return false;
+      const ship = grp.ships && grp.ships[si];
+      if (!ship || ship.destroyed) return false;
+      if (delta === -1 && !(ship.orbitalDecayTokens > 0)) return false;
       return true;
     }
 
