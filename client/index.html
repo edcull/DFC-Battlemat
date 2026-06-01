@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0a0e0d">
 <title>DFC FLEET OPS</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&family=Oswald:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -5132,43 +5133,14 @@ function renderAttackModal() {
   });
   overlay.querySelectorAll('[data-rr-adj]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const delta = parseInt(btn.dataset.rrAdj);
-      // Compute the current max from whichever step we're in.
-      let maxRR = 1;
-      if (M.step === 'hit' && M.hitResult) {
-        const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(M.attackerGid).side : null);
-        const miss = M.hitResult.dice.filter(d => !d.isHit).length;
-        maxRR = Math.min(miss, (state.planning && state.planning.ap[atkSide]) || 0);
-      } else if (M.step === 'save' && M.saveResult) {
-        const td = getDef(M.shots[M.shotIdx].targetGid);
-        const failed = M.saveResult.primDice.filter(d => !d.ok).length;
-        maxRR = Math.min(failed, (state.planning && state.planning.ap[td.side]) || 0);
-      }
-      const cur = Math.min(M.rerollN || maxRR, maxRR);
-      M.rerollN = Math.max(1, Math.min(maxRR, cur + delta));
-      renderAll();
+      dispatch({ type: 'attackSetReroll', delta: parseInt(btn.dataset.rrAdj) });
     });
   });
   // Close Protection: per-Wing fighter spend stepper.
   overlay.querySelectorAll('[data-fp-adj]').forEach(btn => {
     btn.addEventListener('click', () => {
       const [wingId, deltaStr] = btn.dataset.fpAdj.split('|');
-      const delta = parseInt(deltaStr);
-      const sr = M.saveResult; if (!sr) return;
-      const s = M.shots[M.shotIdx]; const td = getDef(s.targetGid);
-      const ts = state.groups[s.targetGid].ships[s.targetSi];
-      const failed = sr.primDice.filter(d => !d.ok).length;
-      const wings = friendlyFightersInRange(td.side, ts.x, ts.y);
-      const avail = wings.reduce((a, w) => a + w.count, 0);
-      const cap = Math.min(failed, avail);
-      M.fighterSpend = M.fighterSpend || {};
-      const wing = wings.find(w => w.id === wingId);
-      if (!wing) return;
-      const curWing = M.fighterSpend[wingId] || 0;
-      const otherSpend = Object.keys(M.fighterSpend).reduce((a, k) => a + (k === wingId ? 0 : (M.fighterSpend[k] || 0)), 0);
-      const room = Math.max(0, cap - otherSpend); // total cap minus what other wings already spend
-      M.fighterSpend[wingId] = Math.max(0, Math.min(wing.count, room, curWing + delta));
-      renderAll();
+      dispatch({ type: 'attackSetFighterSpend', wingId, delta: parseInt(deltaStr) });
     });
   });
   // Close Protection: re-roll failed saves, spending the selected fighters.
@@ -12495,16 +12467,12 @@ document.addEventListener('click', (e) => {
   }
   // Dropsite damage controls
   if (e.target.matches('[data-ds-damage-u]')) {
-    const did = e.target.dataset.dsDamageU;
-    const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === did);
-    if (ds && ds.damage < ds.maxHull) ds.damage++;
-    renderAll(); return;
+    dispatch({ type: 'adjustDropsiteDamage', dsId: e.target.dataset.dsDamageU, delta: 1 });
+    return;
   }
   if (e.target.matches('[data-ds-damage-d]')) {
-    const did = e.target.dataset.dsDamageD;
-    const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === did);
-    if (ds && ds.damage > 0) ds.damage--;
-    renderAll(); return;
+    dispatch({ type: 'adjustDropsiteDamage', dsId: e.target.dataset.dsDamageD, delta: -1 });
+    return;
   }
   // HP controls
   if (e.target.matches('[data-hpu]')) {
@@ -12538,13 +12506,9 @@ document.addEventListener('click', (e) => {
   }
   // Battalion manual adjust.
   if (e.target.matches('[data-bat-adj]')) {
-    const [dsId, key, side, delta] = e.target.dataset.batAdj.split('|');
-    const ds = state.scenarioData && state.scenarioData.dropsites.find(d => d.id === dsId);
-    if (ds) {
-      const b = dsBattalions(ds);
-      if (b[key]) b[key][side] = Math.max(0, (b[key][side] || 0) + parseInt(delta));
-    }
-    renderAll(); return;
+    const [dsId, loc, side, delta] = e.target.dataset.batAdj.split('|');
+    dispatch({ type: 'adjustBattalion', dsId, loc, side, delta: parseInt(delta) });
+    return;
   }
   // Battalion deploy — land the launched battalions at the chosen location.
   if (e.target.closest && e.target.closest('[data-bat-deploy]')) {
@@ -12563,22 +12527,18 @@ document.addEventListener('click', (e) => {
       state.selectedDropsiteId = null;
       renderAll(true);
     } else {
-      // Relay path (gate_dropship via Voidgate): mutate locally + relay.
+      // gate_dropship (Voidgate) path: land battalions via intent, restore selection.
       const dep = state.battalionDeploy;
       if (dep && dep.dsId === dsId) {
-        const ds = state.scenarioData.dropsites.find(d => d.id === dsId);
-        if (ds) {
-          const b = dsBattalions(ds);
-          if (b[key]) b[key][dep.side] = (b[key][dep.side] || 0) + dep.count;
-        }
+        dispatch({ type: 'adjustBattalion', dsId, loc: key, side: dep.side, delta: dep.count });
         if (dep.fromGid != null) {
           state.selectedDropsiteId = null;
           state.selectedGroupId = dep.fromGid;
           state.selectedShipIdx = dep.fromSi;
         }
         state.battalionDeploy = null;
+        renderAll(true);
       }
-      renderAll();
     }
     return;
   }
@@ -12909,8 +12869,10 @@ document.addEventListener('click', (e) => {
   }
   // Dropsite Activation: pick a Controlled dropsite to activate.
   if (e.target.matches('[data-da-pick]')) {
-    state.dropsiteActivation.dsId = e.target.dataset.daPick;
-    state.selectedDropsiteId = e.target.dataset.daPick; // show it in the right detail panel
+    const _daPick = e.target.dataset.daPick;
+    dispatch({ type: 'daPickDropsite', dsId: _daPick });
+    // Local selection for panel display (UI-only state, not shared).
+    state.selectedDropsiteId = _daPick;
     state.selectedGroupId = null; state.selectedShipIdx = null;
     renderAll(); return;
   }
@@ -12925,12 +12887,12 @@ document.addEventListener('click', (e) => {
     if (!f) { renderAll(); return; }
     if (f.weapon) {
       if ((ds.firedFeatures || []).includes(fi)) { flashLaunchMsg(`${f.weapon.name} already fired this round`); return; }
-      state.featureAttack = { dsId, fi, side: da.side };
+      dispatch({ type: 'openDAFeatureAttack', dsId, fi });
       flashLaunchMsg(`${f.name}: click an enemy ship within ${parseInt(f.weapon.scan)||6}" of the Dropsite`, true);
       renderAll(); return;
     }
     if (f.launch && f.launch.length) {
-      const lentry = f.launch[0]; const type = lentry.type; // each launch feature has a single launch type
+      const lentry = f.launch[0]; const type = lentry.type;
       const meta = launchMeta(type);
       state.launching = {
         gid: null, si: null, type, name: meta.label, auraIn: meta.auraIn,
@@ -12942,14 +12904,14 @@ document.addEventListener('click', (e) => {
     }
     renderAll(); return;
   }
-  // Dropsite Activation: launch from a feature (acts like a ship launch).
+  // Dropsite Activation: fire button in the feature panel — enter targeting mode.
   if (e.target.closest && e.target.closest('[data-da-fire]')) {
     const [dsId, fi] = e.target.closest('[data-da-fire]').dataset.daFire.split('|');
-    state.featureAttack = { dsId, fi: parseInt(fi), side: state.dropsiteActivation.side };
+    dispatch({ type: 'openDAFeatureAttack', dsId, fi: parseInt(fi) });
     const ds2 = state.scenarioData.dropsites.find(d => d.id === dsId);
     const f2 = ds2 && FEATURES[ds2.features[parseInt(fi)]];
     flashLaunchMsg(`${f2 ? f2.name + ': ' : ''}click an enemy ship in range`, true);
-    renderAll(true); return;  // local UI only — no relay
+    renderAll(); return;
   }
   if (e.target.closest && e.target.closest('[data-da-launch]')) {
     const [dsId, fi, type] = e.target.closest('[data-da-launch]').dataset.daLaunch.split('|');

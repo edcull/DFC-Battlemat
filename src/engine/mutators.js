@@ -4196,6 +4196,95 @@ export function apply(state, intent, rng) {
     case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
     case 'finishAttack':       finishAttack(state, state.attackModal); return state;
     case 'attackDeclare':      return attackDeclare(state, state.attackModal, intent);
+    case 'attackSetReroll': {
+      const M = state.attackModal; if (!M) return state;
+      let maxRR = 1;
+      if (M.step === 'hit' && M.hitResult) {
+        const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid).side : null);
+        const miss = M.hitResult.dice.filter(d => !d.isHit).length;
+        maxRR = Math.min(miss, (state.planning && state.planning.ap[atkSide]) || 0);
+      } else if (M.step === 'save' && M.saveResult && M.shots && M.shots[M.shotIdx]) {
+        const td = getDef(state, M.shots[M.shotIdx].targetGid);
+        const failed = M.saveResult.primDice.filter(d => !d.ok).length;
+        maxRR = td ? Math.min(failed, (state.planning && state.planning.ap[td.side]) || 0) : 1;
+      }
+      const cur = Math.min(M.rerollN || maxRR, maxRR);
+      M.rerollN = Math.max(1, Math.min(maxRR, cur + intent.delta));
+      return state;
+    }
+    case 'attackSetFighterSpend': {
+      const M = state.attackModal; if (!M || !M.saveResult || !M.shots) return state;
+      const s = M.shots[M.shotIdx]; if (!s) return state;
+      const sr = M.saveResult;
+      const td = getDef(state, s.targetGid);
+      const ts = state.groups[s.targetGid] && state.groups[s.targetGid].ships[s.targetSi];
+      if (!td || !ts) return state;
+      const failed = sr.primDice.filter(d => !d.ok).length;
+      const wings = friendlyFightersInRange(state, td.side, ts.x, ts.y);
+      const avail = wings.reduce((a, w) => a + w.count, 0);
+      const cap = Math.min(failed, avail);
+      M.fighterSpend = M.fighterSpend || {};
+      const { wingId, delta } = intent;
+      const wing = wings.find(w => w.id === wingId);
+      if (!wing) return state;
+      const curWing = M.fighterSpend[wingId] || 0;
+      const otherSpend = Object.keys(M.fighterSpend).reduce((a, k) => a + (k === wingId ? 0 : (M.fighterSpend[k] || 0)), 0);
+      M.fighterSpend[wingId] = Math.max(0, Math.min(wing.count, Math.max(0, cap - otherSpend), curWing + delta));
+      return state;
+    }
+    case 'adjustDropsiteDamage': {
+      const { dsId: adjDsId, delta: adjDelta } = intent;
+      const adjDs = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === adjDsId);
+      if (!adjDs || adjDs.destroyed) return state;
+      adjDs.damage = Math.max(0, (adjDs.damage || 0) + adjDelta);
+      const adjName = (adjDs.base && adjDs.base.name) || adjDsId;
+      const adjSz = dropsiteSizeKey(adjDs);
+      while (adjDs.maxHull && adjDs.damage >= adjDs.maxHull && !adjDs.destroyed) {
+        if (adjDs.ruined) {
+          adjDs.destroyed = true;
+          logEvent(state, `${adjName}: LEVELLED (manual)`);
+          if (adjDs.base && adjDs.base.category === 'station' && !adjDs._debrisPlaced) {
+            const adjLayKey = state.scenario && state.scenario.layout;
+            const adjLayout = adjLayKey && LAYOUTS[adjLayKey];
+            if (adjLayout && adjLayout.stationCityLinks && adjDs.id in adjLayout.stationCityLinks) {
+              adjDs._debrisPlaced = true;
+              const adjDsx = inchToPx(adjDs.x), adjDsy = inchToPx(adjDs.y), adjR = 2 * INCH;
+              Object.keys(state.groups).forEach(gid => { const g = state.groups[gid]; if (g.ships.some(sh => !sh.destroyed && !sh.offTable && Math.hypot(sh.x - adjDsx, sh.y - adjDsy) <= adjR)) g.spikes = (g.spikes || 0) + 1; });
+              (state.launchedAssets || []).forEach(a => { if (a.count > 0 && Math.hypot(a.x - adjDsx, a.y - adjDsy) <= adjR) a.spikes = (a.spikes || 0) + 1; });
+              state.scenarioData.dynamicDebris = state.scenarioData.dynamicDebris || [];
+              state.scenarioData.dynamicDebris.push({ x: adjDs.x, y: adjDs.y, diameter: 4, fromStation: adjDs.id });
+              state.scenarioData.focalPoints = state.scenarioData.focalPoints || [];
+              state.scenarioData.focalPoints.push({ x: adjDs.x, y: adjDs.y, diameter: 4, label: `Debris (${adjName})`, special: ['low_crippled'], dynamic: true });
+              logEvent(state, `${adjName} levelled: debris field placed`);
+            }
+          }
+        } else {
+          adjDs.ruined = true; adjDs.damage = adjDs.damage - adjDs.maxHull;
+          logEvent(state, `${adjName}: RUINED (manual)`);
+        }
+      }
+      return state;
+    }
+    case 'adjustBattalion': {
+      const { dsId: batDsId, loc: batLoc, side: batSide, delta: batDelta } = intent;
+      const batDs = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === batDsId);
+      if (!batDs) return state;
+      const batB = dsBattalions(batDs);
+      if (!batB[batLoc]) batB[batLoc] = { player1: 0, player2: 0 };
+      batB[batLoc][batSide] = Math.max(0, (batB[batLoc][batSide] || 0) + batDelta);
+      return state;
+    }
+    case 'openDAFeatureAttack': {
+      const { dsId: faDsId, fi: faFi } = intent;
+      if (!state.dropsiteActivation) return state;
+      state.featureAttack = { dsId: faDsId, fi: faFi, side: state.dropsiteActivation.side };
+      return state;
+    }
+    case 'daPickDropsite': {
+      if (!state.dropsiteActivation) return state;
+      state.dropsiteActivation.dsId = intent.dsId;
+      return state;
+    }
     case 'beginLaunch':        applyBeginLaunch(state, intent); return state;
     case 'selectGate':         applySelectGate(state, intent); return state;
     case 'cancelLaunch':       applyCancelLaunch(state, intent); return state;

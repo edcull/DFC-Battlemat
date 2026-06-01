@@ -311,6 +311,60 @@ export function isLegal(state, intent, side) {
       if (distPx > 3 * INCH + 2) return false;
       return true;
     }
+    case 'attackSetReroll': {
+      if (state.phase !== 'play' || !state.attackModal) return false;
+      if (!['hit','save'].includes(state.attackModal.step)) return false;
+      if (intent.delta !== 1 && intent.delta !== -1) return false;
+      // Attacker adjusts hit rerolls; defender adjusts save rerolls.
+      const M = state.attackModal;
+      const atkSide = M.bomber ? M.bomberSide : (M.attackerGid ? getDef(state, M.attackerGid)?.side : null);
+      const defSide = atkSide === 'player1' ? 'player2' : 'player1';
+      const isDefensiveReroll = M.step === 'save';
+      return side === (isDefensiveReroll ? defSide : atkSide);
+    }
+    case 'attackSetFighterSpend': {
+      if (state.phase !== 'play' || !state.attackModal) return false;
+      if (state.attackModal.step !== 'save') return false;
+      if (intent.delta !== 1 && intent.delta !== -1) return false;
+      const M = state.attackModal;
+      const s = M.shots && M.shots[M.shotIdx];
+      if (!s) return false;
+      const td = getDef(state, s.targetGid);
+      return !!(td && td.side === side);
+    }
+    case 'adjustDropsiteDamage': {
+      if (state.phase !== 'play' && state.phase !== 'da') return false;
+      const { dsId, delta } = intent;
+      if (delta !== 1 && delta !== -1) return false;
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+      if (!ds || ds.destroyed) return false;
+      if (delta === -1 && (ds.damage || 0) <= 0) return false;
+      return true;
+    }
+    case 'adjustBattalion': {
+      if (state.phase !== 'play' && state.phase !== 'da') return false;
+      const { dsId, side: bSide, delta } = intent;
+      if (typeof delta !== 'number' || !Number.isInteger(delta) || delta === 0) return false;
+      if (!['player1','player2'].includes(bSide)) return false;
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+      if (!ds) return false;
+      return true;
+    }
+    case 'openDAFeatureAttack': {
+      if (state.phase !== 'da') return false;
+      if (!state.dropsiteActivation || (side && state.dropsiteActivation.side !== side)) return false;
+      const { dsId, fi } = intent;
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === dsId);
+      if (!ds) return false;
+      const fk = ds.features && ds.features[fi];
+      return !!(fk && FEATURES[fk] && (FEATURES[fk].weapon || FEATURES[fk].launch) && !(ds.destroyedFeatures || []).includes(fi));
+    }
+    case 'daPickDropsite': {
+      if (state.phase !== 'da') return false;
+      if (!state.dropsiteActivation || (side && state.dropsiteActivation.side !== side)) return false;
+      const ds = state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.find(d => d.id === intent.dsId);
+      return !!ds;
+    }
     case 'attackStep':
     case 'attackReroll':
     case 'attackFighterReroll':
