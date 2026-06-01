@@ -38,7 +38,7 @@ An **intent** is `{ type, ...payload }`. Every action that can happen online mus
 function moveShip(...args) { return _moveShip(state, rng, ...args); }
 ```
 
-**`dispatch(intent)`** — the migration seam. Migrated handlers call `dispatch()` instead of mutating directly. In hotseat: validates via `isLegal`, applies locally. Online: sends `{type:'intent'}` to server, waits for authoritative `{type:'full'}` broadcast.
+**`dispatch(intent)`** — all in-game actions go through this. In hotseat: validates via `isLegal`, applies locally. Online: sends `{type:'intent'}` to server, waits for authoritative `{type:'full'}` broadcast.
 
 **State & render** — single global `state` object, `renderAll()` re-renders everything from scratch on each change. All render functions are pure reads from `state`.
 
@@ -68,7 +68,7 @@ Relay path (setup only): `{type:'state'}` → store → rebroadcast. Pre-game se
 
 ## Intent migration status
 
-**Server-authoritative:** turn flow, orders, movement, deploy, weapons, combat modal, launches, scoring/round, asset phase (move, T2T, lock, dogfight, merge, scenery), battalion combat, DA transitions, scenery placement (`placeScenery`), asset board movement (`assetMove`).
+**Server-authoritative:** turn flow, orders, movement, deploy, weapons, combat modal (including `attackSetReroll` / `attackSetFighterSpend` steppers), launches, scoring/round, asset phase (move, T2T, lock, dogfight, merge, scenery), battalion combat, DA transitions (`daPickDropsite`, `openDAFeatureAttack`), scenery placement (`placeScenery`), asset board movement (`assetMove`), dropsite damage (`adjustDropsiteDamage`), battalion counts (`adjustBattalion`). All in-game mutations go through intents; `netAfterRender()` is stubbed out.
 
 **Still relay:** pre-game setup overlay (fleet choices, scenario, names, colours) — intentional.
 
