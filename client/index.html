@@ -5956,6 +5956,67 @@ function _fleetTotalPts(imported) {
   return shipPts + admiralPts;
 }
 
+function _quickplayTotalPts(fk) {
+  return ((FACTIONS[fk] && FACTIONS[fk].fleet) || [])
+    .filter(d => !d.payload).reduce((s, d) => s + d.pts * (d.groupSize || 1), 0);
+}
+
+function openQuickplayFleetView(fk, titleOverride) {
+  let panel = document.getElementById('fleet-view-overlay');
+  if (panel) panel.remove();
+  const TONNAGE_SORT = { C: 0, H: 1, M: 2, L: 3 };
+  const fleet = ((FACTIONS[fk] && FACTIONS[fk].fleet) || [])
+    .filter(d => !d.payload)
+    .slice().sort((a, b) => (TONNAGE_SORT[a.tonnage] ?? 99) - (TONNAGE_SORT[b.tonnage] ?? 99));
+  const totalPts  = fleet.reduce((s, d) => s + d.pts * (d.groupSize || 1), 0);
+  const totalShips = fleet.reduce((s, d) => s + (d.groupSize || 1), 0);
+  const rows = fleet.map(d => {
+    const n = d.groupSize || 1;
+    return `<tr style="border-top:1px solid rgba(255,255,255,0.04);">
+      <td style="padding:5px 6px 5px 0;font-weight:600;">${d.name}</td>
+      <td style="padding:5px 6px;color:var(--text-dim);">${d.role}</td>
+      <td style="padding:5px 6px;text-align:center;color:var(--text-mute);">${d.tonnage}</td>
+      <td style="padding:5px 6px;text-align:center;">${n > 1 ? '×'+n : '1'}</td>
+      <td style="padding:5px 0 5px 6px;text-align:right;">${d.pts * n}<span style="color:var(--text-mute);font-size:9px;">pts</span></td>
+    </tr>`;
+  }).join('');
+  panel = document.createElement('div');
+  panel.id = 'fleet-view-overlay';
+  panel.className = 'setup-overlay';
+  panel.style.zIndex = '400';
+  panel.innerHTML = `
+    <div class="setup-card" style="max-width:480px;">
+      <div class="setup-header">
+        <h2 class="setup-title">${(titleOverride || (FACTIONS[fk] && FACTIONS[fk].name) || fk).toUpperCase()} FLEET</h2>
+        <div class="setup-sub">${fleet.length} GROUPS</div>
+      </div>
+      <div class="setup-body">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="font-size:9px;letter-spacing:0.08em;color:var(--text-mute);">
+              <th style="text-align:left;padding:0 6px 6px 0;">NAME</th>
+              <th style="text-align:left;padding:0 6px 6px;">ROLE</th>
+              <th style="text-align:center;padding:0 6px 6px;">TON</th>
+              <th style="text-align:center;padding:0 6px 6px;">SHIPS</th>
+              <th style="text-align:right;padding:0 0 6px 6px;">PTS</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="border-top:1px solid var(--border);font-weight:700;">
+              <td colspan="3" style="padding:6px 6px 0 0;color:var(--text-mute);font-size:10px;letter-spacing:0.06em;">TOTAL</td>
+              <td style="padding:6px 6px 0;text-align:center;">${totalShips}</td>
+              <td style="padding:6px 0 0 6px;text-align:right;">${totalPts}<span style="color:var(--text-mute);font-size:9px;">pts</span></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
+    </div>`;
+  document.body.appendChild(panel);
+  panel.querySelector('#fleet-view-close').addEventListener('click', () => panel.remove());
+}
+
 /* Build default admiral assignments for an imported fleet. */
 function _buildDefaultAdmiralAssignments(imported) {
   const assignments = [];
@@ -6307,44 +6368,13 @@ function openFleetView(slot) {
 
 function openFleetViewForSide(side) {
   const slot = state.slotForSide && state.slotForSide[side];
+  const fk = (slot && state.fleetChoices && state.fleetChoices[slot])
+           || (side === 'player1' ? state.fleetChoices?.f1 : state.fleetChoices?.f2);
   if (slot) {
     const imported = state.importedFleets && state.importedFleets[slot];
-    const fk = state.fleetChoices && state.fleetChoices[slot];
-    if (imported || fleetHasPayloads(fk)) {
-      openFleetView(slot);
-      return;
-    }
+    if (imported || fleetHasPayloads(fk)) { openFleetView(slot); return; }
   }
-  // Pre-generated fleet — build from active defs.
-  let panel = document.getElementById('fleet-view-overlay');
-  if (panel) panel.remove();
-  const defs = (side === 'player1' ? redFleet() : blueFleet()).filter(d => !d.payload);
-  const TONNAGE_SORT = { C: 0, H: 1, M: 2, L: 3 };
-  defs.sort((a, b) => (TONNAGE_SORT[a.tonnage] ?? 99) - (TONNAGE_SORT[b.tonnage] ?? 99));
-  const sideClass = sideCssKey(side);
-  const cards = defs.map(def => `
-    <div class="group-card" style="min-width:110px;max-width:130px;">
-      <div class="group-name">${def.name}</div>
-      <div class="group-role">${roleLabel(def)} · ${def.tonnage} · ${def.pts}pts${def.groupSize > 1 ? ' ×' + def.groupSize : ''}</div>
-    </div>`).join('');
-  panel = document.createElement('div');
-  panel.id = 'fleet-view-overlay';
-  panel.className = 'setup-overlay';
-  panel.style.zIndex = '400';
-  panel.innerHTML = `
-    <div class="setup-card" style="max-width:600px;">
-      <div class="setup-header">
-        <h2 class="setup-title">${factionName(side).toUpperCase()} FLEET</h2>
-        <div class="setup-sub">${defs.length} groups</div>
-      </div>
-      <div class="setup-body">
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">${cards}</div>
-      </div>
-      <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
-    </div>
-  `;
-  document.body.appendChild(panel);
-  panel.querySelector('#fleet-view-close').addEventListener('click', () => panel.remove());
+  openQuickplayFleetView(fk);
 }
 
 /* Payload→Porter assignment modal (Bioficer, setup-time, per chosen fleet slot).
@@ -7223,6 +7253,18 @@ function renderProtectNomModal() {
   });
 }
 
+// Standard-scenario presets — keyed by scenario ID, used by the Standard tab dropdown and
+// the random button. Defined at module scope so other code can check preset membership.
+const SCEN_PRESETS = {
+  take_and_hold:        { deployment:'line',         approach:'close_enough',          layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey'    },
+  erupting_battlefront: { deployment:'line',         approach:'column',                layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'       },
+  power_grab:           { deployment:'from_corners', approach:'column',                layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' },
+  shock_and_yaw:        { deployment:'table_edges',  approach:'column',                layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   },
+  orbital_support:      { deployment:'line',         approach:'column',                layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      },
+  // Entrapmoont: asymmetric — attacker (player2/Red) Razes, defender (player1/Blue) Protects.
+  entrapmoont:          { deployment:'encirclement', approach:'home_fleet_disadvantage', layout:'entrapmoont', variant:'entrapmoont', objective:'raze', objectives:{ player1:'protect', player2:'raze' } }
+};
+
 function renderSetupOverlay() {
   const board = document.querySelector('.board-wrap');
   let overlay = document.getElementById('setup-overlay');
@@ -7311,7 +7353,7 @@ function renderSetupOverlay() {
         <input type="checkbox" data-asym-toggle ${asym?'checked':''}> ⇄ Asymmetric scoring — each side has its own Objective
       </label>
     </div>`;
-  const asymPickerRow = `<div class="scen-row full-width">
+  const asymPickerRow = asym ? `<div class="scen-row full-width">
       <div class="scen-roll none">⇄</div>
       <div class="scen-label">Scoring Objective</div>
       <div class="scen-helper">Per-side (asymmetric) scoring.</div>
@@ -7319,14 +7361,8 @@ function renderSetupOverlay() {
         <div style="flex:1;min-width:0;"><div style="color:var(--ucm);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player1')}</div><select class="scen-dropdown" data-asym-obj="player1">${objOptionList(scen.objectives.player1)}</select></div>
         <div style="flex:1;min-width:0;"><div style="color:var(--shal);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player2')}</div><select class="scen-dropdown" data-asym-obj="player2">${objOptionList(scen.objectives.player2)}</select></div>
       </div>
-    </div>`;
+    </div>` : '';
   const objectiveSection = (asym ? asymPickerRow : makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)) + asymToggleRow;
-  // Extra-note descriptions for the chosen objective(s).
-  const noteFor = (o, label) => (o && o.d6 > 0) ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)"><b>${label?label+' — ':''}${o.name}:</b> ${o.desc}</div>` : '';
-  const objExtraNote = asym
-    ? noteFor(scen.objectives.player1 ? OBJECTIVES[scen.objectives.player1] : null, playerNameForSide('player1')) +
-      noteFor(scen.objectives.player2 ? OBJECTIVES[scen.objectives.player2] : null, playerNameForSide('player2'))
-    : noteFor(obj, '');
 
   // ---- Two-tab layout: Standard scenarios vs Custom generation ----
   // Tab is shared (relayed) state so both clients stay on the same tab.
@@ -7335,7 +7371,7 @@ function renderSetupOverlay() {
   const lockAttr  = (payloadsLocked || anyReady) ? 'disabled' : '';
   const tabBtn = (key, label) => `<button data-setup-tab="${key}" style="flex:1;padding:8px 6px;font:inherit;font-size:11px;font-weight:700;letter-spacing:0.04em;cursor:pointer;background:none;border:none;border-bottom:2px solid ${setupTab===key?'var(--ucm)':'transparent'};color:${setupTab===key?'var(--ucm)':'var(--text-mute)'};">${label}</button>`;
   const tabsBar = `<div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);">
-      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('custom','⚙ CUSTOM / GENERATE')}
+      ${tabBtn('standard','⚑ STANDARD SCENARIOS')}${tabBtn('custom','⚙ GENERATE SCENARIO')}
     </div>`;
 
   // Standard tab: dropdown + random button + a read-only summary of the chosen scenario
@@ -7365,12 +7401,7 @@ function renderSetupOverlay() {
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
         <select class="btn" data-preset-select style="flex:1;" ${lockAttr} title="Apply a standard scenario">
           <option value="">⚑ Select standard scenario…</option>
-          <option value="take_and_hold">Take and Hold</option>
-          <option value="erupting_battlefront">Erupting Battlefront</option>
-          <option value="power_grab">Power Grab</option>
-          <option value="shock_and_yaw">Shock and Yaw</option>
-          <option value="orbital_support">Orbital Support</option>
-          <option value="entrapmoont">Entrapmoont</option>
+          ${Object.keys(SCEN_PRESETS).map(k => `<option value="${k}"${scen.layout===k?' selected':''}>${LAYOUTS[SCEN_PRESETS[k].layout]?.name || k}</option>`).join('')}
         </select>
         <button class="btn" data-preset="random" ${lockAttr} title="Apply a random standard scenario">⚄ RANDOM</button>
       </div>
@@ -7384,10 +7415,10 @@ function renderSetupOverlay() {
         ${makeCard('approach',  'Approach',        APPROACHES,  scen.approach)}
         ${makeCard('layout',    'Layout',          LAYOUTS,     scen.layout)}
         ${makeCard('variant',   'Variant',         VARIANTS,    scen.variant)}
-        ${objectiveSection}
+        ${makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)}
       </div>
       ${vrn && vrn.d6 > 0 ? `<div class="scen-extra-note"><b>${vrn.name}:</b> ${vrn.desc}</div>` : ''}
-      ${objExtraNote}
+      ${scen.objective && OBJECTIVES[scen.objective]?.d6 > 0 ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)"><b>${OBJECTIVES[scen.objective].name}:</b> ${OBJECTIVES[scen.objective].desc}</div>` : ''}
       <div style="display:flex;justify-content:flex-end;margin-top:10px;">
         <button class="btn" data-reroll="all" ${lockAttr}>⚄ RANDOMISE ALL</button>
       </div>
@@ -7448,14 +7479,11 @@ function renderSetupOverlay() {
         <button class="btn" id="exit-to-menu">← Back</button>
         ${(() => {
           if (!_netSide) {
-            // Hotseat: one ready button per player.
-            const p1Btn = p1Ready
-              ? `<button class="btn" data-unready-setup="player1" style="color:var(--hull-good);border-color:var(--hull-good);">✓ ${playerNameForSide('player1')} READY [${readyCount}/2]</button>`
-              : `<button class="btn-primary" data-ready-setup="player1" ${scenarioComplete ? '' : 'disabled'}>✓ ${playerNameForSide('player1')} READY</button>`;
-            const p2Btn = p2Ready
-              ? `<button class="btn" data-unready-setup="player2" style="color:var(--hull-good);border-color:var(--hull-good);">✓ ${playerNameForSide('player2')} READY [${readyCount}/2]</button>`
-              : `<button class="btn-primary" data-ready-setup="player2" ${scenarioComplete ? '' : 'disabled'}>✓ ${playerNameForSide('player2')} READY</button>`;
-            return p1Btn + p2Btn;
+            // Hotseat: single button confirms both sides at once.
+            if (p1Ready && p2Ready) {
+              return `<button class="btn" data-unready-setup-both style="color:var(--hull-good);border-color:var(--hull-good);">✓ READY — cancel</button>`;
+            }
+            return `<button class="btn-primary" data-ready-setup-both ${scenarioComplete ? '' : 'disabled'}>✓ READY</button>`;
           }
           const mySide = _netSide;
           const myReady = mySide === 'player1' ? p1Ready : p2Ready;
@@ -7499,16 +7527,7 @@ function renderSetupOverlay() {
       renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
     });
   });
-  // Standard-scenario presets — set every scenario row at once.
-  const SCEN_PRESETS = {
-    take_and_hold:        { deployment:'line', approach:'close_enough', layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey' },
-    erupting_battlefront: { deployment:'line',         approach:'column', layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'      },
-    power_grab:           { deployment:'from_corners', approach:'column', layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' },
-    shock_and_yaw:        { deployment:'from_corners', approach:'column', layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   },
-    orbital_support:      { deployment:'line',         approach:'column', layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      },
-    // Entrapmoont: asymmetric — attacker (player2/Red) Razes, defender (player1/Blue) Protects.
-    entrapmoont:          { deployment:'encirclement', approach:'home_fleet_disadvantage', layout:'entrapmoont', variant:'entrapmoont', objective:'raze', objectives:{ player1:'protect', player2:'raze' } }
-  };
+  // Standard-scenario presets (defined at module scope above renderSetupOverlay).
   const applyPreset = (key) => {
     const preset = SCEN_PRESETS[key];
     if (!preset) return;
@@ -7649,12 +7668,30 @@ function renderSetupOverlay() {
       dispatch({ type: 'readySetup', side });
     });
   });
+  const readyBothBtn = overlay.querySelector('[data-ready-setup-both]');
+  if (readyBothBtn) {
+    readyBothBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state.fleetChoices.f1 || !state.fleetChoices.f2) { flashLaunchMsg('Select both fleets first'); return; }
+      if (!scenarioComplete) { flashLaunchMsg('Select all scenario options first'); return; }
+      dispatch({ type: 'readySetup', side: 'player1' });
+      dispatch({ type: 'readySetup', side: 'player2' });
+    });
+  }
   overlay.querySelectorAll('[data-unready-setup]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       dispatch({ type: 'unreadySetup', side: btn.dataset.unreadySetup });
     });
   });
+  const unreadyBothBtn = overlay.querySelector('[data-unready-setup-both]');
+  if (unreadyBothBtn) {
+    unreadyBothBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dispatch({ type: 'unreadySetup', side: 'player1' });
+      dispatch({ type: 'unreadySetup', side: 'player2' });
+    });
+  }
   const exitBtn = overlay.querySelector('#exit-to-menu');
   if (exitBtn) exitBtn.addEventListener('click', () => {
     overlay.remove();
@@ -7998,14 +8035,8 @@ function renderTopbarControls() {
     const r = state.sceneryReady || {};
     let scenBtns;
     if (!_netSide) {
-      // Hotseat: separate done button per side.
-      const p1 = r.player1
-        ? `<span class="btn" style="opacity:0.5;cursor:default;padding:6px 10px;font-size:11px;">✓ ${playerNameForSide('player1')}</span>`
-        : `<button class="btn-primary" data-scenery-done="player1" style="padding:6px 14px;font-size:11px;">✓ ${playerNameForSide('player1')} DONE</button>`;
-      const p2 = r.player2
-        ? `<span class="btn" style="opacity:0.5;cursor:default;padding:6px 10px;font-size:11px;">✓ ${playerNameForSide('player2')}</span>`
-        : `<button class="btn-primary" data-scenery-done="player2" style="padding:6px 14px;font-size:11px;">✓ ${playerNameForSide('player2')} DONE</button>`;
-      scenBtns = `${p1}${p2}`;
+      // Hotseat: single button confirms both sides.
+      scenBtns = `<button class="btn-primary" id="commit-scenery-both" style="padding:6px 14px;font-size:11px;">✓ SCENERY DONE</button>`;
     } else {
       scenBtns = r[_netSide]
         ? `<span style="font-size:10px;color:var(--text-mute);padding:6px;">⏳ Waiting for opponent…</span>`
@@ -12110,6 +12141,11 @@ document.addEventListener('click', (e) => {
   }
   if (e.target.matches('[data-scenery-done]')) {
     commitScenery(e.target.dataset.sceneryDone);
+    return;
+  }
+  if (e.target.matches('#commit-scenery-both')) {
+    commitScenery('player1');
+    commitScenery('player2');
     return;
   }
   // Reset game

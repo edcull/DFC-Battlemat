@@ -435,11 +435,13 @@ export function runScoring(state, rng, round) {
       });
       push(awardVP(state, s, razeVP, 'Raze: distant Levelled/Ruined', round));
     });
-    // Breakthrough: Red (player1) scores 1 VP per 200 pts flown off; the OTHER side scores kills.
+    // Breakthrough: attacker scores 1 VP per 200 pts flown off; defender scores kill points.
     if (objAny(state, 'breakthrough')) {
+      const btAttacker = ['player1','player2'].find(s => objectiveForSide(state, s) === 'breakthrough');
+      const btDefender = btAttacker === 'player1' ? 'player2' : 'player1';
       const flown = state.breakthroughFlyoff || { player1: 0, player2: 0 };
-      push(awardVP(state, 'player1', Math.floor((flown.player1 || 0) / 200), `Breakthrough: ${flown.player1} pts flown off`, round));
-      push(awardVP(state, 'player2', Math.floor(state.score.player2.kp / 500) * 2, 'Breakthrough: pts destroyed', round));
+      push(awardVP(state, btAttacker, Math.floor((flown[btAttacker] || 0) / 200), `Breakthrough: ${flown[btAttacker] || 0} pts flown off`, round));
+      push(awardVP(state, btDefender, Math.floor(state.score[btDefender].kp / 500) * 2, 'Breakthrough: pts destroyed', round));
     }
     // Survey: +1 VP per Dropsite Surveyed.
     if (objAny(state, 'survey')) {
@@ -517,15 +519,18 @@ export function objectivesBeyondEligible(state, gid, si) {
   return distFromZoneIn(state, enemy, ship.y) <= 6;
 }
 
-/* Breakthrough objective: a Red (player1-slot) Ship that has moved and reached within 6"
-   of the opponent's Zone edge may fly off for 1 VP per 200 pts. */
+/* Breakthrough objective: the attacking side's Ships that have moved and reached within 6"
+   of the opponent's Zone edge may fly off for 1 VP per 200 pts. The attacker is whichever
+   side holds the 'breakthrough' objective (supports asymmetric scenarios). */
 export function breakthroughFlyoffEligible(state, gid, si) {
-  if (!state.scenario || objectiveForSide(state, 'player1') !== 'breakthrough') return false;
+  const attacker = ['player1','player2'].find(s => objectiveForSide(state, s) === 'breakthrough');
+  if (!state.scenario || !attacker) return false;
   const def = getDef(state, gid);
-  if (!def || def.side !== 'player1') return false; // only Red flies off for Breakthrough
+  if (!def || def.side !== attacker) return false;
   const ship = state.groups[gid] && state.groups[gid].ships[si];
   if (!ship || ship.destroyed || ship.offTable || !ship.movedThisRound) return false;
-  return distFromZoneIn(state, 'player2', ship.y) <= 6; // within 6" of the opponent's (north) edge
+  const defender = attacker === 'player1' ? 'player2' : 'player1';
+  return distFromZoneIn(state, defender, ship.y) <= 6;
 }
 
 /* Score each side's selected Secondary Objective at game end. Returns log lines. */

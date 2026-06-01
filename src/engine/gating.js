@@ -47,8 +47,11 @@ export function isLegal(state, intent, side) {
       if (state.phase !== 'setup') return false;
       if (!state.scenario) return false;
       if (!state.fleetChoices || !state.fleetChoices.f1 || !state.fleetChoices.f2) return false;
-      const missing = ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k]);
+      const missing = ['deployment','approach','layout','variant'].some(k => !state.scenario[k]);
       if (missing) return false;
+      const sc = state.scenario;
+      const objectiveOk = sc.objective || (sc.objectives && sc.objectives.player1 && sc.objectives.player2);
+      if (!objectiveOk) return false;
       return true;
     }
     case 'readySetup': {
@@ -57,8 +60,11 @@ export function isLegal(state, intent, side) {
       if (state.setupReady && state.setupReady[side]) return false;
       if (!state.scenario) return false;
       if (!state.fleetChoices || !state.fleetChoices.f1 || !state.fleetChoices.f2) return false;
-      const _rsMissing = ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k]);
+      const _rsMissing = ['deployment','approach','layout','variant'].some(k => !state.scenario[k]);
       if (_rsMissing) return false;
+      const _sc = state.scenario;
+      const _objectiveOk = _sc.objective || (_sc.objectives && _sc.objectives.player1 && _sc.objectives.player2);
+      if (!_objectiveOk) return false;
       return true;
     }
     case 'unreadySetup': {
