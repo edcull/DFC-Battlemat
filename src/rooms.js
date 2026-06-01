@@ -3,7 +3,7 @@
 
 import { createState, rebuildFleets } from './engine/state.js';
 import { makeRng } from './engine/rng.js';
-import { deleteSave } from './saves.js';
+import { deleteSaveDb } from './db.js';
 
 const ROOM_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours of inactivity
 const ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // omit 0/O/1/I
@@ -41,6 +41,8 @@ export function createRoom(forceId = null) {
     intentLog: [],          // [{ts, side, intent}] — play phase only
     playStartState: null,   // deep clone of state the moment beginPlay is applied
     playStartRngState: null,
+    creatorUserId: null,    // set by POST /api/rooms for save attribution
+    chatHistory: [],        // [{side, username, text, ts}] — ephemeral, capped at 200
   };
 
   rooms.set(id, room);
@@ -50,6 +52,10 @@ export function createRoom(forceId = null) {
 
 export function getRoom(id) {
   return rooms.get(id) || null;
+}
+
+export function getAllRooms() {
+  return [...rooms.values()];
 }
 
 // Returns { ok: true } or { error: string }.
@@ -112,7 +118,7 @@ function scheduleExpiry(id) {
     }
     for (const ws of room.spectators) try { ws.close(); } catch {}
     rooms.delete(id);
-    deleteSave(id).catch(() => {});
+    deleteSaveDb(id);
     console.log(`Room ${id} expired and removed.`);
   }, ROOM_TTL_MS);
 }

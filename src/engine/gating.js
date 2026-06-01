@@ -47,8 +47,11 @@ export function isLegal(state, intent, side) {
       if (state.phase !== 'setup') return false;
       if (!state.scenario) return false;
       if (!state.fleetChoices || !state.fleetChoices.f1 || !state.fleetChoices.f2) return false;
-      const missing = ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k]);
+      const missing = ['deployment','approach','layout','variant'].some(k => !state.scenario[k]);
       if (missing) return false;
+      const sc = state.scenario;
+      const objectiveOk = sc.objective || (sc.objectives && sc.objectives.player1 && sc.objectives.player2);
+      if (!objectiveOk) return false;
       return true;
     }
     case 'readySetup': {
@@ -57,8 +60,11 @@ export function isLegal(state, intent, side) {
       if (state.setupReady && state.setupReady[side]) return false;
       if (!state.scenario) return false;
       if (!state.fleetChoices || !state.fleetChoices.f1 || !state.fleetChoices.f2) return false;
-      const _rsMissing = ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k]);
+      const _rsMissing = ['deployment','approach','layout','variant'].some(k => !state.scenario[k]);
       if (_rsMissing) return false;
+      const _sc = state.scenario;
+      const _objectiveOk = _sc.objective || (_sc.objectives && _sc.objectives.player1 && _sc.objectives.player2);
+      if (!_objectiveOk) return false;
       return true;
     }
     case 'unreadySetup': {
@@ -147,6 +153,7 @@ export function isLegal(state, intent, side) {
       if (!ship || ship.destroyed) return false;
       if (!ship.movedThisRound) return false;
       if (ship.firedThisActivation || ship.detectorUsed || (ship.launchedThisRound > 0)) return false;
+      if (Object.values(state.groups).some(g => g.ships.some(s => s.deployedByGid === gid))) return false;
       const trail = grp.moveTrail || [];
       return trail.some(t => t.si === si);
     }
@@ -184,6 +191,9 @@ export function isLegal(state, intent, side) {
       }
       // Order is locked once a ship has moved under the current Order.
       if (grp.order && order !== grp.order && grp.ships.some(s => !s.destroyed && s.movedThisRound)) return false;
+      // Block order assignment on a cell group while cells are still mid-Porter-activation
+      // (their order is locked to GQ via ship.order, set at deploy time).
+      if (grp.ships.some(s => !s.destroyed && s.deployedByGid)) return false;
       return true;
     }
     case 'moveShip': {
@@ -226,6 +236,13 @@ export function isLegal(state, intent, side) {
       const cos = (fwd.x * dx + fwd.y * dy) / Math.max(0.0001, dist);
       const angOff = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
       return dist <= v.remaining + 0.5 && angOff <= 20;
+    }
+    case 'endVectoredMove': {
+      const v = state.vectoredSecondMove;
+      if (!v) return false;
+      const def = getDef(state, v.gid);
+      if (!def || def.side !== side) return false;
+      return playTurnOk(state, side);
     }
     case 'beginLaunch': {
       const { gid, si, li } = intent;
@@ -496,7 +513,21 @@ export function isLegal(state, intent, side) {
       if (!ORDERS[intent.order]) return false;
       return true;
     }
-    case 'holdPosition':
+    case 'holdPosition': {
+      if (state.phase !== 'play') return false;
+      const hpGrp = state.groups[intent.gid];
+      if (!hpGrp || hpGrp.activated) return false;
+      const hpDef = getDef(state, intent.gid);
+      if (!hpDef || hpDef.side !== side) return false;
+      if (!playTurnOk(state, side)) return false;
+      const hpShip = hpGrp.ships[intent.si];
+      if (!hpShip || hpShip.destroyed || hpShip.offTable) return false;
+      if (hpShip.firedThisActivation || (hpShip.launchedThisRound > 0)) return false;
+      const hpOrd = hpGrp.order;
+      const inCourseChange = state.aiming && state.aiming.mode === 'course_change'
+        && state.aiming.gid === intent.gid && state.aiming.si === intent.si;
+      return (hpOrd === 'CC' || hpOrd === 'DC') && (!hpShip.movedThisRound || inCourseChange);
+    }
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
@@ -569,7 +600,7 @@ export function isLegal(state, intent, side) {
       const grp = state.groups && state.groups[gid];
       if (!grp) return false;
       if (delta !== 1 && delta !== -1) return false;
-      if (side && grp.side !== side) return false;
+      if (side && grp.def.side !== side) return false;
       return true;
     }
 
@@ -580,7 +611,7 @@ export function isLegal(state, intent, side) {
       const ship = grp.ships && grp.ships[si];
       if (!ship) return false;
       if (delta !== 1 && delta !== -1) return false;
-      if (side && grp.side !== side) return false;
+      if (side && grp.def.side !== side) return false;
       return true;
     }
 

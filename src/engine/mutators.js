@@ -437,11 +437,13 @@ export function runScoring(state, rng, round) {
       });
       push(awardVP(state, s, razeVP, 'Raze: distant Levelled/Ruined', round));
     });
-    // Breakthrough: Red (player1) scores 1 VP per 200 pts flown off; the OTHER side scores kills.
+    // Breakthrough: attacker scores 1 VP per 200 pts flown off; defender scores kill points.
     if (objAny(state, 'breakthrough')) {
+      const btAttacker = ['player1','player2'].find(s => objectiveForSide(state, s) === 'breakthrough');
+      const btDefender = btAttacker === 'player1' ? 'player2' : 'player1';
       const flown = state.breakthroughFlyoff || { player1: 0, player2: 0 };
-      push(awardVP(state, 'player1', Math.floor((flown.player1 || 0) / 200), `Breakthrough: ${flown.player1} pts flown off`, round));
-      push(awardVP(state, 'player2', Math.floor(state.score.player2.kp / 500) * 2, 'Breakthrough: pts destroyed', round));
+      push(awardVP(state, btAttacker, Math.floor((flown[btAttacker] || 0) / 200), `Breakthrough: ${flown[btAttacker] || 0} pts flown off`, round));
+      push(awardVP(state, btDefender, Math.floor(state.score[btDefender].kp / 500) * 2, 'Breakthrough: pts destroyed', round));
     }
     // Survey: +1 VP per Dropsite Surveyed.
     if (objAny(state, 'survey')) {
@@ -519,15 +521,18 @@ export function objectivesBeyondEligible(state, gid, si) {
   return distFromZoneIn(state, enemy, ship.y) <= 6;
 }
 
-/* Breakthrough objective: a Red (player1-slot) Ship that has moved and reached within 6"
-   of the opponent's Zone edge may fly off for 1 VP per 200 pts. */
+/* Breakthrough objective: the attacking side's Ships that have moved and reached within 6"
+   of the opponent's Zone edge may fly off for 1 VP per 200 pts. The attacker is whichever
+   side holds the 'breakthrough' objective (supports asymmetric scenarios). */
 export function breakthroughFlyoffEligible(state, gid, si) {
-  if (!state.scenario || objectiveForSide(state, 'player1') !== 'breakthrough') return false;
+  const attacker = ['player1','player2'].find(s => objectiveForSide(state, s) === 'breakthrough');
+  if (!state.scenario || !attacker) return false;
   const def = getDef(state, gid);
-  if (!def || def.side !== 'player1') return false; // only Red flies off for Breakthrough
+  if (!def || def.side !== attacker) return false;
   const ship = state.groups[gid] && state.groups[gid].ships[si];
   if (!ship || ship.destroyed || ship.offTable || !ship.movedThisRound) return false;
-  return distFromZoneIn(state, 'player2', ship.y) <= 6; // within 6" of the opponent's (north) edge
+  const defender = attacker === 'player1' ? 'player2' : 'player1';
+  return distFromZoneIn(state, defender, ship.y) <= 6;
 }
 
 /* Score each side's selected Secondary Objective at game end. Returns log lines. */
@@ -693,9 +698,14 @@ export function rollInitiative(state, rng) {
     player2: 1 + effectiveAdmiral.player2 + cmdBonus.player2 + comms.player2,
   };
   // Pass Tokens: a side 2+ Groups fewer than the leader gets 1, +1 per further fewer.
+  // Count groups with at least one alive ship on the table, OR groups eligible to
+  // arrive/deploy this turn (canActivateOffTable handles play-phase reserve rules).
   const groupCount = (side) => fleetForSide(state, side).filter(def => {
     const g = state.groups[def.id];
-    return g && g.ships.some(s => !s.destroyed && (!s.offTable || canDeployNow(state, def)));
+    if (!g) return false;
+    const hasOnTable = g.ships.some(s => !s.destroyed && !s.offTable);
+    if (hasOnTable) return true;
+    return canActivateOffTable(state, def).eligible;
   }).length;
   const gc = { player1: groupCount('player1'), player2: groupCount('player2') };
   const most = Math.max(gc.player1, gc.player2);
@@ -712,6 +722,19 @@ export function rollInitiative(state, rng) {
     holder: red > blue ? 'player1' : 'player2',
     round: state.round
   };
+  // Pre-activate groups that have no ships eligible to act this round so they
+  // are never presented to players and never need a finishActivation intent.
+  // Done here (server-authoritative) rather than on each client to avoid races.
+  ['player1', 'player2'].forEach(side => {
+    fleetForSide(state, side).forEach(def => {
+      const grp = state.groups[def.id];
+      if (!grp || grp.activated) return;
+      const hasOffTable = grp.ships.some(s => !s.destroyed && s.offTable && !s.attachedTo);
+      const hasActive   = grp.ships.some(s => !s.destroyed && (!s.offTable || s.justArrived))
+                        || (hasOffTable && canActivateOffTable(state, def).eligible);
+      if (!hasActive) grp.activated = true;
+    });
+  });
 }
 
 // ── SECTION C: ASSET AND DROPSITE LOGIC ──
@@ -2735,7 +2758,7 @@ export function shipInNetwork(state, def, ship) {
 }
 export function onIndividualOrders(state, def, grp) {
   if (def.openNetwork) return grp && grp.ships.some(s => shipInNetwork(state, def, s));
-  if (def.payload) return state.round >= 2;
+  if (def.payload) return state.round >= 2 || (grp && grp.ships.some(s => s.deployedByGid));
   return false;
 }
 /* The ship arc/range measurement originates from the lead ship (when explicitly
@@ -3630,6 +3653,16 @@ export function apply(state, intent, rng) {
     case 'moveShip':     return commitMove(state, rng, intent.gid, intent.si, intent.x, intent.y, intent.layerToggle);
     case 'aimShip':      return aimShip(state, intent.x, intent.y);
     case 'vectoredMove': return commitVectoredSecondMove(state, intent.x, intent.y);
+    case 'endVectoredMove': state.vectoredSecondMove = null; state.hoverPoint = null; return state;
+    case 'holdPosition': {
+      const hpShip = state.groups[intent.gid] && state.groups[intent.gid].ships[intent.si];
+      if (hpShip) hpShip.movedThisRound = true;
+      if (state.aiming && state.aiming.mode === 'course_change' && state.aiming.gid === intent.gid) {
+        state.aiming = null;
+        state.hoverPoint = null;
+      }
+      return state;
+    }
     case 'attackStep':         return advanceAttack(state, rng, state.attackModal, intent.to);
     case 'attackReroll':       return attackReroll(state, rng, state.attackModal, intent.which);
     case 'attackFighterReroll':return attackFighterReroll(state, rng, state.attackModal);
@@ -3671,7 +3704,6 @@ export function apply(state, intent, rng) {
       logEvent(state, `${exDef.name} extracted ${exTake} Operative${exTake > 1 ? 's' : ''} from ${exDs.base.name}`);
       return state;
     }
-    case 'holdPosition':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':
@@ -3863,7 +3895,6 @@ export function apply(state, intent, rng) {
       logEvent(state, `${def.name || gid} #${si + 1} HP ${delta > 0 ? '+1' : '−1'} → ${newHull}/${ship.maxHull}${ship.destroyed ? ' (destroyed)' : ''}`);
       return state;
     }
-    case 'holdPosition':
     case 'surveySite':
     case 'objectivesFlyoff':
     case 'breakthroughFlyoff':

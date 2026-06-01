@@ -14,7 +14,16 @@ Two entry points:
 
 - **Hotseat:** Serve the repo root with any static server, then open `client/index.html`
 - **Online play:** `npm install`, then `npm start` (or `npm run dev` for `node --watch` auto-restart). Serves the client at `http://localhost:3000/client/index.html` and exposes the room REST API + `/ws` WebSocket
-- **No build step, no lint, no test suite.** Runtime deps (Express, ws, fast-json-patch) are needed only by the Node server; the browser client has none
+- **No build step, no lint, no test suite.** Runtime deps (Express, ws, fast-json-patch, bcryptjs, better-sqlite3, etc.) are needed only by the Node server; the browser client has none
+
+### Environment variables (online server)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | HTTP listen port |
+| `SESSION_SECRET` | `change-me-in-production` | Signs session cookies — **must** be set in production |
+
+Copy `.env.example` (if present) to `.env`, or set vars in the environment directly. The server warns at startup if `SESSION_SECRET` is the default.
 
 ## Architecture
 
@@ -34,24 +43,46 @@ All engine functions take `state` (and `rng` where randomness is needed) as expl
 
 **Intent layer:** an "intent" is a small serialisable action `{ type, ...payload }`. `gating.js#isLegal` is the single legality gate (run by the server before applying, and by the client before mutating in hotseat); `mutators.js#apply` dispatches an intent to its mutator. Every intent type `apply()` handles must have a matching `isLegal` case.
 
-### Server (`server.js`, `src/api.js`, `src/rooms.js`, `src/saves.js`)
+### Server (`server.js`, `src/api.js`, `src/rooms.js`, `src/saves.js`, `src/db.js`, `src/auth.js`, `src/admin.js`)
 
 The Node.js server hosts online two-player rooms. It is **optional**: the browser client works without it for hotseat play.
 
 | File | Contents |
 |---|---|
-| `server.js` | Express + WebSocket entry point. Serves the repo root as static files, mounts the `/api` router, and upgrades `/ws` requests to WebSocket. Listens on `PORT` (default 3000). |
+| `server.js` | Express + WebSocket entry point. Serves the repo root as static files, mounts the `/api` router, and upgrades `/ws` requests to WebSocket. Initialises the SQLite DB, bootstraps admin roles, and wires session middleware into the WebSocket upgrade path. Listens on `PORT` (default 3000). |
 | `src/api.js` | REST routes (`POST /api/rooms`, `GET /api/rooms/:id`, `GET /api/saves`, `GET /api/saves/:id`, `POST /api/rooms/resume`, `GET /api/rooms/:id/replay`) and the WebSocket connection/message handler. |
 | `src/rooms.js` | In-memory room lifecycle: create/join/leave, side slots + spectators, broadcast/send helpers, and a 4-hour inactivity TTL. `createRoom(forceId?)` accepts an optional ID so resumed games keep their original room code. |
-| `src/saves.js` | File-based persistence to `saves/<ROOM_ID>.json`. `saveRoom` is called after every authoritative action (both intent and relay paths). |
+| `src/saves.js` | Dual-write persistence: SQLite primary (via `upsertSave`) + JSON file backup under `saves/<ROOM_ID>.json`. `saveRoom(room, userId?)` is called after every authoritative action. `loadAllSaves(userId?)` returns per-user saves when authenticated, all saves otherwise. Falls back to file reads if the DB is unavailable. |
+| `src/db.js` | SQLite layer (`better-sqlite3`). `initDb()` creates/migrates `data/dfc.db`. Tables: `users`, `saves`, `room_slots`. Exports CRUD helpers for all three. Sessions are stored separately in `data/dfc.db` by `connect-sqlite3`. |
+| `src/auth.js` | Auth routes mounted at `/api/auth`: `POST /register`, `POST /login`, `POST /logout`, `GET /me`. Passwords hashed with bcryptjs (cost 12). Sessions are cookie-based (httpOnly, SameSite=lax, 30-day expiry). |
+| `src/admin.js` | Admin routes mounted at `/api/admin` (require `role === 'admin'`): `GET /users`, `DELETE /users/:id`, `PATCH /users/:id/role`, `POST /users/:id/reset-password`, `GET /rooms`, `GET /saves`, `DELETE /saves/:id`. |
 
 Each room holds the authoritative `state` and a seeded `rng`. The server runs two paths:
 - **Intent path (authoritative):** `{type:'intent', intent}` → `isLegal` → `apply` → broadcast `{type:'full'}`. The client does **not** mutate locally for these.
 - **Relay path (legacy):** `{type:'state'}` → store as authoritative → rebroadcast. Used by the few remaining un-migrated action families.
 
+### Authentication & Room Ownership
+
+The server uses session-based authentication (cookie `connect.sid`). `req.user` is set on every `/api` request and on WebSocket upgrades by reading `req.session.userId` and looking up the user in the DB.
+
+**Room slot ownership** — when an authenticated user creates or resumes a room, their user ID is written to `room_slots` for `player1`. When any authenticated user connects to a WebSocket slot, the slot is claimed if free; if already claimed by a different user the connection is rejected. Anonymous users can connect to unclaimed slots freely. This prevents session-hopping in online games.
+
+**`GET /api/saves`** returns only the requesting user's saves (games where they are `owner_user_id` or `player2_user_id`). Unauthenticated requests return all saves (legacy behaviour).
+
+### SQLite schema (`data/dfc.db`)
+
+Three tables managed by `initDb()` in `src/db.js`:
+- **`users`** — `id`, `username` (unique, case-insensitive), `password_hash`, `role` (`player`|`admin`), `created_at`
+- **`saves`** — one row per `room_id`; mirrors the JSON save format with metadata columns (`phase`, `round`, `factions_json`, etc.) plus `owner_user_id` / `player2_user_id` FKs. Full state blobs stored as JSON text columns.
+- **`room_slots`** — `(room_id, side)` → `user_id`; cleared when a room expires or is deleted.
+
+Sessions are stored in the same DB file by `connect-sqlite3` (separate table managed by that library).
+
+Inline migrations in `initDb()` handle schema evolution via `ALTER TABLE … ADD COLUMN` wrapped in try/catch.
+
 ### Save / Resume / Replay
 
-Games are auto-saved to `saves/<ROOM_ID>.json` after every server-side action. Each save contains:
+Games are auto-saved to SQLite (and `saves/<ROOM_ID>.json` as backup) after every server-side action. Each save contains:
 - `currentState` / `currentRngState` — full game snapshot for resume
 - `playStartState` / `playStartRngState` — snapshot captured the first time `room.state.phase` transitions to `'play'` (via `deployDone` when both sides finish, or directly via `beginPlay`)
 - `intentLog` — ordered list `[{ts, side, intent}]` of every server-authoritative play-phase action
@@ -121,10 +152,17 @@ The scenario chooser in the setup overlay has three tabs. The active tab is `sta
 - **Custom / Generate tab:** per-row pickers + ↻ rerolls for Deployment Type, Approach, Layout, Variant and Scoring Objective, plus RANDOMISE ALL. Standard-scenario-only and expansion-only `LAYOUTS`/`APPROACHES`/`VARIANTS`/`OBJECTIVES` (flagged `bespoke:true`, `d6:0`) are hidden from these generator dropdowns/rerolls and never produced by `generateScenario`; `No Variant` stays available.
 - **Asymmetric scoring:** the Scoring Objective row has an "Asymmetric scoring" toggle. When on, `state.scenario.objectives = { player1, player2 }` overrides the shared `state.scenario.objective`. `objectiveForSide(state, side)` / `objAny(state, key)` (in `mutators.js`) resolve all per-side scoring — Standard Scoring, Raze/Attrition/Survey/Extract bonuses, Protect doubling/penalty/nomination, and Extract seeding. Used by Entrapmoont (attacker Raze / defender Protect).
 
+### Auth overlay & user chip
+
+On page load the client calls `GET /api/auth/me`. If not logged in (or the server is unavailable) a login/register overlay (`showAuthScreen()`) is shown before the mode selector. The overlay toggles between login and register modes. On success, `currentUser` is set and the overlay dismissed.
+
+A **user chip** (`#topbar-user`) in the top-right of the topbar shows the logged-in username and a sign-out button (`⏏`). On first setup, if the player name is still the default (`'Player 1'`), it is pre-filled with the logged-in username.
+
 ### Topbar
 - **`renderBrand()`** — in play phase renders a clickable button showing `{FACTION1} {P1vp} {P1name} VS {P2name} {P2vp} {FACTION2}` (opens VP breakdown modal). In other phases shows plain faction names.
 - Phase breadcrumb nav is always visible.
 - Play-phase controls (round counter, END ROUND) remain in `topbar-controls`.
+- **User chip** (top-right) — shows `⬡ <username>` when logged in, with a sign-out button.
 
 ### Fleet panels (left)
 - **`makeGroupCard()`** — group cards show name, role, tonnage. Admiral flagship marked with ⭐. Deployment/reserve/activation badges as appropriate.

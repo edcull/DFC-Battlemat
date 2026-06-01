@@ -1,6 +1,6 @@
 # DFC Fleet Ops
 
-**App v0.1.0** &nbsp;·&nbsp; Rulebook v2.3.1 &nbsp;·&nbsp; Errata v1.3
+**App v0.1.1** &nbsp;·&nbsp; Rulebook v2.3.1 &nbsp;·&nbsp; Errata v1.3
 
 A browser-based tactical assistant for **Dropfleet Commander**. The client (`client/index.html`) requires a small static server to load ES modules; an optional Node.js server adds online two-player rooms.
 
@@ -17,22 +17,33 @@ Designed for **two player hotseat**, and **full online two-player** support via 
 ## Quick start
 
 1. **Hotseat:** serve the repo root with any static server (e.g. `python -m http.server`) and open `client/index.html`. **Online play:** run `npm install && npm start` and open `http://localhost:3000/client/index.html`.
-2. **Setup** — choose factions, admirals, secondary objectives for each side, then either pick a **standard scenario** (or roll a random one) or build a custom one from deployment/approach/layout/variant/scoring objective. Hit **⚡ TEST SETUP** for an instant UCM vs Scourge game if you just want to try it.
+2. **Setup** — choose factions, admirals, secondary objectives for each side, then either pick a **standard scenario** (or roll a random one) or build a custom one from deployment/approach/layout/variant/scoring objective.
 3. **Scenery** — place or randomise scenery objects. The 3D view activates automatically when scenery is complete.
 4. **Deploy** — click a group in the left panel, then click in your deployment zone to place each ship. Move the mouse and click again to set facing, then hit **✓ CONFIRM PLACEMENT**. Multi-ship groups prompt for each ship in turn. Use **↩ UNDO DEPLOY** in the board HUD to return a whole group off-table.
 5. **Play** — activate groups, move ships, assign weapon targets, fire, launch assets, and score VP. Click **FINISH ACTIVATION** after each group.
 
 ---
 
+## Accounts & authentication
+
+The Node server supports optional user accounts. On first load the client checks `/api/auth/me` — if you're not logged in, a login/register screen appears before the mode selector. You can dismiss it to play anonymously.
+
+- **Register** — pick a username (3–32 chars, letters/numbers/underscore) and a password (8+ chars).
+- **Login / logout** — sessions last 12 hours; the active username appears in the top-right of the screen.
+- **Save ownership** — rooms you create or resume are linked to your account; your saves list (`↩ SAVED GAMES`) shows only your own games.
+- **Admin panel** — users with the `admin` role can manage users and saves via `/api/admin/*`.
+
+---
+
 ## Save, resume, and replay
 
-Online games (Node server) are **auto-saved** to `saves/<ROOM_ID>.json` after every action. The mode selector (shown on first load) provides:
+Online games (Node server) are **auto-saved** to SQLite (`data/dfc.db`) after every action, with a JSON file backup in `saves/<ROOM_ID>.json`. The mode selector (shown on first load) provides:
 
 - **↩ SAVED GAMES** — opens a list of all saves. Each entry shows the round and save time with two actions:
   - **▶ RESUME** — creates a live room from the save (preserving the original room code), shows a side picker with coloured player buttons and an opponent share link, then connects you as the chosen player.
   - **↺ REPLAY** — loads the full intent history and replays it step-by-step. Greyed out if the save pre-dates intent logging. While replaying, the URL updates to `?replay=<ROOM_ID>` and a control bar (◀ PREV / ▶ NEXT / RND ⟩⟩ / ▶ PLAY) appears at the top. **✕ EXIT REPLAY** returns to the mode selector.
 
-Save files contain:
+Saves contain:
 - `currentState` / `currentRngState` — full game snapshot used for resume
 - `playStartState` / `playStartRngState` — snapshot at the moment play began, used as the replay starting point
 - `intentLog` — ordered list of every server-authoritative action taken during play
@@ -188,13 +199,17 @@ Shield-X, Reinforced Armour, Cloak-X, Command Ship-X, Regenerate-X, Stealth, Esc
 ## File structure
 
 ```
-package.json                    — Node project + deps (express, ws, fast-json-patch); npm start / npm run dev
-server.js                       — Node server: Express static + REST API + WebSocket upgrade
+package.json                    — Node project + deps; npm start / npm run dev
+server.js                       — Node server: Express + session middleware + REST API + WebSocket upgrade
 client/
   index.html                    — Module-based client (imports src/engine/ and src/fleet/; hotseat + online)
 src/
   api.js                        — REST routes + WebSocket message handler
+  auth.js                       — Auth routes: POST /api/auth/register|login|logout, GET /api/auth/me
+  admin.js                      — Admin routes: /api/admin/users|rooms|saves (role=admin required)
+  db.js                         — SQLite layer (better-sqlite3): users, saves, room_slots tables + helpers
   rooms.js                      — In-memory room lifecycle (slots, spectators, broadcast, TTL)
+  saves.js                      — Dual-write persistence: SQLite primary + saves/<ID>.json backup
   engine/
     constants.js                — All fleet defs, ORDERS, LAYOUTS, ASSET_PROFILES, SECONDARY_OBJECTIVES, etc.
     rng.js                      — Seeded PRNG + Math.random wrapper for local play
@@ -204,6 +219,10 @@ src/
   fleet/
     db.js                       — Full ship/weapon DB + admiral ability data for all 6 factions
     parser.js                   — New Recruit list parser: parseNewRecruit(text)
+data/
+  dfc.db                        — SQLite database (auto-created; stores users, saves, sessions)
+saves/
+  *.json                        — JSON save backups (auto-created)
 reference/
   *.pdf                         — Faction fleet stat sheets and rulebook (source of truth for rules/data)
 ```

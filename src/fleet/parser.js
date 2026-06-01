@@ -58,6 +58,7 @@ function extractParenOptions(name) {
 }
 
 // Parse "2x Rio Cruiser [85 pts]" or "Rio Cruiser [165 pts]" or "• 2x Rio Cruiser [85 pts]"
+// Also handles inline options after [pts]: "1x Cruiser [102 pts]: Ablative Armour, Vent Cannon Turret"
 function parseShipLine(line) {
   let s = line.replace(/^[•·\-*]\s*/, '').trim();
   const countMatch = s.match(/^(\d+)x\s+/);
@@ -66,12 +67,25 @@ function parseShipLine(line) {
     count = parseInt(countMatch[1]);
     s = s.slice(countMatch[0].length);
   }
-  const ptsMatch = s.match(/^(.*?)\s*\[(\d+)\s*pts\]/);
+  const ptsMatch = s.match(/^(.*?)\s*\[(\d+)\s*pts\](.*)/);
   if (!ptsMatch) return null;
   const rawName = ptsMatch[1].trim();
   const pts = parseInt(ptsMatch[2]);
+  const afterPts = ptsMatch[3] || '';
   if (!rawName) return null;
   const { cleanName, options } = extractParenOptions(rawName);
+  // Extract inline options from ": Option [Xpts], 2x Option2, ..." after the pts bracket.
+  if (afterPts) {
+    afterPts.replace(/^[:\s]+/, '').split(',').forEach(part => {
+      const countM = part.trim().match(/^(\d+)x\s+/);
+      const n = countM ? parseInt(countM[1]) : 1;
+      const clean = part.replace(/^\s*\d+x\s+/, '').replace(/\s*\[\d+\s*pts?\]\s*$/, '').trim();
+      const key = clean.toLowerCase().replace(/\s+/g, ' ');
+      if (clean && KNOWN_OPTIONS.has(key)) {
+        for (let i = 0; i < n; i++) options.push(clean);
+      }
+    });
+  }
   return { name: cleanName, count, pts, options };
 }
 

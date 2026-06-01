@@ -25,10 +25,10 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  * { font-feature-settings: "zero" 0; }
   body {
     background: var(--bg); color: var(--text);
     font-family: var(--mono); font-size: 12px; line-height: 1.4;
-    font-feature-settings: "zero" 1; /* slashed zero — distinguishes 0 from 8 */
     background-image:
       radial-gradient(ellipse at top, rgba(74,214,255,0.04), transparent 60%),
       linear-gradient(to bottom, var(--bg), #060a0c);
@@ -125,8 +125,8 @@
   /* ============== SETUP OVERLAY ============== */
   .setup-overlay {
     position: absolute; inset: 0;
-    background: rgba(8,16,15,0.93);
-    backdrop-filter: blur(6px);
+    background: var(--bg);
+    backdrop-filter: none;
     display: flex; align-items: center; justify-content: center;
     z-index: 50; overflow-y: auto; padding: 20px;
   }
@@ -280,13 +280,13 @@
   }
   .scen-row .scen-controls .scen-dropdown { flex: 0 0 75%; }
   .scen-row .scen-controls .reroll-btn { flex: 1 1 25%; margin-top: 0; }
-  .scen-row .scen-dropdown {
+  .scen-dropdown {
     background: var(--panel); border: 1px solid var(--border-bright);
     color: var(--text); font-family: var(--mono); font-size: 12px;
     padding: 8px 10px; border-radius: 4px; cursor: pointer; width: 100%;
     color-scheme: dark;
   }
-  .scen-row .scen-dropdown:hover { border-color: var(--text); }
+  .scen-dropdown:hover { border-color: var(--text); }
   .scen-row .picker-btn {
     background: transparent;
     border: 1px solid var(--border);
@@ -529,6 +529,60 @@
     border-top: 1px solid var(--border-bright);
     background: rgba(8,12,11,0.6);
   }
+  #event-log-dock.chat-dock-float {
+    position: fixed; bottom: 0; right: 0; width: 280px;
+    visibility: visible; z-index: 55;
+    border-left: 1px solid var(--border-bright);
+    background: var(--bg-elev);
+    max-height: 44vh;
+    display: flex; flex-direction: column;
+  }
+  .log-tab-bar {
+    display: flex; align-items: stretch; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.25);
+  }
+  .log-tab-btn {
+    flex: 1; background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 5px 8px; cursor: pointer; font-family: var(--mono);
+    font-size: 8.5px; letter-spacing: 0.12em; color: var(--text-mute);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+  }
+  .log-tab-btn.active { color: var(--text); border-bottom-color: var(--ucm); }
+  .log-tab-btn:hover:not(.active) { color: var(--text-dim); }
+  .chat-unread {
+    background: var(--ucm); color: #000; font-size: 7.5px; font-weight: 700;
+    border-radius: 8px; padding: 1px 5px; line-height: 1.4;
+  }
+  .chat-body {
+    flex: 1; overflow-y: auto; padding: 4px 0; min-height: 48px;
+  }
+  .chat-msg {
+    padding: 3px 11px; display: flex; flex-direction: column; gap: 1px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+  }
+  .chat-msg-header { display: flex; gap: 6px; align-items: baseline; }
+  .chat-msg-user { font-size: 8px; font-family: var(--mono); font-weight: 700; color: var(--text-dim); }
+  .chat-msg-user.player1 { color: var(--ucm); }
+  .chat-msg-user.player2 { color: var(--shal); }
+  .chat-msg-time { font-size: 7.5px; font-family: var(--mono); color: var(--text-mute); }
+  .chat-msg-text { font-size: 10px; color: var(--text); line-height: 1.4; word-break: break-word; }
+  .chat-input-row {
+    display: flex; gap: 4px; padding: 6px 8px; flex-shrink: 0;
+    border-top: 1px solid var(--border); background: rgba(0,0,0,0.2);
+  }
+  .chat-input {
+    flex: 1; background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 10px;
+    padding: 5px 7px; border-radius: 3px; min-width: 0;
+  }
+  .chat-input:focus { outline: none; border-color: var(--ucm); }
+  .chat-send-btn {
+    padding: 5px 9px; font-size: 10px; background: var(--ucm);
+    color: #000; border: none; border-radius: 3px; cursor: pointer; font-weight: 700;
+  }
+  .chat-send-btn:hover { filter: brightness(1.15); }
+  .chat-empty { padding: 8px 11px; font-size: 9.5px; font-family: var(--mono); color: var(--text-mute); }
   .panel-section {
     padding: 8px 12px;
     border-bottom: 1px solid var(--border);
@@ -679,6 +733,19 @@
   }
   .hud-btn:hover { color: var(--text); border-color: var(--border-bright); }
   .hud-btn.active { color: var(--shal); border-color: var(--shal-dim); }
+  .hud-row { display: flex; gap: 4px; align-items: center; pointer-events: auto; }
+  .hud-icon-btn {
+    pointer-events: auto; cursor: pointer;
+    background: rgba(8,16,15,0.85); border: 1px solid var(--border);
+    color: var(--text-mute); font-family: var(--mono); font-size: 13px;
+    width: 24px; height: 24px; padding: 0; border-radius: 2px;
+    backdrop-filter: blur(4px); text-align: center; line-height: 22px;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .hud-icon-btn:hover { color: var(--text-dim); border-color: var(--border-bright); }
+  #btn-arc-toggle.active { color: var(--ucm); border-color: var(--ucm-dim); }
+  #btn-sig-toggle.active { color: var(--hull-crit); border-color: rgba(255,82,82,0.45); }
+  #btn-trails-toggle.active { color: var(--shal); border-color: var(--shal-dim); }
 
   .board-legend {
     position: absolute; bottom: 8px; left: 8px;
@@ -971,6 +1038,7 @@
 </style>
 </head>
 <body>
+<div id="app-cover" style="position:fixed;inset:0;background:var(--bg);z-index:9999;pointer-events:none;"></div>
 <div class="app">
 
   <header class="topbar">
@@ -995,6 +1063,7 @@
     <div class="topbar-controls" id="topbar-controls">
       <!-- populated by renderTopbarControls() -->
     </div>
+    <div id="topbar-user" style="display:flex;align-items:center;gap:6px;padding:0 10px;font-family:var(--mono);font-size:9px;color:var(--text-mute);white-space:nowrap;"></div>
   </header>
 
   <div id="replay-bar" style="display:none;grid-column:1/-1;z-index:9999;background:#0d1a1f;border-bottom:2px solid #2a7fff;padding:6px 14px;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;color:#ccc;">
@@ -1027,7 +1096,12 @@
     <div class="board-hud">
       <div class="hud-item" id="hud-active">SELECT A GROUP →</div>
       <div class="hud-item" id="hud-turn-info" style="display:none;"></div>
-      <button class="hud-item hud-btn" id="btn-3d-toggle">3D VIEW</button>
+      <div class="hud-row">
+        <button class="hud-btn" id="btn-3d-toggle" style="padding:4px 7px;" title="Toggle 3D view">3D</button>
+        <button class="hud-icon-btn" id="btn-arc-toggle" data-arcview="1" title="Arcs+Scan: show weapon arcs &amp; scan range / enemy signatures">⚙</button>
+        <button class="hud-icon-btn" id="btn-sig-toggle" data-arcview="2" title="Sig: show own signature aura / enemy arcs &amp; scan ranges">◎</button>
+        <button class="hud-icon-btn" id="btn-trails-toggle" title="Toggle movement trail lines">↝</button>
+      </div>
     </div>
     <div class="board-legend">
       <div class="legend-row">
@@ -1064,7 +1138,6 @@
 // ─── ENGINE IMPORTS ──────────────────────────────────────────────────────────
 import { APP_VERSION, RULEBOOK_VERSION, ERRATA_VERSION } from '../src/engine/version.js';
 import {
-  UCM_FLEET, SHAL_FLEET, PHR_FLEET, RESISTANCE_FLEET, SCOURGE_FLEET, BIOFICER_FLEET,
   FACTIONS, ORDERS, INCH, BOARD_IN, BOARD_PX,
   DROPSITE_BASE, FEATURES, ds, LAYOUTS, DEPLOYMENTS,
   APPROACH_BEHAVIOURS, APPROACHES, VARIANTS,
@@ -1073,6 +1146,7 @@ import {
 
 import { localRng as _rng, rollD6 as _rollD6, rollDie as _rollDie, makeRng as _makeRng } from '../src/engine/rng.js';
 import { parseNewRecruit } from '../src/fleet/parser.js';
+import { FASTPLAY_LISTS } from '../src/fleet/fastplay/index.js';
 import { findShipDef, ADMIRAL_FACTION_ABILITIES, FAMOUS_ADMIRAL_ABILITIES, FACTION_ADMIRAL_TITLES, FACTION_ADMIRAL_PERSONAL, SHIP_SPECIAL_RULES } from '../src/fleet/db.js';
 
 import {
@@ -1175,6 +1249,9 @@ import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 const DROPSITE_VP = { S: { control: 2, contest: 0 }, M: { control: 3, contest: 1 }, L: { control: 4, contest: 2 } };
 let state   = createState();
 const rng   = _rng;   // Math.random — hotseat mode, no seed
+
+// ─── AUTH STATE ───────────────────────────────────────────────────────────────
+let currentUser = null; // { loggedIn, username, userId } — set on page load
 
 // ─── REPLAY STATE ─────────────────────────────────────────────────────────────
 let _replayMode     = false;
@@ -1379,39 +1456,121 @@ function renderEventLog() {
   const dock = document.getElementById('event-log-dock');
   if (!dock) return;
   const isOnline = !!_netRoom;
-  const netPrefix = isOnline
-    ? `<span id="log-net-room" style="font-size:8px;font-family:var(--mono);color:var(--text-mute);letter-spacing:0.06em;">${_netRoom}</span>` +
-      `<span id="log-net-dot" style="width:6px;height:6px;border-radius:50%;background:${_netConnected ? '#4ad66d' : '#ff5252'};display:inline-block;flex-shrink:0;"></span>`
-    : '';
+
+  // Float above the setup overlay during non-play phases (setup overlay covers the panel)
+  if (isOnline && state.phase !== 'play') {
+    dock.classList.add('chat-dock-float');
+  } else {
+    dock.classList.remove('chat-dock-float');
+  }
+
   dock.style.display = '';
-  if (state.phase !== 'play') {
+
+  // Non-online, non-play: minimal header only
+  if (!isOnline && state.phase !== 'play') {
     dock.innerHTML = `<div style="display:flex;align-items:center;gap:6px;padding:6px 11px;font-family:var(--mono);">
-      ${netPrefix}
       <span style="font-size:8px;letter-spacing:0.14em;color:var(--text-mute);">EVENT LOG</span>
     </div>`;
     return;
   }
-  const log = state.eventLog || [];
-  const expanded = !!state.logExpanded;
-  const shown = expanded ? log.slice().reverse() : log.slice(-3).reverse();
-  const rows = shown.length
-    ? shown.map(e => `<div style="padding:3px 11px;border-top:1px solid rgba(255,255,255,0.04);display:flex;gap:7px;font-size:9.5px;font-family:var(--mono);">
-        <span style="color:var(--text-mute);flex-shrink:0;">R${e.round}</span>
-        <span style="color:var(--text-dim);">${e.text}</span></div>`).join('')
-    : `<div style="padding:6px 11px;color:var(--text-mute);font-size:9.5px;font-family:var(--mono);">No events yet.</div>`;
-  dock.innerHTML = `
-    <button id="event-log-toggle" style="display:flex;align-items:center;gap:6px;width:100%;text-align:left;
-      background:rgba(255,255,255,0.03);border:none;border-bottom:1px solid var(--border);padding:6px 11px;cursor:pointer;font-family:var(--mono);">
-      ${netPrefix}
-      <span style="font-size:8px;letter-spacing:0.14em;color:var(--text-mute);">EVENT LOG</span>
-      <span style="color:var(--text-mute);font-size:8px;">${log.length}</span>
-      <span style="margin-left:auto;color:var(--text-mute);font-size:10px;">${expanded ? '▾ collapse' : '▴ expand'}</span>
-    </button>
-    <div id="event-log-body" style="${expanded ? 'max-height:240px;' : 'max-height:none;'}overflow-y:auto;">${rows}</div>`;
-  const toggle = dock.querySelector('#event-log-toggle');
-  if (toggle) toggle.addEventListener('click', () => { state.logExpanded = !state.logExpanded; renderEventLog(); });
+
+  const netDot = isOnline
+    ? `<span style="width:6px;height:6px;border-radius:50%;background:${_netConnected ? '#4ad66d' : '#ff5252'};display:inline-block;flex-shrink:0;"></span>
+       <span style="font-size:8px;font-family:var(--mono);color:var(--text-mute);letter-spacing:0.06em;">${_netRoom}</span>`
+    : '';
+
+  const badge = _chatUnread > 0 ? `<span class="chat-unread">${_chatUnread}</span>` : '';
+  const inSetup = state.phase !== 'play';
+  // During setup, force chat tab and default-expanded; event log tab is hidden
+  if (inSetup && _activeLogTab === 'log') _activeLogTab = 'chat';
+  const expanded = inSetup ? _setupChatExpanded : _logExpanded;
+  const tabBar = `<div class="log-tab-bar">
+    ${netDot ? `<div style="display:flex;align-items:center;gap:4px;padding:0 7px;border-right:1px solid var(--border);">${netDot}</div>` : ''}
+    <button class="log-tab-btn${_activeLogTab === 'chat' ? ' active' : ''}" id="log-tab-chat">CHAT ${badge}</button>
+    ${inSetup ? '' : `<button class="log-tab-btn${_activeLogTab === 'log' ? ' active' : ''}" id="log-tab-log">EVENT LOG <span style="font-size:7.5px;color:var(--text-mute);">${(state.eventLog||[]).length}</span></button>`}
+    <button class="log-tab-btn" id="log-expand" style="flex:0 0 auto;padding:4px 9px;margin-left:auto;" title="${expanded ? 'Collapse' : 'Expand'}">${expanded ? '▾' : '▴'}</button>
+  </div>`;
+
+  let content = '';
+  if (_activeLogTab === 'log') {
+    if (state.phase !== 'play') {
+      content = `<div class="chat-empty">Game not started.</div>`;
+    } else {
+      const log = state.eventLog || [];
+      const shown = expanded ? log.slice().reverse() : log.slice(-3).reverse();
+      const rows = shown.length
+        ? shown.map(e => `<div style="padding:3px 11px;border-top:1px solid rgba(255,255,255,0.04);display:flex;gap:7px;font-size:9.5px;font-family:var(--mono);">
+            <span style="color:var(--text-mute);flex-shrink:0;">R${e.round}</span>
+            <span style="color:var(--text-dim);">${e.text}</span></div>`).join('')
+        : `<div class="chat-empty">No events yet.</div>`;
+      content = `<div id="event-log-body" style="max-height:${expanded ? '280px' : '72px'};overflow-y:auto;">${rows}</div>`;
+    }
+  } else {
+    // Chat tab
+    const msgs = _chatMessages.length
+      ? _chatMessages.map(m => {
+          const t = new Date(m.ts);
+          const time = `${t.getHours().toString().padStart(2,'0')}:${t.getMinutes().toString().padStart(2,'0')}`;
+          const escaped = m.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return `<div class="chat-msg">
+            <div class="chat-msg-header">
+              <span class="chat-msg-user ${m.side}">${m.username.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>
+              <span class="chat-msg-time">${time}</span>
+            </div>
+            <div class="chat-msg-text">${escaped}</div>
+          </div>`;
+        }).join('')
+      : `<div class="chat-empty">No messages yet.</div>`;
+    const canSend = isOnline && !!_netSide;
+    const inputRow = canSend
+      ? `<div class="chat-input-row">
+           <input class="chat-input" id="chat-input" type="text" maxlength="500" placeholder="Message…" autocomplete="off"/>
+           <button class="chat-send-btn" id="chat-send">↑</button>
+         </div>`
+      : '';
+    content = `<div class="chat-body" id="chat-body" style="max-height:${expanded ? '280px' : '72px'};overflow-y:auto;">${msgs}</div>${inputRow}`;
+  }
+
+  dock.innerHTML = tabBar + content;
+
+  // Wire tabs
+  const tabLog  = dock.querySelector('#log-tab-log');
+  const tabChat = dock.querySelector('#log-tab-chat');
+  if (tabLog)  tabLog.onclick  = () => { _activeLogTab = 'log';  renderEventLog(); };
+  if (tabChat) tabChat.onclick = () => { _activeLogTab = 'chat'; _chatUnread = 0; renderEventLog(); _scrollChatToBottom(); };
+
+  // Wire expand toggle (tab bar button)
+  const expandBtn = dock.querySelector('#log-expand');
+  if (expandBtn) expandBtn.onclick = () => {
+    if (state.phase !== 'play') { _setupChatExpanded = !_setupChatExpanded; }
+    else { _logExpanded = !_logExpanded; }
+    renderEventLog(); if (_activeLogTab === 'chat') _scrollChatToBottom();
+  };
   const body = dock.querySelector('#event-log-body');
   if (expanded && body) body.scrollTop = 0;
+
+  // Wire chat send
+  const input  = dock.querySelector('#chat-input');
+  const sendBtn = dock.querySelector('#chat-send');
+  if (input && sendBtn) {
+    const doSend = () => {
+      const text = input.value.trim();
+      if (!text || !_netWs || !_netConnected) return;
+      _netWs.send(JSON.stringify({ type: 'chat', text }));
+      input.value = '';
+    };
+    sendBtn.onclick = doSend;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
+    if (_activeLogTab === 'chat') input.focus();
+  }
+
+  // Scroll chat to bottom when viewing chat tab
+  if (_activeLogTab === 'chat') _scrollChatToBottom();
+}
+
+function _scrollChatToBottom() {
+  const body = document.getElementById('chat-body');
+  if (body) body.scrollTop = body.scrollHeight;
 }
 
 /* Transient VP-award toast, stacked at top-centre of the board. */
@@ -1901,7 +2060,7 @@ function renderPanels() {
       payloadDefs.forEach(def => { pts += def.pts; });
       const anyDetached = payloadDefs.some(def => {
         const g = state.groups[def.id];
-        return g && g.ships.some(s => !s.destroyed && !s.offTable && !s.attachedTo);
+        return g && g.ships.some(s => !s.destroyed && !s.offTable && !s.attachedTo && !s.deployedByGid);
       });
       if (anyDetached) {
         grpCount++;
@@ -1928,7 +2087,12 @@ function renderPanels() {
         <b style="color:var(--${sideCssKey(side)});font-size:15px;">${P.ap[side]}</b>
         ${P.passTokens[side] ? `<span style="font-size:8px;color:var(--text-mute);">· ${P.passTokens[side]} PASS</span>` : ''}
         <span style="font-size:9px;color:var(--text-mute);margin-left:auto;">⊕</span>`;
-      chip.addEventListener('click', () => { state.apEditOpen = side; renderAll(); });
+      chip.addEventListener('click', () => {
+        const r = chip.getBoundingClientRect();
+        state.apEditOpen = side;
+        state.apEditAnchor = { top: r.bottom, left: r.left };
+        renderAll();
+      });
       container.insertBefore(chip, container.firstChild);
     };
     apChip('player1', ucmDiv);
@@ -1955,7 +2119,7 @@ function renderPanels() {
   [['player1', ucmTitle], ['player2', shalTitle]].forEach(([side, titleEl]) => {
     if (!titleEl) return;
     titleEl.style.cursor = 'pointer';
-    titleEl.onclick = () => openFleetViewForSide(side);
+    titleEl.onclick = (e) => openFleetViewForSide(side, e.currentTarget);
   });
 
   // Keep the player's own fleet at the top of the left panel; in hotseat fall back to
@@ -2055,6 +2219,12 @@ function makeGroupCard(def) {
     </div>
   `;
   card.addEventListener('click', () => {
+    // In play phase, silently ignore clicks on groups that have no eligible ships
+    // (off-table and not yet eligible to arrive). They auto-activate separately.
+    if (state.phase === 'play' && undeployedCount > 0 && onTable === 0) {
+      const _elig = canActivateOffTable(def);
+      if (!_elig.eligible) return;
+    }
     const wasSelected = state.selectedGroupId === def.id;
     selectGroup(def.id);
     // Also select the first alive ship in the group so the ship detail panel shows.
@@ -2064,6 +2234,47 @@ function makeGroupCard(def) {
       renderAll(true);
     }
   });
+
+  // Launched-cell sub-items: cells with deployedByGid === this group are shown
+  // here so the player can select and activate them without leaving the Porter's context.
+  const launchedCells = [];
+  Object.entries(state.groups).forEach(([cgid, cgrp]) => {
+    cgrp.ships.forEach((cs, csi) => {
+      if (cs.deployedByGid === def.id && !cs.destroyed) launchedCells.push({ cgid, csi, cs });
+    });
+  });
+  if (launchedCells.length) {
+    const divider = document.createElement('div');
+    divider.style.cssText = 'border-top:1px solid rgba(255,255,255,0.07);margin:6px -2px 4px;';
+    card.appendChild(divider);
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'font-size:8px;letter-spacing:0.1em;color:var(--text-mute);text-transform:uppercase;padding:0 4px 3px;';
+    hdr.textContent = 'Launched this activation';
+    card.appendChild(hdr);
+    launchedCells.forEach(({ cgid, csi, cs }) => {
+      const acted = cs.movedThisRound || cs.firedThisActivation || (cs.launchedThisRound > 0);
+      const cellDef = getDef(cgid);
+      const isSelCell = state.selectedGroupId === cgid && state.selectedShipIdx === csi;
+      const row = document.createElement('div');
+      row.style.cssText = `display:flex;align-items:center;gap:5px;padding:3px 4px;border-radius:3px;cursor:pointer;${isSelCell ? 'background:rgba(255,255,255,0.07);' : ''}`;
+      row.innerHTML = `
+        <span style="color:var(--text-mute);font-size:11px;">⬡</span>
+        <span style="flex:1;font-size:9.5px;text-transform:uppercase;letter-spacing:0.04em;color:${acted ? 'var(--text-mute)' : 'var(--text-dim)'};">${cellDef ? cellDef.name : 'Cell'}</span>
+        <span class="gc-badge reserve" style="font-size:7.5px;padding:0 4px;">GQ</span>
+        ${acted ? '<span style="color:var(--text-mute);font-size:9px;min-width:10px;text-align:right;">✓</span>' : '<span style="color:var(--hull-warn);font-size:9px;min-width:10px;text-align:right;">!</span>'}
+      `;
+      row.addEventListener('click', e => {
+        e.stopPropagation();
+        selectGroup(cgid);
+        if (state.selectedGroupId === cgid) {
+          state.selectedShipIdx = csi;
+          renderAll(true);
+        }
+      });
+      card.appendChild(row);
+    });
+  }
+
   return card;
 }
 
@@ -2079,7 +2290,7 @@ function makeCellsCard(side, payloadDefs) {
   payloadDefs.forEach(def => {
     const g = state.groups[def.id];
     if (!g) return;
-    g.ships.forEach((s, si) => { if (!s.destroyed && !s.offTable && !s.attachedTo) detached.push({ def, si, ship: s }); });
+    g.ships.forEach((s, si) => { if (!s.destroyed && !s.offTable && !s.attachedTo && !s.deployedByGid) detached.push({ def, si, ship: s }); });
   });
   const first = detached.length ? detached[0] : null;
   if (first && state.selectedGroupId === first.def.id) card.classList.add('active');
@@ -2108,6 +2319,14 @@ function makeCellsCard(side, payloadDefs) {
 }
 
 function selectGroup(gid) {
+  // In replay mode, allow freely selecting any group for viewing — skip all game guards.
+  if (_replayMode) {
+    state.selectedGroupId = state.selectedGroupId === gid ? null : gid;
+    state.selectedShipIdx = state.selectedGroupId ? 0 : null;
+    state.selectedDropsiteId = null;
+    renderAll(true);
+    return;
+  }
   // Hotseat turn enforcement: only the active player may interact with their groups.
   if (!_netSide) {
     const def = getDef(gid);
@@ -2134,8 +2353,13 @@ function selectGroup(gid) {
       const midActDef = getDef(midActGid);
       const midActIsMine = !_netSide || (midActDef && midActDef.side === _netSide);
       if (midActIsMine) {
-        flashLaunchMsg('Finish the current activation before selecting another Group');
-        return;
+        // Allow switching to a cell group whose ships were deployed by the mid-act Porter.
+        const tGrp = state.groups[gid];
+        const isCellOfMidAct = tGrp && tGrp.ships.some(cs => cs.deployedByGid === midActGid);
+        if (!isCellOfMidAct) {
+          flashLaunchMsg('Finish the current activation before selecting another Group');
+          return;
+        }
       }
     }
   }
@@ -2153,26 +2377,25 @@ function selectGroup(gid) {
   arcViewMode = 1;
   renderAll(true);
   netSendPeerView();
-  // Bug 3: auto-skip activation for groups with no ships to act on.
-  if (state.phase === 'play' && state.selectedGroupId) {
-    const grp = state.groups[state.selectedGroupId];
-    const def = getDef(state.selectedGroupId);
-    if (grp && def && !grp.activated) {
-      // Don't skip groups that have ships which can still act:
-      // - on-table ships, OR ships that just arrived (offTable but placed this activation)
-      // - off-table reserve ships that are eligible to arrive this round
+}
+
+/* Auto-activate any groups whose ships are all off-table and not yet eligible
+   to arrive. Called via setTimeout from renderAll so it runs after the paint
+   without needing the player to click the ineligible group card. */
+function _autoSkipIneligible() {
+  if (state.phase !== 'play') return;
+  ['player1','player2'].forEach(side => {
+    fleetForSide(side).forEach(def => {
+      const grp = state.groups[def.id];
+      if (!grp || grp.activated) return;
       const hasOffTable = grp.ships.some(s => !s.destroyed && s.offTable && !s.attachedTo);
-      const hasActive = grp.ships.some(s => !s.destroyed && (!s.offTable || s.justArrived))
-        || (hasOffTable && canActivateOffTable(def).eligible);
-      if (!hasActive) {
-        const side = def.side;
-        if (_isLegal(state, { type: 'finishActivation', gid: state.selectedGroupId }, side)) {
-          flashLaunchMsg(`${def.name} has no ships to activate — skipped`);
-          dispatch({ type: 'finishActivation', gid: state.selectedGroupId });
-        }
+      const hasActive   = grp.ships.some(s => !s.destroyed && (!s.offTable || s.justArrived))
+                        || (hasOffTable && canActivateOffTable(def).eligible);
+      if (!hasActive && _isLegal(state, { type: 'finishActivation', gid: def.id }, side)) {
+        dispatch({ type: 'finishActivation', gid: def.id });
       }
-    }
-  }
+    });
+  });
 }
 
 /* ==========================================================================
@@ -2692,12 +2915,6 @@ function renderDetail() {
           ${rows}
         </div>`;
       })()}
-      <div style="margin-top:6px;display:flex;gap:4px;align-items:center;">
-        <span style="font-size:9px;color:var(--text-mute);">Board:</span>
-        <button class="order-btn ${arcViewMode===1?'active '+sideClass:''}" data-arcview="1" style="font-size:8px;padding:2px 6px;" title="Show this ship's weapon arcs &amp; scan range, plus all opponent ship signature auras">⚙ Arcs+Scan</button>
-        <button class="order-btn ${arcViewMode===2?'active '+sideClass:''}" data-arcview="2" style="font-size:8px;padding:2px 6px;" title="Show this ship's signature aura, plus all opponent ship weapon arcs &amp; scan ranges">◎ Sig</button>
-        ${_view3d ? `<button class="order-btn ${_view3dTrails?'active '+sideClass:''}" id="btn-trails-toggle" style="font-size:8px;padding:2px 6px;" title="Toggle 3D movement trail lines">↝ Trails</button>` : ''}
-      </div>
     </div>
   `;
 
@@ -3147,12 +3364,16 @@ function renderDetail() {
       });
     }
     // Reattach: free capacity + a detached same-size payload within 3" of this Porter.
+    // Cannot reattach in the same round a payload was deployed from this group.
     if (freeCap > 0) {
       const candidates = detachedReattachCandidates(def.side, selShip, def.porter.size);
-      if (state.phase === 'play' && launchOk && candidates.length) {
+      const deployedThisRound = payloadShips(def.side).some(p =>
+        !p.ship.attachedTo && p.ship.deployedByGid === gid && p.ship.deployedRound === state.round
+      );
+      if (state.phase === 'play' && launchOk && candidates.length && !deployedThisRound) {
         payloadHTML += `<button class="btn ${sideClass==='shal'?'shal':''}" data-payload-reattach="${gid}|${state.selectedShipIdx}" style="width:100%;margin-top:6px;">⊕ REATTACH ▸ pick within 3"</button>`;
       } else if (state.phase === 'play') {
-        payloadHTML += `<div style="font-size:9px;color:var(--text-mute);margin-top:6px;">Reattach: ${!launchOk ? 'needs a launch-capable Order' : 'no detached payload within 3"'}.</div>`;
+        payloadHTML += `<div style="font-size:9px;color:var(--text-mute);margin-top:6px;">Reattach: ${deployedThisRound ? 'cannot reattach in the same round as deploy' : !launchOk ? 'needs a launch-capable Order' : 'no detached payload within 3"'}.</div>`;
       }
     }
     payloadHTML += `</div>`;
@@ -3298,7 +3519,7 @@ function renderDetail() {
             ${ship.justArrived && !grp.ships.some(s => s.movedThisRound || s.firedThisActivation || (s.launchedThisRound>0) || s.detectorUsed) ? '<br><b style="color:var(--'+sideClass+')">Just deployed:</b> click in your Zone to re-place this ship and re-aim, until the Group acts.' : ''}
           </div>
           <div class="move-actions" style="margin-top:6px;">
-            ${!isOpponent && !grp.activated && !moved && o.moveMax > 0 && (selEffOrder === 'CC' || selEffOrder === 'DC') ? `<button class="btn" data-hold-position="${gid}|${state.selectedShipIdx}" style="width:100%;">⏸ HOLD POSITION (move 0")</button>` : ''}
+            ${!isOpponent && !grp.activated && !moved && !ship.firedThisActivation && !(ship.launchedThisRound > 0) && o.moveMax > 0 && (selEffOrder === 'CC' || selEffOrder === 'DC') ? `<button class="btn" data-end-move="${gid}|${state.selectedShipIdx}" style="width:100%;">END MOVE</button>` : ''}
             ${!isOpponent && objectivesBeyondEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Objectives Beyond)</button>` : ''}
             ${!isOpponent && breakthroughFlyoffEligible(gid, state.selectedShipIdx) ? `<button class="btn" data-bt-flyoff="${gid}|${state.selectedShipIdx}" style="width:100%;color:#b59ad6;border-color:#b59ad6;">✈ FLY OFF (Breakthrough · ${shipPoints(def)} pts)</button>` : ''}
           </div>
@@ -3315,9 +3536,6 @@ function renderDetail() {
       const justDeployed = grp.ships.some(s => !s.destroyed && s.justArrived);
       moveHTML = `<div class="panel-section">
         <div class="help-tip ${sideClass}">Select an Order first ↑</div>
-        ${!isOpponent && !justDeployed ? `<div style="margin-top:6px;">
-          <button class="btn" data-cancel-activation="${gid}" style="width:100%;">✕ CANCEL ACTIVATION</button>
-        </div>` : ''}
       </div>`;
     } else if (grp.activated) {
       moveHTML = `<div class="panel-section">
@@ -3425,9 +3643,8 @@ function renderBoard() {
       });
     }
 
-    // Enemy signature auras — shown while moving a friendly ship, and always in arc view mode 1.
-    // Suppressed in mode 2 (only the selected ship's own sig aura is shown there).
-    if (arcViewMode !== 2 && (movingActive || arcViewMode === 1)) {
+    // Enemy signature auras — mode 1 (attacker view) or while moving (never in mode 0 or 2).
+    if (arcViewMode !== 0 && (arcViewMode === 1 || (movingActive && arcViewMode !== 2))) {
       const enemySide = def.side === 'player1' ? 'player2' : 'player1';
       const enemyFleet = fleetForSide(enemySide);
       const enemyCol = 'var(--hull-crit)';
@@ -3454,8 +3671,10 @@ function renderBoard() {
       // While launching from this ship, suppress its scan/arc overlay (replaced
       // by the launch aura below).
       if (launchingHere && state.launching.si === si) return;
-      // In arc view mode 2: suppress weapon arcs for the selected ship (we show sig aura instead)
-      if (arcViewMode === 2 && isSel) {
+      // Mode 0: hide all overlays
+      if (arcViewMode === 0) { /* skip */ }
+      // Mode 2: show sig aura for every ship in the group
+      else if (arcViewMode === 2) {
         // Show this ship's signature aura in red (matches enemy sig aura style)
         const spikes = grp.spikes || 0;
         const sig = ship.sigSilent ? 0 : def.sig;
@@ -3471,7 +3690,7 @@ function renderBoard() {
       }
     });
 
-    // Arc view mode 2: show all enemy ships' weapon arcs + scan ranges.
+    // Mode 2 (defender view): show all enemy ships' weapon arcs + scan ranges.
     if (arcViewMode === 2) {
       const enemySide2 = def.side === 'player1' ? 'player2' : 'player1';
       fleetForSide(enemySide2).forEach(edef => {
@@ -3677,8 +3896,8 @@ function renderBoard() {
     }
   }
 
-  // Movement traces — controlled by the same toggle as the 3D trail lines.
-  if (_view3dTrails) allDefs().forEach(def => {
+  // Movement traces — always shown during replay animation; otherwise uses the trail toggle.
+  if (_view3dTrails || _replayAnim) allDefs().forEach(def => {
     const grp = getGroup(def.id);
     const trail = grp.moveTrail || [];
     if (!trail.length) return;
@@ -4531,7 +4750,9 @@ function renderAttackModal() {
     const primFailedNow = sr.hitsList.filter(h => !h.saved && h.sv != null && !h.noSaveDie).length;
     // Damage type, base save, and modified save info for the header/label.
     const _wtype = s.w.type;
-    const _saveTypeHdr = _wtype === 'E' ? 'E Saves' : _wtype === 'K' ? 'K Saves' : 'Core Saves';
+    const _tKey = targetKey(s.targetGid, s.targetSi);
+    const _shieldUp = M.shieldsUp && !!M.shieldsUp[_tKey];
+    const _saveTypeHdr = _shieldUp ? 'Shield Saves' : (_wtype === 'E' ? 'E Saves' : _wtype === 'K' ? 'K Saves' : 'Core Saves');
     const _baseSvStr = _wtype === 'E' ? td.es : _wtype === 'K' ? td.ks : null;
     const _baseSv = (_baseSvStr && _baseSvStr !== '—') ? parseInt(_baseSvStr) : null;
     const _firstWithSv = sr.hitsList.find(h => h.sv != null);
@@ -4540,7 +4761,13 @@ function renderAttackModal() {
     const _mods = [sp.scald ? `Scald-${sp.scald}` : '', sp.reave ? `Reave-${sp.reave}` : '',
       sp.burnthrough && M.hitResult && M.hitResult.crits > 0 ? `Burnthrough-${sp.burnthrough}` : ''].filter(Boolean);
     let _saveInfo = '';
-    if (_baseSv != null) {
+    if (_shieldUp) {
+      const _rawShieldSv = shieldSaveVal(td);
+      _saveInfo = `Shield ${_rawShieldSv}+`;
+      if (_modSv != null && _rawShieldSv != null && _modSv !== _rawShieldSv) {
+        _saveInfo += ` → ${_modSv}+ (Boosted)`;
+      }
+    } else if (_baseSv != null) {
       const _lbl = _wtype === 'E' ? 'ES' : 'KS';
       _saveInfo = `${_lbl} ${_baseSvStr}`;
       if (_modSv != null && _modSv !== _baseSv) {
@@ -5956,6 +6183,7 @@ function _fleetTotalPts(imported) {
   return shipPts + admiralPts;
 }
 
+
 /* Build default admiral assignments for an imported fleet. */
 function _buildDefaultAdmiralAssignments(imported) {
   const assignments = [];
@@ -5996,7 +6224,10 @@ function _buildDefaultAdmiralAssignments(imported) {
 }
 
 /* Show imported (or quickplay Bioficer) fleet with admirals, payloads, and ships. */
-function openFleetView(slot) {
+let _fleetViewAnchor = null;
+function openFleetView(slot, anchor) {
+  if (anchor) _fleetViewAnchor = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
+  document.getElementById('fleet-view-backdrop')?.remove();
   let panel = document.getElementById('fleet-view-overlay');
   if (panel) panel.remove();
 
@@ -6004,22 +6235,44 @@ function openFleetView(slot) {
   const mySlot = _netSide === 'player1' ? 'f1' : _netSide === 'player2' ? 'f2' : null;
   const readOnly = mySlot !== null && mySlot !== slot;
 
-  const imported = state.importedFleets && state.importedFleets[slot];
+  let imported = state.importedFleets && state.importedFleets[slot];
   const fk = state.fleetChoices && state.fleetChoices[slot];
-  // Show fleet view for imported fleets OR quickplay Bioficer (needs payload setup).
-  if (!imported && !fleetHasPayloads(fk)) return;
+  if (!imported && !fk) return;
 
-  // Initialise admiral assignments if not set yet (imported only).
-  if (imported && !imported.admiralAssignments) {
+  // Fallback: if importedFleets is missing for a quickplay fleet (e.g. old save),
+  // re-parse from FASTPLAY_LISTS and store it so the opponent can also view it.
+  if (!imported && fk && FASTPLAY_LISTS[fk]) {
+    const qp = parseNewRecruit(FASTPLAY_LISTS[fk]);
+    if (qp && qp.valid) {
+      state.importedFleets = state.importedFleets || { f1: null, f2: null };
+      state.importedFleets[slot] = { faction: qp.faction, groups: qp.groups, admirals: qp.admirals, admiralLevel: qp.admiralLevel, secondaries: qp.secondaries };
+      imported = state.importedFleets[slot];
+    }
+  }
+  if (!imported) return;
+
+  // Initialise admiral assignments on first open.
+  if (!imported.admiralAssignments) {
     imported.admiralAssignments = _buildDefaultAdmiralAssignments(imported);
     const nfa0 = imported.admiralAssignments.find(a => !a.isFamous);
     if (nfa0) imported.admiralGroupIdx = nfa0.groupIdx;
   }
 
+  const fvBackdrop = document.createElement('div');
+  fvBackdrop.id = 'fleet-view-backdrop';
+  fvBackdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(fvBackdrop);
+
   panel = document.createElement('div');
   panel.id = 'fleet-view-overlay';
-  panel.className = 'setup-overlay';
-  panel.style.zIndex = '400';
+  if (state.phase !== 'play') {
+    panel.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:720px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  } else {
+    panel.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:720px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  }
+
+  // qpFleet kept for backward compat (now always null since importedFleets is always set).
+  const qpFleet = null;
 
   const groups = imported ? (imported.groups || []) : [];
   const faction = imported ? imported.faction : fk;
@@ -6028,7 +6281,8 @@ function openFleetView(slot) {
   const admiralsList = (imported && imported.admirals) || [];
   const hasFamous = groups.some(g => g.isFamousAdmiral);
   const hasNonFamous = admiralsList.length > 0;
-  const totalPts = imported ? _fleetTotalPts(imported) : 0;
+  const qpTotal = qpFleet ? qpFleet.reduce((s, g) => s + g.pts * (g.count || 1), 0) : 0;
+  const totalPts = imported ? _fleetTotalPts(imported) : qpTotal;
   const isBioficerImported = !!(imported && imported.faction === 'bioficer');
   const isBioficerQuickplay = !imported && fk === 'bioficer';
 
@@ -6141,63 +6395,78 @@ function openFleetView(slot) {
       </tr>`);
     });
   } else if (isBioficerQuickplay) {
-    // Quickplay Bioficer: use faction fleet.
-    const fleet = FACTIONS['bioficer'] && FACTIONS['bioficer'].fleet;
-    if (fleet) {
-      const porters = [], payloads = [];
-      fleet.forEach(def => {
-        const n = def.groupSize || 1;
-        for (let si = 0; si < n; si++) {
-          if (def.porter) porters.push({ def, si, key: `${def.id}:${si}` });
-          if (def.payload) payloads.push({ def, si, key: `${def.id}:${si}` });
-        }
-      });
-      const portUsed = {};
-      porters.forEach(p => portUsed[p.key] = 0);
-      Object.values(payloadLinks).forEach(pk => { if (portUsed[pk] != null) portUsed[pk]++; });
-      payloads.forEach(pl => {
-        const cur = payloadLinks[pl.key] || '';
-        const porterOpts = porters.map(po => {
-          const cap = po.def.porter.cap || 1;
-          const used = portUsed[po.key] - (cur === po.key ? 1 : 0);
-          const full = used >= cap;
-          const sizeOk = po.def.porter.size === pl.def.payload.size;
-          const dis = (full || !sizeOk) && cur !== po.key;
-          const label = `${po.def.name}${po.def.groupSize>1?` #${po.si+1}`:''}`;
-          return `<option value="${po.key}" ${cur===po.key?'selected':''} ${dis?'disabled':''}>${label} (${portUsed[po.key]}/${cap})${!sizeOk?' ✗':''}</option>`;
-        }).join('');
-        payloadRows.push(`<tr>
-          ${tdS(`${pl.def.name}${pl.def.groupSize>1?` #${pl.si+1}`:''}`,'min-width:160px;')}
-          ${tdS('<span style="color:var(--text-mute);font-size:9px;">Payload</span>','')}
-          ${tdS(`<select class="payload-sel" data-pl-key="${pl.key}" ${selAttrs} style="font-size:10px;background:var(--bg-card,#111);color:inherit;border:1px solid rgba(255,255,255,0.2);padding:2px 6px;border-radius:3px;max-width:200px;"><option value="">— unassigned —</option>${porterOpts}</select>`,'white-space:nowrap;')}
-          ${tdS('—','text-align:right;')}
-        </tr>`);
-      });
-    }
+    // Quickplay Bioficer: rebuild fleet for this slot so defs include porter/payload flags.
+    if (state.activeFleets) state.activeFleets = {};
+    const bfDefs = fleetForSide(slot === 'f1' ? 'player1' : 'player2');
+    const porters = [], payloads = [];
+    bfDefs.forEach(def => {
+      const n = def.groupSize || 1;
+      for (let si = 0; si < n; si++) {
+        if (def.porter)  porters.push({ def, si, key: `${def.baseId}:${si}` });
+        if (def.payload) payloads.push({ def, si, key: `${def.baseId}:${si}` });
+      }
+    });
+    const portUsed = {};
+    porters.forEach(p => portUsed[p.key] = 0);
+    Object.values(payloadLinks).forEach(pk => { if (portUsed[pk] != null) portUsed[pk]++; });
+    payloads.forEach(pl => {
+      const cur = payloadLinks[pl.key] || '';
+      const porterOpts = porters.map(po => {
+        const cap = po.def.porter.cap || 1;
+        const used = portUsed[po.key] - (cur === po.key ? 1 : 0);
+        const full = used >= cap;
+        const sizeOk = po.def.porter.size === pl.def.payload.size;
+        const dis = (full || !sizeOk) && cur !== po.key;
+        const label = `${po.def.name}${po.def.groupSize > 1 ? ` #${po.si + 1}` : ''}`;
+        return `<option value="${po.key}" ${cur === po.key ? 'selected' : ''} ${dis ? 'disabled' : ''}>${label} (${portUsed[po.key]}/${cap})${!sizeOk ? ' ✗' : ''}</option>`;
+      }).join('');
+      payloadRows.push(`<tr>
+        ${tdS(`${pl.def.name}${pl.def.groupSize > 1 ? ` #${pl.si + 1}` : ''}`, 'min-width:160px;')}
+        ${tdS('<span style="color:var(--text-mute);font-size:9px;">Payload</span>', '')}
+        ${tdS(`<select class="payload-sel" data-pl-key="${pl.key}" ${selAttrs} style="font-size:10px;background:var(--bg-card,#111);color:inherit;border:1px solid rgba(255,255,255,0.2);padding:2px 6px;border-radius:3px;max-width:200px;"><option value="">— unassigned —</option>${porterOpts}</select>`, 'white-space:nowrap;')}
+        ${tdS(`${pl.def.pts} pts`, 'text-align:right;font-weight:600;')}
+      </tr>`);
+    });
   }
 
   // ── SHIPS SECTION (exclude famous admirals — they appear in ADMIRALS) ──────
-  const shipRows = groups
-    .filter(grp => !grp.isFamousAdmiral)
-    .map((grp, _unused, _arr) => {
-      const i = groups.indexOf(grp);
-      const isNFAdm = assignments.some(a => !a.isFamous && a.groupIdx === i);
-      const def = findShipDef(faction, grp.name);
-      const role = def ? def.role : '—';
-      const rowBg = isNFAdm ? 'background:rgba(255,181,71,0.08);' : '';
-      const badge = isNFAdm ? '★ ' : '';
-      const displayName = pluralName(grp.name, grp.count);
-      const countStr = grp.count > 1 ? `${grp.count}× @ ${grp.pts} pts ea` : `1×`;
-      const grpPts = grp.pts * grp.count;
-      const optStr = grp.options && grp.options.length
-        ? `<div style="font-size:9px;color:var(--text-mute);margin-top:1px;">${grp.options.join(', ')}</div>` : '';
-      return `<tr style="${rowBg}">
-        ${tdS(`<span style="color:var(--hull-warn)">${badge}</span><span>${displayName}</span>${optStr}`,'min-width:160px;max-width:260px;')}
-        ${tdS(role,'color:var(--text-mute);font-size:9px;white-space:nowrap;')}
-        ${tdS(countStr,'font-size:9px;white-space:nowrap;text-align:right;')}
-        ${tdS(`${grpPts} pts`,'text-align:right;white-space:nowrap;font-weight:600;')}
-      </tr>`;
-    }).join('');
+  const shipRows = imported
+    ? groups
+        .filter(grp => !grp.isFamousAdmiral)
+        .map((grp, _unused, _arr) => {
+          const i = groups.indexOf(grp);
+          const isNFAdm = assignments.some(a => !a.isFamous && a.groupIdx === i);
+          const def = findShipDef(faction, grp.name);
+          const role = def ? def.role : '—';
+          const rowBg = isNFAdm ? 'background:rgba(255,181,71,0.08);' : '';
+          const badge = isNFAdm ? '★ ' : '';
+          const displayName = pluralName(grp.name, grp.count);
+          const countStr = grp.count > 1 ? `${grp.count}× @ ${grp.pts} pts ea` : `1×`;
+          const grpPts = grp.pts * grp.count;
+          const optStr = grp.options && grp.options.length
+            ? `<div style="font-size:9px;color:var(--text-mute);margin-top:1px;">${grp.options.join(', ')}</div>` : '';
+          return `<tr style="${rowBg}">
+            ${tdS(`<span style="color:var(--hull-warn)">${badge}</span><span>${displayName}</span>${optStr}`,'min-width:160px;max-width:260px;')}
+            ${tdS(role,'color:var(--text-mute);font-size:9px;white-space:nowrap;')}
+            ${tdS(countStr,'font-size:9px;white-space:nowrap;text-align:right;')}
+            ${tdS(`${grpPts} pts`,'text-align:right;white-space:nowrap;font-weight:600;')}
+          </tr>`;
+        }).join('')
+    : (qpFleet || []).map(grp => {
+        const dbDef = findShipDef(fk, grp.name);
+        if (dbDef && dbDef.payload) return ''; // payload ships shown in PAYLOADS section
+        const count = grp.count || 1;
+        const countStr = count > 1 ? `${count}× @ ${grp.pts} pts ea` : `1×`;
+        const grpPts = grp.pts * count;
+        const optStr = grp.options && grp.options.length
+          ? `<div style="font-size:9px;color:var(--text-mute);margin-top:1px;">${grp.options.join(', ')}</div>` : '';
+        return `<tr>
+          ${tdS(`${grp.name}${optStr}`,'min-width:160px;max-width:260px;')}
+          ${tdS(dbDef ? dbDef.role : '—','color:var(--text-mute);font-size:9px;white-space:nowrap;')}
+          ${tdS(countStr,'font-size:9px;white-space:nowrap;text-align:right;')}
+          ${tdS(`${grpPts} pts`,'text-align:right;white-space:nowrap;font-weight:600;')}
+        </tr>`;
+      }).join('');
 
   // ── SECONDARIES ───────────────────────────────────────────────────────────
   const secondaryRows = (imported && imported.secondaries && imported.secondaries.length)
@@ -6216,42 +6485,42 @@ function openFleetView(slot) {
     : '';
 
   panel.innerHTML = `
-    <div class="setup-card" style="max-width:720px;">
-      <div class="setup-header">
-        <h2 class="setup-title">${factionLabel} FLEET${readOnly?' <span style="font-size:11px;font-weight:400;opacity:0.6;">(opponent)</span>':''}</h2>
-      </div>
-      <div class="setup-body" style="padding:0;">
-        ${readOnlyNote}
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.1);color:var(--text-mute);font-size:9px;letter-spacing:0.04em;">
-              <th style="padding:4px 8px;text-align:left;font-weight:400;">NAME</th>
-              <th style="padding:4px 8px;text-align:left;font-weight:400;">ROLE</th>
-              <th style="padding:4px 8px;text-align:left;font-weight:400;">ASSIGNMENT</th>
-              <th style="padding:4px 8px;text-align:right;font-weight:400;">PTS</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${admiralRows.length ? sectionHdr('ADMIRALS') + admiralRows.join('') : ''}
-            ${payloadRows.length ? sectionHdr('PAYLOADS') + payloadRows.join('') : ''}
-            ${shipRows ? sectionHdr('GROUPS / SHIPS') + shipRows : ''}
-            ${secondaryRows ? sectionHdr('SECONDARY OBJECTIVES') + secondaryRows : ''}
-          </tbody>
-          <tfoot>
-            <tr style="border-top:1px solid rgba(255,255,255,0.15);">
-              <td colspan="3" style="padding:6px 8px;text-align:right;color:var(--text-mute);font-size:9px;">
-                ${groups.length} groups${admiralsList.length > 0 ? ` + ${admiralsList.length} admiral${admiralsList.length > 1 ? 's' : ''}` : ''}
-              </td>
-              <td style="padding:6px 8px;text-align:right;font-weight:700;">${totalPts} pts</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
+    <div class="setup-header">
+      <h2 class="setup-title">${factionLabel} FLEET${readOnly?' <span style="font-size:11px;font-weight:400;opacity:0.6;">(opponent)</span>':''}</h2>
     </div>
+    <div style="overflow-y:auto;flex:1;padding:0;">
+      ${readOnlyNote}
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.1);color:var(--text-mute);font-size:9px;letter-spacing:0.04em;">
+            <th style="padding:4px 8px;text-align:left;font-weight:400;">NAME</th>
+            <th style="padding:4px 8px;text-align:left;font-weight:400;">ROLE</th>
+            <th style="padding:4px 8px;text-align:left;font-weight:400;">ASSIGNMENT</th>
+            <th style="padding:4px 8px;text-align:right;font-weight:400;">PTS</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${admiralRows.length ? sectionHdr('ADMIRALS') + admiralRows.join('') : ''}
+          ${payloadRows.length ? sectionHdr('PAYLOADS') + payloadRows.join('') : ''}
+          ${shipRows ? sectionHdr('GROUPS / SHIPS') + shipRows : ''}
+          ${secondaryRows ? sectionHdr('SECONDARY OBJECTIVES') + secondaryRows : ''}
+        </tbody>
+        <tfoot>
+          <tr style="border-top:1px solid rgba(255,255,255,0.15);">
+            <td colspan="3" style="padding:6px 8px;text-align:right;color:var(--text-mute);font-size:9px;">
+              ${imported ? groups.length : (qpFleet ? qpFleet.filter(g => { const d = findShipDef(fk, g.name); return !d || !d.payload; }).length : 0)} groups${admiralsList.length > 0 ? ` + ${admiralsList.length} admiral${admiralsList.length > 1 ? 's' : ''}` : ''}
+            </td>
+            <td style="padding:6px 8px;text-align:right;font-weight:700;">${totalPts} pts</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
   `;
   document.body.appendChild(panel);
-  panel.querySelector('#fleet-view-close').addEventListener('click', () => panel.remove());
+  const closeFleetView = () => { document.getElementById('fleet-view-backdrop')?.remove(); panel.remove(); };
+  panel.querySelector('#fleet-view-close').addEventListener('click', closeFleetView);
+  fvBackdrop.addEventListener('click', closeFleetView);
 
   if (!readOnly) {
     // Non-famous admiral flagship dropdowns (one per admiral).
@@ -6299,52 +6568,16 @@ function openFleetView(slot) {
         if (sel.value) payloadLinks[pk] = sel.value;
         else delete payloadLinks[pk];
         // Re-render the panel to update capacity counts.
-        panel.remove(); openFleetView(slot); renderAll(); netRelaySetup();
+        document.getElementById('fleet-view-backdrop')?.remove(); panel.remove(); openFleetView(slot); renderAll(); netRelaySetup();
       });
     });
   }
 }
 
-function openFleetViewForSide(side) {
-  const slot = state.slotForSide && state.slotForSide[side];
-  if (slot) {
-    const imported = state.importedFleets && state.importedFleets[slot];
-    const fk = state.fleetChoices && state.fleetChoices[slot];
-    if (imported || fleetHasPayloads(fk)) {
-      openFleetView(slot);
-      return;
-    }
-  }
-  // Pre-generated fleet — build from active defs.
-  let panel = document.getElementById('fleet-view-overlay');
-  if (panel) panel.remove();
-  const defs = (side === 'player1' ? redFleet() : blueFleet()).filter(d => !d.payload);
-  const TONNAGE_SORT = { C: 0, H: 1, M: 2, L: 3 };
-  defs.sort((a, b) => (TONNAGE_SORT[a.tonnage] ?? 99) - (TONNAGE_SORT[b.tonnage] ?? 99));
-  const sideClass = sideCssKey(side);
-  const cards = defs.map(def => `
-    <div class="group-card" style="min-width:110px;max-width:130px;">
-      <div class="group-name">${def.name}</div>
-      <div class="group-role">${roleLabel(def)} · ${def.tonnage} · ${def.pts}pts${def.groupSize > 1 ? ' ×' + def.groupSize : ''}</div>
-    </div>`).join('');
-  panel = document.createElement('div');
-  panel.id = 'fleet-view-overlay';
-  panel.className = 'setup-overlay';
-  panel.style.zIndex = '400';
-  panel.innerHTML = `
-    <div class="setup-card" style="max-width:600px;">
-      <div class="setup-header">
-        <h2 class="setup-title">${factionName(side).toUpperCase()} FLEET</h2>
-        <div class="setup-sub">${defs.length} groups</div>
-      </div>
-      <div class="setup-body">
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">${cards}</div>
-      </div>
-      <div class="setup-footer"><button class="btn" id="fleet-view-close" style="width:100%;">CLOSE</button></div>
-    </div>
-  `;
-  document.body.appendChild(panel);
-  panel.querySelector('#fleet-view-close').addEventListener('click', () => panel.remove());
+function openFleetViewForSide(side, anchor) {
+  const slot = (state.slotForSide && state.slotForSide[side])
+            || (side === 'player1' ? 'f1' : 'f2');
+  openFleetView(slot, anchor);
 }
 
 /* Payload→Porter assignment modal (Bioficer, setup-time, per chosen fleet slot).
@@ -6356,17 +6589,19 @@ function renderPayloadAssign() {
   if (!state.payloadAssign) return;
   const slot = state.payloadAssign.slot;            // 'f1' | 'f2'
   const fk = state.fleetChoices[slot];
-  const fleet = FACTIONS[fk] && FACTIONS[fk].fleet;
-  if (!fleet) { state.payloadAssign = null; return; }
+  if (!fk) { state.payloadAssign = null; return; }
+  if (state.activeFleets) state.activeFleets = {};
+  const defs = fleetForSide(slot === 'f1' ? 'player1' : 'player2');
+  if (!defs.length) { state.payloadAssign = null; return; }
   const links = state.payloadLinks[slot] || (state.payloadLinks[slot] = {});
 
-  // Enumerate ship-slots.
+  // Enumerate ship-slots using the built fleet defs (baseId as key).
   const porters = [], payloads = [];
-  fleet.forEach(def => {
+  defs.forEach(def => {
     const n = def.groupSize || 1;
     for (let si = 0; si < n; si++) {
-      if (def.porter) porters.push({ def, si, key: `${def.id}:${si}` });
-      if (def.payload) payloads.push({ def, si, key: `${def.id}:${si}` });
+      if (def.porter)  porters.push({ def, si, key: `${def.baseId}:${si}` });
+      if (def.payload) payloads.push({ def, si, key: `${def.baseId}:${si}` });
     }
   });
   // Capacity used per porter (from links).
@@ -6473,18 +6708,24 @@ function renderSceneryPlacement() {
   const turnLabel = turnName
     ? `<span style="font-size:10px;color:var(--${turnSide})"><b>${turnName}</b> places ·</span>`
     : `<span><b>Place Scenery</b> ·</span>`;
+  // In online mode the completion button is always available once the player
+  // hasn't committed yet — independent of whose placing turn it is.
+  // In hotseat the button commits both sides, so only show it once myTurn is true
+  // (hotseat myTurn is always true since !_netSide short-circuits the check).
+  const doneBtn = myCommitted
+    ? `<span style="font-size:10px;color:var(--text-mute)">✓ done · waiting for opponent…</span>`
+    : _netSide
+      ? `<button class="btn-primary" id="commit-scenery-top" style="padding:5px 12px;font-size:10px;">SCENERY COMPLETE →</button>`
+      : `<button class="btn-primary" id="commit-scenery-both" style="padding:5px 12px;font-size:10px;">✓ SCENERY DONE</button>`;
   banner.innerHTML = `
     ${turnLabel}
     ${tab('micrometeor', 'Micrometeor', 'rgba(150,200,240,0.9)')}
     ${tab('dense', 'Dense Field', 'rgba(235,140,100,0.95)')}
-    ${myCommitted
-      ? `<span style="font-size:10px;color:var(--text-mute)">✓ done · waiting for opponent…</span>`
-      : !myTurn
-        ? `<span style="font-size:10px;color:var(--text-mute)">⏳ waiting for ${turnName}…</span>`
-        : sel ? (sel.pending
-            ? `<span style="font-size:10px;color:var(--text-dim)">click to set facing · right-click cancels</span>`
-            : `<span style="font-size:10px;color:var(--text-dim)">click board to place, then click again to set facing · ≥4&quot; from edges/zones/other scenery</span>`)
-          : `<span style="font-size:10px;color:var(--text-dim)">pick a type, then place. Click a piece to remove.</span>`}
+    ${sel ? (sel.pending
+        ? `<span style="font-size:10px;color:var(--text-dim)">click to set facing · right-click cancels</span>`
+        : `<span style="font-size:10px;color:var(--text-dim)">click board to place, then click again to set facing · ≥4&quot; from edges/zones/other scenery</span>`)
+      : ''}
+    ${doneBtn}
   `;
   board.appendChild(banner);
 }
@@ -6646,6 +6887,7 @@ function renderScoringModal() {
    Shows the current AP, +/- controls (own side only in online), and a reference
    list of admiral abilities available to this side. */
 function renderApEditModal() {
+  document.getElementById('ap-edit-backdrop')?.remove();
   let overlay = document.getElementById('ap-edit-overlay');
   if (overlay) overlay.remove();
   const side = state.apEditOpen;
@@ -6722,11 +6964,10 @@ function renderApEditModal() {
 
   overlay = document.createElement('div');
   overlay.id = 'ap-edit-overlay';
-  overlay.className = 'setup-overlay';
-  overlay.style.zIndex = '312';
-  overlay.innerHTML = `<div class="setup-card" style="max-width:420px;">
+  overlay.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:420px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  overlay.innerHTML = `
     <div class="setup-header"><h2 class="setup-title" style="color:var(--${sideCssKey(side)})">${factionName(side)} · ABILITY POINTS</h2></div>
-    <div class="setup-body">
+    <div class="setup-body" style="overflow-y:auto;flex:1;">
       ${canAdjust ? `
       <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin:4px 0 8px;">
         <button class="hp-btn" id="ap-dec" style="font-size:18px;width:38px;height:38px;" ${P.ap[side]<=0?'disabled':''}>−</button>
@@ -6740,10 +6981,15 @@ function renderApEditModal() {
       ${P.passTokens[side] ? `<div style="font-size:10px;color:var(--text-mute);text-align:center;margin-bottom:6px;">${P.passTokens[side]} Pass Token${P.passTokens[side]>1?'s':''} remaining</div>` : ''}
       ${abilitiesTable}
     </div>
-    <div class="setup-footer"><button class="btn-primary" id="ap-edit-close" style="width:100%;">DONE</button></div>
-  </div>`;
+    <div class="setup-footer"><button class="btn-primary" id="ap-edit-close" style="width:100%;">DONE</button></div>`;
+
+  const apBackdrop = document.createElement('div');
+  apBackdrop.id = 'ap-edit-backdrop';
+  apBackdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(apBackdrop);
   document.body.appendChild(overlay);
 
+  const closeAp = () => { state.apEditOpen = null; document.getElementById('ap-edit-backdrop')?.remove(); renderAll(); };
   if (canAdjust) {
     overlay.querySelector('#ap-dec').addEventListener('click', () => {
       if ((P.ap[side] || 0) > 0) dispatch({ type: 'adjustAP', side, delta: -1 });
@@ -6752,28 +6998,30 @@ function renderApEditModal() {
       dispatch({ type: 'adjustAP', side, delta: 1 });
     });
   }
-  overlay.querySelector('#ap-edit-close').addEventListener('click', () => { state.apEditOpen = null; renderAll(); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) { state.apEditOpen = null; renderAll(); } });
+  overlay.querySelector('#ap-edit-close').addEventListener('click', closeAp);
+  apBackdrop.addEventListener('click', closeAp);
 }
 
 /* Full Victory-Point breakdown modal — opened from the topbar VP counter. Groups the
    structured scoreLog by side, newest first, plus current totals. */
 function renderVPBreakdown() {
+  document.getElementById('vpbreak-backdrop')?.remove();
   let overlay = document.getElementById('vpbreak-overlay');
   if (overlay) overlay.remove();
   if (!state.vpBreakdownOpen || !state.score) return;
   const sideBlock = (side) => {
+    const col = `var(--${sideCssKey(side)})`;
     const entries = (state.scoreLog || []).filter(e => e.side === side);
     const lines = entries.length
       ? entries.map(e => `<div style="display:flex;gap:8px;font-size:10px;padding:2px 0;">
           <span style="color:var(--text-mute);min-width:24px;">R${e.round}</span>
           <span style="flex:1;">${e.reason}</span>
-          <b style="color:${e.vp>=0?`var(--${side})`:'var(--hull-crit)'};">${e.vp>=0?'+':''}${e.vp}</b>
+          <b style="color:${e.vp>=0?col:'var(--hull-crit)'};">${e.vp>=0?'+':''}${e.vp}</b>
         </div>`).join('')
       : `<div style="font-size:10px;color:var(--text-mute);padding:4px 0;">No VP yet.</div>`;
     return `<div style="flex:1;min-width:0;">
-      <div class="init-name" style="color:var(--${side})">${factionName(side)}</div>
-      <div style="font-size:26px;font-weight:700;color:var(--${side});line-height:1;">${state.score[side].vp}<span style="font-size:11px;color:var(--text-mute);font-weight:400;"> VP</span></div>
+      <div class="init-name" style="color:${col}">${factionName(side)}</div>
+      <div style="font-size:26px;font-weight:700;color:${col};line-height:1;">${state.score[side].vp}<span style="font-size:11px;color:var(--text-mute);font-weight:400;"> VP</span></div>
       <div style="font-size:9px;color:var(--text-mute);margin-bottom:6px;">${state.score[side].kp} Kill Points</div>
       ${lines}
     </div>`;
@@ -6821,25 +7069,30 @@ function renderVPBreakdown() {
     ${secExpanded ? `<div style="margin:-6px 0 12px;padding:0 4px;">${secRows}</div>` : ''}` : '';
   overlay = document.createElement('div');
   overlay.id = 'vpbreak-overlay';
-  overlay.className = 'setup-overlay';
-  overlay.style.zIndex = '310';
-  overlay.innerHTML = `<div class="setup-card" style="max-width:480px;">
+  overlay.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:480px;max-width:calc(100vw - 16px);max-height:calc(100vh - 40px);overflow:hidden;display:flex;flex-direction:column;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;`;
+  overlay.innerHTML = `
     <div class="setup-header"><h2 class="setup-title">VICTORY POINTS</h2>
       <div class="setup-sub">Round ${state.round} / 6 · VP decides the game (Kill Points break ties)</div></div>
-    <div class="setup-body">
+    <div class="setup-body" style="overflow-y:auto;flex:1;">
       ${objBlock}
       ${secBlock}
       <div style="display:flex;gap:18px;">${sideBlock('player1')}${sideBlock('player2')}</div>
     </div>
-    <div class="setup-footer"><button class="btn-primary" id="vpbreak-close" style="width:100%;">CLOSE</button></div>
-  </div>`;
+    <div class="setup-footer"><button class="btn-primary" id="vpbreak-close" style="width:100%;">CLOSE</button></div>`;
+
+  const vpBackdrop = document.createElement('div');
+  vpBackdrop.id = 'vpbreak-backdrop';
+  vpBackdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(vpBackdrop);
   document.body.appendChild(overlay);
+
+  const closeVP = () => { state.vpBreakdownOpen = false; state.vpObjOpen = false; state.vpSecOpen = false; document.getElementById('vpbreak-backdrop')?.remove(); renderAll(true); };
   const objToggle = overlay.querySelector('#vp-obj-toggle');
   if (objToggle) objToggle.addEventListener('click', () => { state.vpObjOpen = !state.vpObjOpen; renderAll(true); });
   const secToggle = overlay.querySelector('#vp-sec-toggle');
   if (secToggle) secToggle.addEventListener('click', () => { state.vpSecOpen = !state.vpSecOpen; renderAll(true); });
-  overlay.querySelector('#vpbreak-close').addEventListener('click', () => { state.vpBreakdownOpen = false; state.vpObjOpen = false; state.vpSecOpen = false; renderAll(true); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) { state.vpBreakdownOpen = false; state.vpObjOpen = false; state.vpSecOpen = false; renderAll(true); } });
+  overlay.querySelector('#vpbreak-close').addEventListener('click', closeVP);
+  vpBackdrop.addEventListener('click', closeVP);
 }
 
 /* End-of-game summary modal. */
@@ -7223,11 +7476,31 @@ function renderProtectNomModal() {
   });
 }
 
+// Standard-scenario presets — keyed by scenario ID, used by the Standard tab dropdown and
+// the random button. Defined at module scope so other code can check preset membership.
+const SCEN_PRESETS = {
+  take_and_hold:        { deployment:'line',         approach:'close_enough',          layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey'    },
+  erupting_battlefront: { deployment:'line',         approach:'column',                layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'       },
+  power_grab:           { deployment:'from_corners', approach:'column',                layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' },
+  shock_and_yaw:        { deployment:'table_corners',  approach:'column',                layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   },
+  orbital_support:      { deployment:'line',         approach:'column',                layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      },
+  // Entrapmoont: asymmetric — attacker (player2/Red) Razes, defender (player1/Blue) Protects.
+  entrapmoont:          { deployment:'encirclement', approach:'home_fleet_disadvantage', layout:'entrapmoont', variant:'entrapmoont', objective:'raze', objectives:{ player1:'protect', player2:'raze' } }
+};
+
 function renderSetupOverlay() {
   const board = document.querySelector('.board-wrap');
   let overlay = document.getElementById('setup-overlay');
   if (overlay) overlay.remove();
   if (state.phase !== 'setup') return;
+
+  // Pre-fill player name from logged-in username (only if still at the default).
+  if (currentUser?.username) {
+    if (!state.playerNames) state.playerNames = { f1: 'Player 1', f2: 'Player 2' };
+    const slot = _netSide === 'player2' ? 'f2' : 'f1';
+    const defaultName = slot === 'f1' ? 'Player 1' : 'Player 2';
+    if (state.playerNames[slot] === defaultName) state.playerNames[slot] = currentUser.username;
+  }
 
   if (!state.scenario) state.scenario = { deployment: null, approach: null, layout: null, variant: null, objective: null };
   const scen = state.scenario;
@@ -7245,9 +7518,12 @@ function renderSetupOverlay() {
   const objectiveSet = scen.objectives ? !!(scen.objectives.player1 && scen.objectives.player2) : !!scen.objective;
   const scenarioComplete = bothFleetsSelected && !payloadsLocked && state.scenario &&
     ['deployment','approach','layout','variant'].every(k => state.scenario[k]) && objectiveSet;
-  // Fleet inputs: locked for opponent (online) OR if that player has already readied.
+  // Edit-lock: inputs/import locked for opponent (online) OR if that player has already readied.
   const f1Lock = (_netSide && _netSide !== 'player1') || p1Ready;
   const f2Lock = (_netSide && _netSide !== 'player2') || p2Ready;
+  // View-lock: VIEW FLEET button only locked if that player has readied (fleet frozen) AND it's your own side.
+  const f1ViewLock = (_netSide === 'player1') && p1Ready;
+  const f2ViewLock = (_netSide === 'player2') && p2Ready;
 
   // Build a summary line per option for each table — what shows in the picker list.
   const summarisers = {
@@ -7311,7 +7587,7 @@ function renderSetupOverlay() {
         <input type="checkbox" data-asym-toggle ${asym?'checked':''}> ⇄ Asymmetric scoring — each side has its own Objective
       </label>
     </div>`;
-  const asymPickerRow = `<div class="scen-row full-width">
+  const asymPickerRow = asym ? `<div class="scen-row full-width">
       <div class="scen-roll none">⇄</div>
       <div class="scen-label">Scoring Objective</div>
       <div class="scen-helper">Per-side (asymmetric) scoring.</div>
@@ -7319,14 +7595,8 @@ function renderSetupOverlay() {
         <div style="flex:1;min-width:0;"><div style="color:var(--ucm);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player1')}</div><select class="scen-dropdown" data-asym-obj="player1">${objOptionList(scen.objectives.player1)}</select></div>
         <div style="flex:1;min-width:0;"><div style="color:var(--shal);font-size:10px;font-weight:700;margin-bottom:3px;">${playerNameForSide('player2')}</div><select class="scen-dropdown" data-asym-obj="player2">${objOptionList(scen.objectives.player2)}</select></div>
       </div>
-    </div>`;
+    </div>` : '';
   const objectiveSection = (asym ? asymPickerRow : makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)) + asymToggleRow;
-  // Extra-note descriptions for the chosen objective(s).
-  const noteFor = (o, label) => (o && o.d6 > 0) ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)"><b>${label?label+' — ':''}${o.name}:</b> ${o.desc}</div>` : '';
-  const objExtraNote = asym
-    ? noteFor(scen.objectives.player1 ? OBJECTIVES[scen.objectives.player1] : null, playerNameForSide('player1')) +
-      noteFor(scen.objectives.player2 ? OBJECTIVES[scen.objectives.player2] : null, playerNameForSide('player2'))
-    : noteFor(obj, '');
 
   // ---- Three-tab layout: Standard scenarios · Scenario Expansion 1 · Custom generation ----
   // Tab is shared (relayed) state so both clients stay on the same tab.
@@ -7363,14 +7633,9 @@ function renderSetupOverlay() {
   };
   const standardTab = `<div style="${lockStyle}">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
-        <select class="btn" data-preset-select style="flex:1;" ${lockAttr} title="Apply a standard scenario">
+        <select class="scen-dropdown" data-preset-select style="flex:1;" ${lockAttr} title="Apply a standard scenario">
           <option value="">⚑ Select standard scenario…</option>
-          <option value="take_and_hold">Take and Hold</option>
-          <option value="erupting_battlefront">Erupting Battlefront</option>
-          <option value="power_grab">Power Grab</option>
-          <option value="shock_and_yaw">Shock and Yaw</option>
-          <option value="orbital_support">Orbital Support</option>
-          <option value="entrapmoont">Entrapmoont</option>
+          ${Object.keys(SCEN_PRESETS).map(k => `<option value="${k}"${scen.layout===k?' selected':''}>${LAYOUTS[SCEN_PRESETS[k].layout]?.name || k}</option>`).join('')}
         </select>
         <button class="btn" data-preset="random" ${lockAttr} title="Apply a random standard scenario">⚄ RANDOM</button>
       </div>
@@ -7445,10 +7710,10 @@ function renderSetupOverlay() {
         ${makeCard('approach',  'Approach',        APPROACHES,  scen.approach)}
         ${makeCard('layout',    'Layout',          LAYOUTS,     scen.layout)}
         ${makeCard('variant',   'Variant',         VARIANTS,    scen.variant)}
-        ${objectiveSection}
+        ${makeCard('objective', 'Scoring Objective', OBJECTIVES, scen.objective, true)}
       </div>
       ${vrn && vrn.d6 > 0 ? `<div class="scen-extra-note"><b>${vrn.name}:</b> ${vrn.desc}</div>` : ''}
-      ${objExtraNote}
+      ${scen.objective && OBJECTIVES[scen.objective]?.d6 > 0 ? `<div class="scen-extra-note" style="background:${ucmRgba(0.05)};border-left-color:var(--ucm);color:var(--ucm)"><b>${OBJECTIVES[scen.objective].name}:</b> ${OBJECTIVES[scen.objective].desc}</div>` : ''}
       <div style="display:flex;justify-content:flex-end;margin-top:10px;">
         <button class="btn" data-reroll="all" ${lockAttr}>⚄ RANDOMISE ALL</button>
       </div>
@@ -7461,7 +7726,7 @@ function renderSetupOverlay() {
     <div class="setup-card">
       <div class="setup-header">
         <h2 class="setup-title">SCENARIO SETUP</h2>
-        <div class="setup-sub">D6 · 6-Round Game</div>
+        <div class="setup-sub">D6 · 6-Round Game${_netRoom ? ` · <span style="font-family:var(--mono);letter-spacing:0.08em;font-size:14px;color:var(--shal);">${_netRoom}</span>` : ''}</div>
       </div>
       <div class="setup-body">
         <div class="faction-select">
@@ -7478,7 +7743,7 @@ function renderSetupOverlay() {
             </select>
             ${secondaryPickers('f1')}
             <button class="btn" data-import-fleet="f1" style="width:100%;margin-top:5px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f1 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
-            ${(state.importedFleets&&state.importedFleets.f1)||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1) ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} SETUP / VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
+            ${state.fleetChoices?.f1 ? `<button class="btn${fleetAssignmentsReady('f1')?'':' btn-primary'}" data-view-fleet="f1" style="width:100%;margin-top:3px;font-size:10px;" ${f1ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f1')?'👁':'⚠'} ${state.importedFleets?.f1||(fleetHasPayloads(state.fleetChoices.f1)&&!state.importedFleets?.f1)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f1?' ('+_fleetTotalPts(state.importedFleets.f1)+' pts)':''}</button>` : ''}
           </div>
           <div class="faction-slot">
             <div class="faction-lbl" style="color:var(--shal)">${_netSide === 'player2' ? '▶ YOUR NAME' : _netSide === 'player1' ? 'Opponent' : 'Player 2'}${p2Ready ? ' <span style="color:var(--hull-good);font-size:9px;">✓ READY</span>' : ''}</div>
@@ -7493,7 +7758,7 @@ function renderSetupOverlay() {
             </select>
             ${secondaryPickers('f2')}
             <button class="btn" data-import-fleet="f2" style="width:100%;margin-top:5px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${state.importedFleets&&state.importedFleets.f2 ? '✏ EDIT IMPORT' : '⊕ IMPORT LIST'}</button>
-            ${(state.importedFleets&&state.importedFleets.f2)||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2) ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2Lock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} SETUP / VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
+            ${state.fleetChoices?.f2 ? `<button class="btn${fleetAssignmentsReady('f2')?'':' btn-primary'}" data-view-fleet="f2" style="width:100%;margin-top:3px;font-size:10px;" ${f2ViewLock ? 'disabled' : ''}>${fleetAssignmentsReady('f2')?'👁':'⚠'} ${state.importedFleets?.f2||(fleetHasPayloads(state.fleetChoices.f2)&&!state.importedFleets?.f2)?'SETUP / ':''}VIEW FLEET${state.importedFleets&&state.importedFleets.f2?' ('+_fleetTotalPts(state.importedFleets.f2)+' pts)':''}</button>` : ''}
           </div>
         </div>
         <div style="font-size:9px;color:var(--text-mute);margin:-4px 0 10px;text-align:center;">Red and Blue deployment sides are assigned randomly when you confirm.</div>
@@ -7509,14 +7774,11 @@ function renderSetupOverlay() {
         <button class="btn" id="exit-to-menu">← Back</button>
         ${(() => {
           if (!_netSide) {
-            // Hotseat: one ready button per player.
-            const p1Btn = p1Ready
-              ? `<button class="btn" data-unready-setup="player1" style="color:var(--hull-good);border-color:var(--hull-good);">✓ ${playerNameForSide('player1')} READY [${readyCount}/2]</button>`
-              : `<button class="btn-primary" data-ready-setup="player1" ${scenarioComplete ? '' : 'disabled'}>✓ ${playerNameForSide('player1')} READY</button>`;
-            const p2Btn = p2Ready
-              ? `<button class="btn" data-unready-setup="player2" style="color:var(--hull-good);border-color:var(--hull-good);">✓ ${playerNameForSide('player2')} READY [${readyCount}/2]</button>`
-              : `<button class="btn-primary" data-ready-setup="player2" ${scenarioComplete ? '' : 'disabled'}>✓ ${playerNameForSide('player2')} READY</button>`;
-            return p1Btn + p2Btn;
+            // Hotseat: single button confirms both sides at once.
+            if (p1Ready && p2Ready) {
+              return `<button class="btn" data-unready-setup-both style="color:var(--hull-good);border-color:var(--hull-good);">✓ READY — cancel</button>`;
+            }
+            return `<button class="btn-primary" data-ready-setup-both ${scenarioComplete ? '' : 'disabled'}>✓ READY</button>`;
           }
           const mySide = _netSide;
           const myReady = mySide === 'player1' ? p1Ready : p2Ready;
@@ -7560,16 +7822,7 @@ function renderSetupOverlay() {
       renderAll(); // relays to the other player via netRelaySetup() (still in setup phase)
     });
   });
-  // Standard-scenario presets — set every scenario row at once.
-  const SCEN_PRESETS = {
-    take_and_hold:        { deployment:'line', approach:'close_enough', layout:'take_and_hold',        variant:'guarded_sectors',      objective:'survey' },
-    erupting_battlefront: { deployment:'line',         approach:'column', layout:'erupting_battlefront', variant:'civic_infrastructure', objective:'raze'      },
-    power_grab:           { deployment:'from_corners', approach:'column', layout:'power_grab',           variant:'guarded_sectors',      objective:'attrition' },
-    shock_and_yaw:        { deployment:'from_corners', approach:'column', layout:'shock_and_yaw',        variant:'shock_and_yaw',        objective:'protect'   },
-    orbital_support:      { deployment:'line',         approach:'column', layout:'orbital_support',      variant:'orbital_support',      objective:'raze'      },
-    // Entrapmoont: asymmetric — attacker (player2/Red) Razes, defender (player1/Blue) Protects.
-    entrapmoont:          { deployment:'encirclement', approach:'home_fleet_disadvantage', layout:'entrapmoont', variant:'entrapmoont', objective:'raze', objectives:{ player1:'protect', player2:'raze' } }
-  };
+  // Standard-scenario presets (defined at module scope above renderSetupOverlay).
   const applyPreset = (key) => {
     const preset = SCEN_PRESETS[key];
     if (!preset) return;
@@ -7667,8 +7920,21 @@ function renderSetupOverlay() {
       const which = sel.dataset.fleetChoice; // 'f1' | 'f2'
       state.fleetChoices[which] = sel.value || null;
       state.payloadLinks[which] = {};
-      // Clear any imported fleet when the dropdown is changed manually
-      if (state.importedFleets) state.importedFleets[which] = null;
+      // Parse the quickplay fleet into importedFleets so the opponent can view it
+      // via the same fleet-view path as an imported list (admiral assignments etc. persist).
+      state.importedFleets = state.importedFleets || { f1: null, f2: null };
+      if (sel.value && FASTPLAY_LISTS[sel.value]) {
+        const qp = parseNewRecruit(FASTPLAY_LISTS[sel.value]);
+        if (qp && qp.valid) {
+          state.importedFleets[which] = { faction: qp.faction, groups: qp.groups, admirals: qp.admirals, admiralLevel: qp.admiralLevel, secondaries: qp.secondaries };
+        } else {
+          state.importedFleets[which] = null;
+        }
+      } else {
+        state.importedFleets[which] = null;
+      }
+      // Rebuild fleets so groups and activeFleets reflect the new faction immediately.
+      rebuildFleets();
       // Auto-set colour to faction default when a fleet is chosen; pick random free colour if default is taken.
       if (sel.value && FACTION_COLORS[sel.value]) {
         state.playerColors = state.playerColors || { f1: null, f2: null };
@@ -7730,9 +7996,23 @@ function renderSetupOverlay() {
   overlay.querySelectorAll('[data-view-fleet]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openFleetView(btn.dataset.viewFleet);
+      openFleetView(btn.dataset.viewFleet, btn);
     });
   });
+  // Hotseat: single button fires both readySetup intents.
+  const hsReadyBtn = overlay.querySelector('#btn-hotseat-ready');
+  if (hsReadyBtn) {
+    hsReadyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state.fleetChoices.f1 || !state.fleetChoices.f2) { flashLaunchMsg('Select both fleets first'); return; }
+      if (!state.scenario || ['deployment','approach','layout','variant','objective'].some(k => !state.scenario[k])) {
+        flashLaunchMsg('Select all scenario options first'); return;
+      }
+      dispatch({ type: 'readySetup', side: 'player1' });
+      dispatch({ type: 'readySetup', side: 'player2' });
+    });
+  }
+  // Online: per-side ready buttons.
   overlay.querySelectorAll('[data-ready-setup]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -7745,16 +8025,34 @@ function renderSetupOverlay() {
       dispatch({ type: 'readySetup', side });
     });
   });
+  const readyBothBtn = overlay.querySelector('[data-ready-setup-both]');
+  if (readyBothBtn) {
+    readyBothBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state.fleetChoices.f1 || !state.fleetChoices.f2) { flashLaunchMsg('Select both fleets first'); return; }
+      if (!scenarioComplete) { flashLaunchMsg('Select all scenario options first'); return; }
+      dispatch({ type: 'readySetup', side: 'player1' });
+      dispatch({ type: 'readySetup', side: 'player2' });
+    });
+  }
   overlay.querySelectorAll('[data-unready-setup]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       dispatch({ type: 'unreadySetup', side: btn.dataset.unreadySetup });
     });
   });
+  const unreadyBothBtn = overlay.querySelector('[data-unready-setup-both]');
+  if (unreadyBothBtn) {
+    unreadyBothBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dispatch({ type: 'unreadySetup', side: 'player1' });
+      dispatch({ type: 'unreadySetup', side: 'player2' });
+    });
+  }
   const exitBtn = overlay.querySelector('#exit-to-menu');
   if (exitBtn) exitBtn.addEventListener('click', () => {
-    overlay.remove();
-    showModeSelector();
+    showModeSelector(); // appends mode selector overlay first
+    overlay.remove();   // then removes setup overlay — no visible gap
   });
 }
 
@@ -7766,8 +8064,11 @@ function renderActivationHUD() {
   if (hud) hud.remove();
 
   const P = state.planning;
+  const anyActivated = state.activeSide && allDefs().some(def =>
+    def.side === state.activeSide && state.groups[def.id]?.activated);
   const canPass = state.phase === 'play' && P && state.activeSide
     && P.passTokens[state.activeSide] > 0
+    && !anyActivated
     && (!_netSide || _gs() === state.activeSide);
   const passBtn = canPass
     ? `<button class="btn" id="pass-activation" style="width:100%;margin-top:4px;" title="Spend a Pass Token to pass">⏭ PASS (${P.passTokens[state.activeSide]})</button>`
@@ -7860,7 +8161,7 @@ function renderActivationHUD() {
     <div class="act-hud-name" style="color:var(--${sideClass});">${def.name}</div>
     ${undoBtn}
     ${finishBtn}
-    ${passBtn}
+    ${anyOnTableNotMoved ? '' : passBtn}
   `;
   board.appendChild(hud);
 }
@@ -7872,8 +8173,7 @@ function renderDeployHint() {
   if (state.phase !== 'deploy') return;
 
   // Auto-skip sides that have nothing to deploy (no Direct or Vanguard groups).
-  // Don't fire while a placement is pending confirmation or a ship is being aimed.
-  if (!_pendingDeploy && !state.aiming) {
+  if (!state.aiming) {
     for (const side of ['player1', 'player2']) {
       if (state.deployDone[side]) continue;
       if (!deploySideAllowed(side)) continue;
@@ -7889,12 +8189,7 @@ function renderDeployHint() {
 
   // Status text varies depending on selection.
   let status = '';
-  if (_pendingDeploy) {
-    const pdDef = getDef(_pendingDeploy.gid);
-    const pdGrp = state.groups[_pendingDeploy.gid];
-    const pdTotal = pdGrp ? pdGrp.ships.filter(s => !s.destroyed).length : 1;
-    status = `Confirm placement of <b>${pdDef ? pdDef.name : 'ship'}</b> (ship ${_pendingDeploy.si + 1} of ${pdTotal})?`;
-  } else if (state.selectedGroupId) {
+  if (state.selectedGroupId) {
     const def = getDef(state.selectedGroupId);
     const grp = state.groups[state.selectedGroupId];
     if (!canDeployNow(def)) {
@@ -7942,11 +8237,21 @@ function renderDeployHint() {
 
   // Footer button.
   let footerBtn;
-  if (_pendingDeploy) {
-    footerBtn = `<button class="btn-finish-act" id="deploy-confirm" style="width:auto;padding:6px 16px;margin-top:0;">✓ CONFIRM PLACEMENT</button>` +
-                `<button class="btn" id="deploy-cancel" style="width:auto;padding:6px 12px;margin-top:0;margin-left:4px;">✕ CANCEL</button>`;
-  } else if (state.aiming) {
+  if (state.aiming) {
     footerBtn = '';
+  } else if (state.selectedGroupId) {
+    const _fDef = getDef(state.selectedGroupId);
+    const _fGrp = state.groups[state.selectedGroupId];
+    if (_fDef && canDeployNow(_fDef) && deploySideAllowed(_fDef.side) && netIsMySide(_fDef.side)) {
+      const _allPlaced = _fGrp && nextUndeployedShipIdx(state.selectedGroupId) < 0;
+      footerBtn = `<button class="btn-finish-act" id="deploy-group-confirm" ${_allPlaced ? '' : 'disabled'} style="width:auto;padding:6px 16px;margin-top:0;${_allPlaced ? '' : 'opacity:0.45;cursor:not-allowed;'}">✓ CONFIRM DEPLOYMENT</button>`;
+    } else if (!state.deployDone.player1 && netIsMySide('player1') && sideNeedsDeployPhase('player1')) {
+      footerBtn = `<button class="btn-finish-act" id="deploy-done-red" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player1')} DONE ▸</button>`;
+    } else if (!state.deployDone.player2 && netIsMySide('player2') && sideNeedsDeployPhase('player2')) {
+      footerBtn = `<button class="btn-finish-act" id="deploy-done-blue" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player2')} DONE ▸</button>`;
+    } else {
+      footerBtn = `<button class="btn-primary" id="commit-deploy" style="padding:5px 14px;font-size:11px;">BEGIN PLAY →</button>`;
+    }
   } else if (!state.deployDone.player1 && netIsMySide('player1') && sideNeedsDeployPhase('player1')) {
     footerBtn = `<button class="btn-finish-act" id="deploy-done-red" style="width:auto;padding:6px 16px;margin-top:0;">✓ ${playerNameForSide('player1')} DONE ▸</button>`;
   } else if (!state.deployDone.player2 && netIsMySide('player2') && sideNeedsDeployPhase('player2')) {
@@ -7958,20 +8263,10 @@ function renderDeployHint() {
   hint.innerHTML = `<span>${status}</span>${footerBtn}`;
   board.appendChild(hint);
 
-  const dc = hint.querySelector('#deploy-confirm');
-  if (dc) dc.addEventListener('click', () => {
-    const pd = _pendingDeploy;
-    _pendingDeploy = null;
-    const pdShip = pd && state.groups[pd.gid] && state.groups[pd.gid].ships[pd.si];
-    if (pdShip) { pdShip.offTable = true; pdShip.x = undefined; pdShip.y = undefined; pdShip.heading = undefined; pdShip.deployedRound = undefined; }
-    dispatch({ type: 'deployShip', gid: pd.gid, si: pd.si, x: pd.x, y: pd.y, heading: pd.heading });
-  });
-  const dcancel = hint.querySelector('#deploy-cancel');
-  if (dcancel) dcancel.addEventListener('click', () => {
-    const pd = _pendingDeploy;
-    _pendingDeploy = null;
-    const pdShip = pd && state.groups[pd.gid] && state.groups[pd.gid].ships[pd.si];
-    if (pdShip) { pdShip.offTable = true; pdShip.x = undefined; pdShip.y = undefined; pdShip.heading = undefined; pdShip.deployedRound = undefined; }
+  const dgc = hint.querySelector('#deploy-group-confirm');
+  if (dgc) dgc.addEventListener('click', () => {
+    state.selectedGroupId = null;
+    state.selectedShipIdx = null;
     renderAll(true);
   });
 
@@ -8041,7 +8336,12 @@ function renderBrand() {
       <span style="color:var(--shal);font-weight:700;font-size:17px;line-height:1;">${s.vp}</span>
       <span style="color:var(--shal);font-size:11px;letter-spacing:0.1em;font-weight:700;">${factionName('player2').toUpperCase()}</span>
     </button>`;
-    brandEl.querySelector('#brand-vp-btn').addEventListener('click', () => { state.vpBreakdownOpen = true; renderAll(true); });
+    brandEl.querySelector('#brand-vp-btn').addEventListener('click', (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      state.vpBreakdownOpen = true;
+      state.vpAnchor = { top: r.bottom, left: r.left };
+      renderAll(true);
+    });
     return;
   }
   brandEl.innerHTML = `<span id="brand-red">${factionName('player1').toUpperCase()}</span><span class="vs">VS</span><span class="shal-name" id="brand-blue">${factionName('player2').toUpperCase()}</span>`;
@@ -8061,7 +8361,13 @@ function renderPhaseNav() {
   if (nav && state.phase === 'play') {
     const sub = currentPlaySubPhase();
     nav.style.display = sub ? '' : 'none';
-    if (sub) nav.innerHTML = `<span style="font-family:var(--display);font-size:10px;letter-spacing:0.16em;color:var(--text-dim);">${sub}</span>`;
+    if (sub) {
+      const pName = state.activeSide ? playerNameForSide(state.activeSide).toUpperCase() : null;
+      const label = pName
+        ? `RND <b>${state.round}</b> / 6: ${pName} – ${sub}`
+        : `RND <b>${state.round}</b> / 6: ${sub}`;
+      nav.innerHTML = `<span style="font-family:var(--display);font-size:12px;letter-spacing:0.14em;color:var(--text);">${label}</span>`;
+    }
     return;
   }
   // Restore the phase-step breadcrumb if it was replaced.
@@ -8091,67 +8397,29 @@ function renderTopbarControls() {
   if (state.phase === 'setup') {
     ctrl.innerHTML = ``;
   } else if (state.phase === 'scenery') {
-    const r = state.sceneryReady || {};
-    let scenBtns;
-    if (!_netSide) {
-      // Hotseat: separate done button per side.
-      const p1 = r.player1
-        ? `<span class="btn" style="opacity:0.5;cursor:default;padding:6px 10px;font-size:11px;">✓ ${playerNameForSide('player1')}</span>`
-        : `<button class="btn-primary" data-scenery-done="player1" style="padding:6px 14px;font-size:11px;">✓ ${playerNameForSide('player1')} DONE</button>`;
-      const p2 = r.player2
-        ? `<span class="btn" style="opacity:0.5;cursor:default;padding:6px 10px;font-size:11px;">✓ ${playerNameForSide('player2')}</span>`
-        : `<button class="btn-primary" data-scenery-done="player2" style="padding:6px 14px;font-size:11px;">✓ ${playerNameForSide('player2')} DONE</button>`;
-      scenBtns = `${p1}${p2}`;
-    } else {
-      scenBtns = r[_netSide]
-        ? `<span style="font-size:10px;color:var(--text-mute);padding:6px;">⏳ Waiting for opponent…</span>`
-        : `<button class="btn-primary" id="commit-scenery-top" style="padding:6px 14px;font-size:11px;">SCENERY COMPLETE →</button>`;
-    }
-    ctrl.innerHTML = `<button class="btn" id="back-to-setup">← SETUP</button>${scenBtns}`;
+    ctrl.innerHTML = ``;
   } else if (state.phase === 'nominations') {
     ctrl.innerHTML = ``;
   } else if (state.phase === 'deploy') {
-    ctrl.innerHTML = `
-      <button class="btn" id="back-to-setup">← SETUP</button>
-      <button class="btn-primary" id="commit-deploy-top" style="padding:6px 14px;font-size:11px;">DEPLOYMENT COMPLETE →</button>
-    `;
+    ctrl.innerHTML = ``;
   } else { // play
-    const waitingBanner = (_netSide && state.activeSide && _gs() !== state.activeSide)
-      ? `<span style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-right:4px;">⏳ OPPONENT'S TURN</span>`
-      : '';
-    // END ROUND is only available when all activations are done (activeSide === null).
-    const allDone = state.activeSide === null;
-    const myVoted   = _netSide && _endRoundVotes.has(_netSide);
-    const theyVoted = _netSide && _endRoundVotes.has(_netSide === 'player1' ? 'player2' : 'player1');
-    let endRoundBtn;
-    if (!allDone) {
-      endRoundBtn = `<button class="btn" id="end-round" disabled style="opacity:0.35;cursor:not-allowed;" title="All groups must finish activation first">END ROUND ▸</button>`;
-    } else if (_netSide && myVoted) {
-      endRoundBtn = `<button class="btn" id="end-round" disabled style="opacity:0.5;cursor:not-allowed;color:var(--hull-warn);" title="Waiting for opponent">⏳ WAITING</button>`;
-    } else {
-      const hint = (_netSide && theyVoted) ? ' (opponent ready)' : '';
-      endRoundBtn = `<button class="btn" id="end-round"${hint ? ' style="border-color:var(--hull-warn);color:var(--hull-warn);"' : ''}>END ROUND${hint} ▸</button>`;
-    }
-    const replayBtn = _netRoom
-      ? `<button class="btn" id="open-replay" style="font-size:10px;padding:4px 8px;opacity:0.7;" title="Watch this game's replay">↺ REPLAY</button>`
-      : '';
-    ctrl.innerHTML = `
-      ${waitingBanner}
-      <div class="round-display">RND <b id="round-num">${state.round}</b> / 6</div>
-      ${endRoundBtn}
-      ${replayBtn}
-    `;
+    ctrl.innerHTML = ``;
   }
 }
 
 
 
 function renderAll(localOnly = false) {
+  // Remove the startup cover on the first render — by now the setup overlay
+  // is already in the DOM, so nothing flashes underneath.
+  const _cover = document.getElementById('app-cover');
+  if (_cover) _cover.remove();
   // Wrap ALL rendering in try/catch so the relay always fires even if a render
   // function throws — a stuck _netReceiving=true would silence all relay.
   try {
     applyThemeColors();
     syncPayloads();
+    updateArcViewHud();
     renderBrand();
     renderPhaseNav();
     renderTopbarControls();
@@ -8201,6 +8469,9 @@ function renderAll(localOnly = false) {
   if (!localOnly && !_replayMode) {
     if (state.phase === 'setup' || state.phase === 'scenery' || state.phase === 'nominations') netRelaySetup(); else netAfterRender();
   }
+  // Hotseat only: auto-activate ineligible off-table groups. In online mode the
+  // server pre-activates them inside rollInitiative so no client dispatch needed.
+  if (state.phase === 'play' && !_replayMode && !_netSide) setTimeout(_autoSkipIneligible, 0);
   renderReplayControls();
   // Cursor: crosshair when targeting / placing / aiming on either board.
   const _cursorCrosshair = (() => {
@@ -8255,6 +8526,100 @@ function renderReplayControls() {
   if (nextRndBtn) nextRndBtn.disabled = _replayStep >= total;
 }
 
+/* Compress the raw intent log before replaying.
+   Two passes:
+   1. Mark undone intent pairs for removal:
+      - undoDeploy{gid} cancels all preceding deployShip{gid} in this activation.
+      - undoMove{gid,si} cancels the preceding moveShip{gid,si} + any aimShip after it.
+   2. Bundle surviving intents within each activation chunk:
+      - All deployShip for the same group → one replay step (ships appear at final positions).
+      - All moveShip/aimShip for the group → one replay step (ships arrive at final positions).
+      - Everything else (applyOrder, fireWeapons, finishActivation…) stays as individual steps. */
+function compressReplayLog(intentLog) {
+  // ── Pass 1: mark undo pairs for removal ──────────────────────────────────
+  const removed = new Set();
+  const deployStacks = {};   // gid → [intentLog idx] of pending deployShip
+  const shipHist     = {};   // `gid:si` → [{idx, type:'move'|'aim'}]
+  const lastMovedSi  = {};   // gid → si (aimShip has gid but not si)
+
+  intentLog.forEach((entry, i) => {
+    const { type, gid, si } = entry.intent;
+    if (type === 'deployShip' || type === 'arriveShip') {
+      (deployStacks[gid] = deployStacks[gid] || []).push(i);
+    } else if (type === 'undoDeploy') {
+      (deployStacks[gid] || []).forEach(idx => removed.add(idx));
+      delete deployStacks[gid];
+      removed.add(i);
+    } else if (type === 'moveShip') {
+      const key = `${gid}:${si}`;
+      (shipHist[key] = shipHist[key] || []).push({ idx: i, type: 'move' });
+      lastMovedSi[gid] = si;
+    } else if (type === 'aimShip') {
+      const resolvedSi = lastMovedSi[gid];
+      if (resolvedSi !== undefined)
+        (shipHist[`${gid}:${resolvedSi}`] = shipHist[`${gid}:${resolvedSi}`] || []).push({ idx: i, type: 'aim' });
+    } else if (type === 'undoMove') {
+      removed.add(i);
+      const hist = shipHist[`${gid}:${si}`] || [];
+      while (hist.length > 0) { const top = hist.pop(); removed.add(top.idx); if (top.type === 'move') break; }
+      shipHist[`${gid}:${si}`] = hist;
+      if (!hist.some(h => h.type === 'move')) delete lastMovedSi[gid];
+    } else if (type === 'finishActivation') {
+      delete deployStacks[gid];
+      Object.keys(shipHist).filter(k => k.startsWith(gid + ':')).forEach(k => delete shipHist[k]);
+      delete lastMovedSi[gid];
+    }
+  });
+
+  // ── Pass 2: bundle and emit ───────────────────────────────────────────────
+  const result = [];
+  let chunk = []; // surviving entries since last finishActivation
+
+  const flushChunk = () => {
+    if (!chunk.length) return;
+    // Collect deploy and move/aim entries; everything else emits individually.
+    const deployEntries = [], moveEntries = [];
+    chunk.forEach(e => {
+      const t = e.intent.type;
+      if (t === 'deployShip' || t === 'arriveShip') deployEntries.push(e);
+      else if (t === 'moveShip' || t === 'aimShip') moveEntries.push(e);
+    });
+    const mkBundle = (entries) =>
+      entries.length === 1 ? entries[0] : { ...entries[0], intents: entries.map(e => e.intent) };
+
+    let deployDone = false, moveDone = false;
+    chunk.forEach(e => {
+      const t = e.intent.type;
+      if (t === 'deployShip' || t === 'arriveShip') {
+        if (!deployDone) { result.push(mkBundle(deployEntries)); deployDone = true; }
+      } else if (t === 'moveShip' || t === 'aimShip') {
+        if (!moveDone) { result.push(mkBundle(moveEntries)); moveDone = true; }
+      } else {
+        result.push(e);
+      }
+    });
+    chunk = [];
+  };
+
+  intentLog.forEach((entry, i) => {
+    if (removed.has(i)) return;
+    if (entry.intent.type === 'finishActivation') {
+      flushChunk();
+      result.push(entry);
+    } else {
+      chunk.push(entry);
+    }
+  });
+  flushChunk();
+
+  return result;
+}
+
+/* Return the primary intent type from a (possibly bundled) replay log entry. */
+function _replayEntryType(entry) {
+  return entry.intents ? entry.intents[0].type : entry.intent.type;
+}
+
 function loadReplay(data) {
   if (!data || !data.playStartState) {
     alert('No replay data available for this game yet (play must have started).');
@@ -8264,7 +8629,7 @@ function loadReplay(data) {
   _replayInterval = null;
   _liveState  = state;
   _replayMode = true;
-  _replayData = data;
+  _replayData = { ...data, intentLog: compressReplayLog(data.intentLog) };
   _replayStep = -1;
   _replayRng  = _makeRng(data.seed);
   _replayRng.setState(data.playStartRngState);
@@ -8273,8 +8638,63 @@ function loadReplay(data) {
   renderAll(true);
 }
 
+// ── Replay movement animation ─────────────────────────────────────────────────
+let _replayAnim = null; // { rafId, ships:[{gid,si,x0,y0,h0,x1,y1,h1}] }
+
+function _animLerpAngle(a, b, t) {
+  const d = ((b - a + 540) % 360) - 180;
+  return (a + d * t + 360) % 360;
+}
+
+function _cancelReplayAnim() {
+  if (!_replayAnim) return;
+  cancelAnimationFrame(_replayAnim.rafId);
+  // Snap every ship to its final position.
+  _replayAnim.ships.forEach(({ gid, si, x1, y1, h1 }) => {
+    const ship = state.groups[gid]?.ships[si];
+    if (ship) { ship.x = x1; ship.y = y1; ship.heading = h1; }
+  });
+  _replayAnim = null;
+}
+
+function _startReplayMoveAnim(ships) {
+  _cancelReplayAnim();
+  const DURATION = 700;
+  const t0 = performance.now();
+  const anim = { rafId: null, ships };
+  _replayAnim = anim;
+
+  const tick = (now) => {
+    if (_replayAnim !== anim) return; // superseded
+    const raw = Math.min(1, (now - t0) / DURATION);
+    // Ease-in-out quadratic
+    const ease = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2;
+    ships.forEach(({ gid, si, x0, y0, h0, x1, y1, h1 }) => {
+      const ship = state.groups[gid]?.ships[si];
+      if (!ship) return;
+      ship.x = x0 + (x1 - x0) * ease;
+      ship.y = y0 + (y1 - y0) * ease;
+      ship.heading = _animLerpAngle(h0, h1, ease);
+    });
+    renderAll(true);
+    if (raw < 1) {
+      anim.rafId = requestAnimationFrame(tick);
+    } else {
+      // Snap to exact end and clear
+      ships.forEach(({ gid, si, x1, y1, h1 }) => {
+        const ship = state.groups[gid]?.ships[si];
+        if (ship) { ship.x = x1; ship.y = y1; ship.heading = h1; }
+      });
+      _replayAnim = null;
+      renderAll(true);
+    }
+  };
+  anim.rafId = requestAnimationFrame(tick);
+}
+
 function replayGoTo(targetStep) {
   if (!_replayMode || !_replayData) return;
+  _cancelReplayAnim();
   const log = _replayData.intentLog;
   const clampedStep = Math.max(-1, Math.min(targetStep, log.length - 1));
   // If seeking backward, reset to playStartState
@@ -8283,16 +8703,49 @@ function replayGoTo(targetStep) {
     state = structuredClone(_replayData.playStartState);
     _replayStep = -1;
   }
-  // Fast-forward to target
+  // Fast-forward to target — each entry may be a single intent or a bundle.
+  // The final step animates if it contains moveShip intents.
   while (_replayStep < clampedStep) {
     _replayStep++;
-    const { intent } = log[_replayStep];
-    try { _apply(state, intent, _replayRng); } catch(e) { console.warn('[replay] step', _replayStep, e); }
+    const entry = log[_replayStep];
+    const intents = entry.intents || [entry.intent];
+    const isLast = _replayStep === clampedStep;
+    const moveIntents = isLast ? intents.filter(i => i.type === 'moveShip') : [];
+
+    if (moveIntents.length > 0) {
+      // Capture start positions before applying.
+      const ships = moveIntents.map(i => {
+        const ship = state.groups[i.gid]?.ships[i.si];
+        return ship ? { gid: i.gid, si: i.si, x0: ship.x, y0: ship.y, h0: ship.heading } : null;
+      }).filter(Boolean);
+
+      // Apply the full bundle (moveShip + aimShip → sets final x/y/heading).
+      intents.forEach(intent => {
+        try { _apply(state, intent, _replayRng); } catch(e) { console.warn('[replay]', e); }
+      });
+
+      // Record end positions, then rewind ships to start so animation plays forward.
+      ships.forEach(s => {
+        const ship = state.groups[s.gid]?.ships[s.si];
+        if (!ship) return;
+        s.x1 = ship.x; s.y1 = ship.y; s.h1 = ship.heading;
+        ship.x = s.x0; ship.y = s.y0; ship.heading = s.h0;
+      });
+
+      renderAll(true); // draw ships at start positions with trail from moveTrail
+      _startReplayMoveAnim(ships);
+      return; // animation drives the rest
+    }
+
+    intents.forEach(intent => {
+      try { _apply(state, intent, _replayRng); } catch(e) { console.warn('[replay] step', _replayStep, e); }
+    });
   }
   renderAll(true);
 }
 
 function exitReplay() {
+  _cancelReplayAnim();
   clearInterval(_replayInterval);
   _replayInterval = null;
   // Navigate to the root — full page reload returns to the mode selector.
@@ -8303,8 +8756,7 @@ function _replayRoundStart(round) {
   if (!_replayMode || !_replayData) return -1;
   const log = _replayData.intentLog;
   for (let i = 0; i < log.length; i++) {
-    if (log[i].intent && log[i].intent.type === 'advanceRound') {
-      // The step after advanceRound is the first of the next round
+    if (_replayEntryType(log[i]) === 'advanceRound') {
       replayGoTo(i);
       return i;
     }
@@ -8549,10 +9001,10 @@ function _handle3dClick(e) {
         const heading = headingToward(finalX, finalY, pt.x, pt.y);
         state.aiming = null; state.hoverPoint = null;
         if (state.phase === 'deploy') {
-          // Show the ship at its aimed position locally; CONFIRM button sends the intent.
+          // Auto-dispatch immediately — no per-ship confirm step.
           aship.heading = heading;
-          _pendingDeploy = { gid: a.gid, si: a.si, x: finalX, y: finalY, heading };
-          renderAll(true);
+          aship.offTable = true; aship.x = undefined; aship.y = undefined; aship.deployedRound = undefined;
+          dispatch({ type: 'deployShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
         } else {
           dispatch({ type: 'arriveShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
           renderAll();
@@ -8714,11 +9166,20 @@ function _handle3dClick(e) {
         if (!_gLBest) { flashLaunchMsg('Click a chained Voidgate'); return; }
         if (gateRemaining(_gLBest.ship, _gLBest.def) <= 0) { flashLaunchMsg('That Voidgate has no Gateship value left'); return; }
         const _gLLayer = _gLBest.ship.layer || 'orbit';
-        const _gLReachable = (state.scenarioData.dropsites || []).some(d => {
+        const _gLAllDs = state.scenarioData.dropsites || [];
+        const _gLReachable = _gLAllDs.some(d => {
           const dl = d.base.layer === 'Atmosphere' ? 'atmosphere' : 'orbit';
           return dl === _gLLayer && Math.hypot(inchToPx(d.x) - _gLBest.x, inchToPx(d.y) - _gLBest.y) <= _gLGATEPX + 2;
         });
-        if (!_gLReachable) { flashLaunchMsg('No same-layer dropsite within 3" of that Voidgate'); return; }
+        if (!_gLReachable) {
+          const _gLWrongLayer = _gLAllDs.some(d =>
+            Math.hypot(inchToPx(d.x) - _gLBest.x, inchToPx(d.y) - _gLBest.y) <= _gLGATEPX + 2
+          );
+          flashLaunchMsg(_gLWrongLayer
+            ? `Voidgate is in ${_gLLayer} — nearby Dropsite is on a different layer`
+            : 'No Dropsite within 3" of that Voidgate');
+          return;
+        }
         dispatch({ type: 'selectGate', gid: L.gid, si: L.si, gateSel: { x: _gLBest.x, y: _gLBest.y, si: _gLBest.si, gid: _gLBest.def.id, layer: _gLLayer } });
         flashLaunchMsg('Voidgate selected — click a dropsite within 3"');
         return;
@@ -8983,8 +9444,8 @@ function _handle3dClick(e) {
   })();
 
   // Dropsite selection — project onto orbit (station) or ground (city) plane and pick nearest.
-  // Suppressed during arrival/deployment placement and while a ship is ready to move.
-  if (!_inArrivalMode && !_inMoveMode && state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
+  // Suppressed during arrival/deployment placement, while a ship is ready to move, and during payload cell placement.
+  if (!_inArrivalMode && !_inMoveMode && !state.payloadDetach && state.scenarioData && state.scenarioData.dropsites && state.scenarioData.dropsites.length) {
     const dss = state.scenarioData.dropsites;
     let bestDs = null, bestDist = Infinity;
     const HIT_PX = 8 * INCH; // generous radius — cities/stations are large and camera angle shifts projection
@@ -9046,10 +9507,6 @@ function _handle3dClick(e) {
 
   // Deploy phase: place next off-table ship onto the orbit layer
   if (state.phase === 'deploy' && state.selectedGroupId) {
-    if (_pendingDeploy) {
-      flashLaunchMsg('Confirm or cancel the current placement first');
-      return;
-    }
     const _dpDef = getDef(state.selectedGroupId);
     const _dpIdx = _dpDef ? nextUndeployedShipIdx(state.selectedGroupId) : -1;
     if (_dpIdx >= 0) {
@@ -9063,11 +9520,13 @@ function _handle3dClick(e) {
       const _dpDep = DEPLOYMENTS[state.scenario?.deployment];
       const _dpZoneName = state.deployZone?.[_dpDef.side] || (_dpDef.side === 'player1' ? 'south' : 'north');
       const _dpZone = _dpDep?.zones?.[_dpZoneName];
-      if (_dpZone && !isInZone(_dpPt.x / INCH, _dpPt.y / INCH, _dpZone)) {
+      const _dpInBase = !_dpZone || isInZone(_dpPt.x / INCH, _dpPt.y / INCH, _dpZone);
+      const _dpInHalo = !_dpInBase && _dpDef.vanguard && isInVanguardZone(_dpPt.x / INCH, _dpPt.y / INCH, _dpDef, _dpZone);
+      if (_dpZone && !_dpInBase && !_dpInHalo) {
         flashLaunchMsg('Click within your deployment zone');
         return;
       }
-      const _dpSnap = _dpZone ? (snapToEdgeLineTangent(_dpZone, _dpPt, _dpDef) || _dpPt) : _dpPt;
+      const _dpSnap = (_dpZone && _dpInBase) ? (snapToEdgeLineTangent(_dpZone, _dpPt, _dpDef) || _dpPt) : _dpPt;
       const _dpShip = state.groups[state.selectedGroupId].ships[_dpIdx];
       _dpShip.x = _dpSnap.x; _dpShip.y = _dpSnap.y;
       _dpShip.heading = _dpDef.side === 'player1' ? -90 : 90;
@@ -9333,13 +9792,14 @@ function init3d() {
   _3d = { renderer, scene, camera, controls, dyn, animId, ro };
 
   // Interaction: disambiguate click from OrbitControls drag by checking pointer delta.
-  let _pdPos = null;
+  let _pdPos = null, _pdDelta = 0;
   canvas.addEventListener('pointerdown', e => { _pdPos = { x: e.clientX, y: e.clientY }; });
   canvas.addEventListener('pointerup', e => {
     if (!_pdPos) return;
     const dx = e.clientX - _pdPos.x, dy = e.clientY - _pdPos.y;
+    _pdDelta = Math.hypot(dx, dy);
     _pdPos = null;
-    if (Math.hypot(dx, dy) < 5) _handle3dClick(e);
+    if (_pdDelta < 5) _handle3dClick(e);
   });
   canvas.addEventListener('pointermove', _handle3dMousemove);
   canvas.addEventListener('pointerleave', () => {
@@ -9347,6 +9807,8 @@ function init3d() {
   });
   canvas.addEventListener('contextmenu', e => {
     e.preventDefault();
+    if (_pdDelta >= 5) { _pdDelta = 0; return; } // right-drag pan — don't cancel
+    _pdDelta = 0;
     if (state.phase === 'scenery' && state.sceneryPlace) {
       const sp = state.sceneryPlace;
       if (sp.pending) { sp.pending = null; sp.angle = 0; state.hoverPoint = null; renderAll(true); }
@@ -9376,9 +9838,12 @@ function init3d() {
     if (state.assetMove) { state.assetMove = null; renderAll(true); return; } // deselect is local-only
     if (state.extracting) { state.extracting = null; flashLaunchMsg('Extract cancelled'); renderAll(); return; }
     if (state.featureAttack) { state.featureAttack = null; flashLaunchMsg('Targeting cancelled'); renderAll(true); return; }
-    if (state.aiming || state.vectoredSecondMove) {
-      state.aiming = null; state.vectoredSecondMove = null; state.hoverPoint = null; renderAll(); return;
+    if (state.aiming) {
+      if (state.aiming.mode === 'course_change') { dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si }); }
+      else { state.aiming = null; state.hoverPoint = null; renderAll(); }
+      return;
     }
+    if (state.vectoredSecondMove) { dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid }); return; }
     if (state.battalionDeploy) { state.battalionDeploy = null; renderAll(); return; }
     if (state.payloadDetach) { state.payloadDetach = null; flashLaunchMsg('Detach cancelled'); renderAll(true); return; }
     if (state.payloadReattach) { state.payloadReattach = null; flashLaunchMsg('Reattach cancelled'); renderAll(); return; }
@@ -9393,7 +9858,7 @@ function init3d() {
       const _rTrail = _rGrp && (_rGrp.moveTrail || []);
       const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
       if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
-      else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
+      else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(true); }
       return;
     }
   });
@@ -9777,6 +10242,56 @@ function _3dDashedCircle(cx, cz, r, y, color, opacity, dashSize, gapSize) {
   return line;
 }
 
+// Render a movement cone (fan shape) at world height wy.
+function _3dMoveCone(group, cx, cz, headingDeg, minR, maxR, turnDeg, wy, color, fillOpacity, strokeOpacity) {
+  const half  = Math.max(0.5, turnDeg);
+  const a1    = (headingDeg - half) * Math.PI / 180;
+  const a2    = (headingDeg + half) * Math.PI / 180;
+  const steps = Math.max(8, Math.ceil(Math.abs(a2 - a1) * 16));
+
+  const shape = new THREE.Shape();
+  if (minR > 0) {
+    shape.moveTo(cx + Math.cos(a1) * minR, cz + Math.sin(a1) * minR);
+    shape.lineTo(cx + Math.cos(a1) * maxR, cz + Math.sin(a1) * maxR);
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; shape.lineTo(cx + Math.cos(a) * maxR, cz + Math.sin(a) * maxR); }
+    shape.lineTo(cx + Math.cos(a2) * minR, cz + Math.sin(a2) * minR);
+    for (let i = steps; i >= 0; i--) { const a = a1 + (a2 - a1) * i / steps; shape.lineTo(cx + Math.cos(a) * minR, cz + Math.sin(a) * minR); }
+  } else {
+    shape.moveTo(cx, cz);
+    shape.lineTo(cx + Math.cos(a1) * maxR, cz + Math.sin(a1) * maxR);
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; shape.lineTo(cx + Math.cos(a) * maxR, cz + Math.sin(a) * maxR); }
+    shape.closePath();
+  }
+  const fillGeo = new THREE.ShapeGeometry(shape, steps);
+  fillGeo.rotateX(Math.PI / 2);
+  fillGeo.translate(0, wy, 0);
+  group.add(new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: fillOpacity, side: THREE.DoubleSide, depthWrite: false })));
+
+  const outPts = [];
+  if (minR > 0) {
+    outPts.push(new THREE.Vector3(cx + Math.cos(a1) * minR, wy, cz + Math.sin(a1) * minR));
+    outPts.push(new THREE.Vector3(cx + Math.cos(a1) * maxR, wy, cz + Math.sin(a1) * maxR));
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; outPts.push(new THREE.Vector3(cx + Math.cos(a) * maxR, wy, cz + Math.sin(a) * maxR)); }
+    outPts.push(new THREE.Vector3(cx + Math.cos(a2) * maxR, wy, cz + Math.sin(a2) * maxR));
+    outPts.push(new THREE.Vector3(cx + Math.cos(a2) * minR, wy, cz + Math.sin(a2) * minR));
+    for (let i = steps; i >= 0; i--) { const a = a1 + (a2 - a1) * i / steps; outPts.push(new THREE.Vector3(cx + Math.cos(a) * minR, wy, cz + Math.sin(a) * minR)); }
+    outPts.push(outPts[0]);
+  } else {
+    outPts.push(new THREE.Vector3(cx, wy, cz));
+    outPts.push(new THREE.Vector3(cx + Math.cos(a1) * maxR, wy, cz + Math.sin(a1) * maxR));
+    for (let i = 0; i <= steps; i++) { const a = a1 + (a2 - a1) * i / steps; outPts.push(new THREE.Vector3(cx + Math.cos(a) * maxR, wy, cz + Math.sin(a) * maxR)); }
+    outPts.push(new THREE.Vector3(cx, wy, cz));
+  }
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(outPts), new THREE.LineBasicMaterial({ color, transparent: true, opacity: strokeOpacity })));
+
+  // Forward centre line
+  const fwdA = headingDeg * Math.PI / 180;
+  group.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(cx, wy, cz), new THREE.Vector3(cx + Math.cos(fwdA) * (maxR + 4), wy, cz + Math.sin(fwdA) * (maxR + 4))]),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: strokeOpacity * 0.6 })
+  ));
+}
+
 // Render weapon arc wedge(s) for one weapon onto group at world Y = wy.
 // dimFactor scales fill/outline opacity for mode-2 enemy arcs.
 function _sync3dWeaponArc(group, ship, def, w, wy, dimFactor = 1) {
@@ -9841,14 +10356,16 @@ function _sync3dWeaponArc(group, ship, def, w, wy, dimFactor = 1) {
 
 // Main overlay pass: scan rings, weapon arcs, sig auras, coherency, launch radius.
 function _sync3dOverlays(group) {
-  const selGid = state.selectedGroupId;
+  // When no local selection, fall back to opponent's peerView so the movement
+  // overlay (coherency rings, sig auras) shows on both clients after applyShipOrder.
+  const selGid = state.selectedGroupId || (state.peerView && state.peerView.gid) || null;
   if (!selGid) return;
   const def = getDef(selGid);
   const grp = state.groups[selGid];
   if (!def || !grp) return;
 
   const sideColHex = def.side === 'player1' ? 0x4488ff : 0xff8844;
-  const selSi      = state.selectedShipIdx;
+  const selSi      = state.selectedGroupId ? state.selectedShipIdx : (state.peerView ? state.peerView.si : null);
   const selOrd     = effectiveOrder(def, grp, selSi);
   const movingActive = (selSi !== null && selOrd && ORDERS[selOrd] && ORDERS[selOrd].moveMax > 0)
     || (state.aiming && state.aiming.gid === selGid)
@@ -9864,8 +10381,8 @@ function _sync3dOverlays(group) {
     });
   }
 
-  // 2. Enemy signature auras (mode 1, while moving, or while targeting a weapon)
-  if (arcViewMode !== 2 && (movingActive || arcViewMode === 1 || state.targeting)) {
+  // 2. Enemy signature auras — mode 1 (attacker view), while moving, or targeting (never in mode 0 or 2).
+  if (arcViewMode !== 0 && (arcViewMode === 1 || ((movingActive || state.targeting) && arcViewMode !== 2))) {
     const enemySide = def.side === 'player1' ? 'player2' : 'player1';
     // During targeting, find the firing origin so we can check per-target ring crossing.
     let targetingOrigin = null;
@@ -9924,10 +10441,18 @@ function _sync3dOverlays(group) {
     const wy    = _3D_LAYER_Y[ship.layer] ?? 120;
     if (launchingHere && state.launching.si === si) return; // replaced by launch aura
 
-    // Mode 2 + selected ship: show own sig aura instead of weapon arcs
-    if (arcViewMode === 2 && isSel) {
+    // Mode 0: hide all overlays
+    if (arcViewMode === 0) return;
+    // Mode 2: show sig aura for every ship in the group
+    if (arcViewMode === 2) {
       const sigPx = ((ship.sigSilent ? 0 : def.sig) + 3 * (grp.spikes || 0)) * INCH;
-      if (sigPx > 0) group.add(_3dDashedCircle(ship.x - 288, ship.y - 288, sigPx, wy, 0xff5252, 0.5, 2, 4));
+      if (sigPx > 0) {
+        group.add(_3dDashedCircle(ship.x - 288, ship.y - 288, sigPx, wy, 0xff5252, 0.55, 2, 4));
+        const sigFill = new THREE.CircleGeometry(sigPx, 64);
+        sigFill.rotateX(-Math.PI / 2);
+        sigFill.translate(ship.x - 288, wy, ship.y - 288);
+        group.add(new THREE.Mesh(sigFill, new THREE.MeshBasicMaterial({ color: 0xff5252, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false })));
+      }
       return;
     }
 
@@ -9950,7 +10475,7 @@ function _sync3dOverlays(group) {
     }
   });
 
-  // 4. Arc view mode 2: enemy ships' scans + weapon arcs (dimmed)
+  // 4. Mode 2 (defender view): enemy ships' scans + weapon arcs (dimmed)
   if (arcViewMode === 2) {
     const enemySide2 = def.side === 'player1' ? 'player2' : 'player1';
     fleetForSide(enemySide2).forEach(edef => {
@@ -10128,6 +10653,126 @@ function _sync3dOverlays(group) {
       const _pdWy  = _3D_LAYER_Y[_pdShip.layer] ?? _3D_LAYER_Y.orbit;
       const _pdCol = _3dSideColor(getDef(state.payloadDetach.porterGid)?.side || 'player1');
       group.add(_3dDashedCircle(_pdShip.x - 288, _pdShip.y - 288, 3 * INCH, _pdWy, _pdCol, 0.70, 5, 3));
+    }
+  }
+
+  // Peer movement cone — opponent's selected ship when it hasn't moved yet.
+  // Mirrors the 2D peerView cone drawn in renderBoard() which is hidden in 3D mode.
+  if (_netSide && state.peerView && state.peerView.gid && state.peerView.gid !== state.selectedGroupId) {
+    const pGid = state.peerView.gid;
+    const pSi  = state.peerView.si;
+    const pLT  = state.peerView.layerToggle;
+    const pDef = getDef(pGid);
+    const pGrp = state.groups[pGid];
+    if (pDef && pGrp && pSi !== null) {
+      const pShip = pGrp.ships[pSi];
+      const pOrd  = effectiveOrder(pDef, pGrp, pSi);
+      if (pShip && !pShip.destroyed && !pShip.offTable && pOrd && ORDERS[pOrd] && ORDERS[pOrd].moveMax > 0 && !pShip.movedThisRound) {
+        const o    = ORDERS[pOrd];
+        const normalMaxR = effectiveMaxMovePx(pDef, pShip, pOrd);
+        const lm   = layerMove(normalMaxR, pShip, pLT);
+        const maxR = lm.maxPx;
+        let   minR = o.moveMin * pDef.thrust * INCH;
+        if (minR > maxR) minR = 0;
+        const pCol = pDef.side === 'player1' ? 0x4488ff : 0xff8844;
+        const pWy  = _3D_LAYER_Y[pShip.layer] ?? _3D_LAYER_Y.orbit;
+        _3dMoveCone(group, pShip.x - 288, pShip.y - 288, pShip.heading, minR, maxR, o.turnLimit || 0, pWy, pCol, 0.035, 0.20);
+      }
+    }
+  }
+
+  // 8. Vanguard deployment halo — mirrors renderVanguardHalo() for the 3D view.
+  if (state.phase === 'deploy' && state.selectedGroupId && def.vanguard && state.scenario) {
+    const depKey = state.scenario.deployment;
+    const dep    = DEPLOYMENTS[depKey];
+    const zoneSide = (state.deployZone && state.deployZone[def.side]) || (def.side === 'player1' ? 'south' : 'north');
+    const zone = dep && dep.zones && dep.zones[zoneSide];
+    if (zone) {
+      const X  = def.vanguard;
+      const VY = _3D_LAYER_Y.orbit;
+      const iw = (inch) => inch * INCH - 288;
+      const vFill = new THREE.MeshBasicMaterial({ color: 0xff5252, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false });
+      const vDash = new THREE.LineDashedMaterial({ color: 0xff5252, transparent: true, opacity: 0.80, dashSize: 8, gapSize: 5 });
+      const emitVan = (shape) => {
+        const geo = new THREE.ShapeGeometry(shape);
+        geo.rotateX(Math.PI / 2);
+        geo.translate(0, VY, 0);
+        group.add(new THREE.Mesh(geo, vFill.clone()));
+        const pts = shape.getPoints(48).map(p => new THREE.Vector3(p.x, VY, p.y));
+        pts.push(pts[0].clone());
+        const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), vDash.clone());
+        ln.computeLineDistances();
+        group.add(ln);
+      };
+
+      if ((depKey === 'line' || depKey === 'attacker_defender') && zone.edgeLines) {
+        const seg = zone.edgeLines[0];
+        const onTop    = seg.y1 <= 0.5 && seg.y2 <= 0.5;
+        const onBottom = seg.y1 >= BOARD_IN - 0.5 && seg.y2 >= BOARD_IN - 0.5;
+        const onLeft   = seg.x1 <= 0.5 && seg.x2 <= 0.5;
+        const onRight  = seg.x1 >= BOARD_IN - 0.5 && seg.x2 >= BOARD_IN - 0.5;
+        let vpts = null;
+        if (onTop)    { const x1=Math.min(seg.x1,seg.x2),x2=Math.max(seg.x1,seg.x2); vpts=[{x:x1,y:0},{x:x2,y:0},{x:x2,y:X},{x:x1,y:X}]; }
+        if (onBottom) { const x1=Math.min(seg.x1,seg.x2),x2=Math.max(seg.x1,seg.x2); vpts=[{x:x1,y:BOARD_IN},{x:x2,y:BOARD_IN},{x:x2,y:BOARD_IN-X},{x:x1,y:BOARD_IN-X}]; }
+        if (onLeft)   { const y1=Math.min(seg.y1,seg.y2),y2=Math.max(seg.y1,seg.y2); vpts=[{x:0,y:y1},{x:0,y:y2},{x:X,y:y2},{x:X,y:y1}]; }
+        if (onRight)  { const y1=Math.min(seg.y1,seg.y2),y2=Math.max(seg.y1,seg.y2); vpts=[{x:BOARD_IN,y:y1},{x:BOARD_IN,y:y2},{x:BOARD_IN-X,y:y2},{x:BOARD_IN-X,y:y1}]; }
+        if (vpts) emitVan(new THREE.Shape(vpts.map(p => new THREE.Vector2(iw(p.x), iw(p.y)))));
+      } else if (depKey === 'attacker_defender' && zone.polygon) {
+        const poly = zone.polygon;
+        const cxAvg = poly.reduce((s,p)=>s+p.x,0)/poly.length;
+        const cyAvg = poly.reduce((s,p)=>s+p.y,0)/poly.length;
+        const exp = poly.map(p => {
+          const onL=p.x<=1.6,onR=p.x>=BOARD_IN-1.6,onT=p.y<=1.6,onB=p.y>=BOARD_IN-1.6;
+          return { x: (!onL&&!onR) ? (cxAvg<BOARD_IN/2 ? p.x+X : p.x-X) : p.x,
+                   y: (!onT&&!onB) ? (cyAvg<BOARD_IN/2 ? p.y+X : p.y-X) : p.y };
+        });
+        emitVan(new THREE.Shape(exp.map(p => new THREE.Vector2(iw(p.x), iw(p.y)))));
+      } else if (depKey === 'table_corners') {
+        // L-shaped zone: approximate vanguard as the polygon expanded inward by X.
+        // Use the same vertex-push logic as vanguardStripPath (edge-pinned vertices stay put).
+        if (zone.polygon) {
+          const poly = zone.polygon;
+          const cxAvg = poly.reduce((s,p)=>s+p.x,0)/poly.length;
+          const cyAvg = poly.reduce((s,p)=>s+p.y,0)/poly.length;
+          const exp = poly.map(p => {
+            const onL=p.x<=1.6,onR=p.x>=BOARD_IN-1.6,onT=p.y<=1.6,onB=p.y>=BOARD_IN-1.6;
+            return { x: (!onL&&!onR) ? (cxAvg<BOARD_IN/2 ? p.x+X : p.x-X) : p.x,
+                     y: (!onT&&!onB) ? (cyAvg<BOARD_IN/2 ? p.y+X : p.y-X) : p.y };
+          });
+          emitVan(new THREE.Shape(exp.map(p => new THREE.Vector2(iw(p.x), iw(p.y)))));
+        }
+      } else if (depKey === 'midboard' && zone.edgeSemicircle) {
+        const c = zone.edgeSemicircle;
+        const cx=iw(c.cx), cz=iw(c.cy), r=(c.r+X)*INCH;
+        const [a0,a1] = ({top:[0,Math.PI],bottom:[Math.PI,2*Math.PI],left:[-Math.PI/2,Math.PI/2],right:[Math.PI/2,3*Math.PI/2]})[c.edge]||[0,Math.PI];
+        const sh = new THREE.Shape(); const N=32;
+        sh.moveTo(cx+Math.cos(a0)*r, cz+Math.sin(a0)*r);
+        for (let i=1;i<=N;i++) { const a=a0+(a1-a0)*i/N; sh.lineTo(cx+Math.cos(a)*r, cz+Math.sin(a)*r); }
+        sh.closePath(); emitVan(sh);
+      } else if (depKey === 'from_corners' && zone.circleQuad) {
+        const c = zone.circleQuad;
+        const cx=iw(c.cx), cz=iw(c.cy), r=(c.r+X)*INCH;
+        const qa = ({br:[0,Math.PI/2],tl:[Math.PI,3*Math.PI/2],tr:[-Math.PI/2,0],bl:[Math.PI/2,Math.PI]})[c.quad]||[0,Math.PI/2];
+        const sh = new THREE.Shape(); const N=32;
+        sh.moveTo(cx, cz);
+        for (let i=0;i<=N;i++) { const a=qa[0]+(qa[1]-qa[0])*i/N; sh.lineTo(cx+Math.cos(a)*r, cz+Math.sin(a)*r); }
+        sh.closePath(); emitVan(sh);
+      } else if (depKey === 'encirclement') {
+        if (zone.circle) {
+          const c = zone.circle;
+          const sh = new THREE.Shape();
+          sh.absarc(iw(c.cx), iw(c.cy), (c.r+X)*INCH, 0, Math.PI*2, false);
+          emitVan(sh);
+        }
+        if (zone.corners) zone.corners.forEach(c => {
+          const cx=iw(c.cx), cz=iw(c.cy), r=(c.r+X)*INCH;
+          const qa = ({br:[0,Math.PI/2],tl:[Math.PI,3*Math.PI/2],tr:[-Math.PI/2,0],bl:[Math.PI/2,Math.PI]})[c.quad]||[0,Math.PI/2];
+          const sh = new THREE.Shape(); const N=32;
+          sh.moveTo(cx, cz);
+          for (let i=0;i<=N;i++) { const a=qa[0]+(qa[1]-qa[0])*i/N; sh.lineTo(cx+Math.cos(a)*r, cz+Math.sin(a)*r); }
+          sh.closePath(); emitVan(sh);
+        });
+      }
     }
   }
 }
@@ -11438,6 +12083,15 @@ function _buildWingMesh3d(def, color, side) {
   return obj;
 }
 
+function updateArcViewHud() {
+  const b1 = document.getElementById('btn-arc-toggle');
+  const b2 = document.getElementById('btn-sig-toggle');
+  const bt = document.getElementById('btn-trails-toggle');
+  if (b1) b1.classList.toggle('active', arcViewMode === 1);
+  if (b2) b2.classList.toggle('active', arcViewMode === 2);
+  if (bt) bt.classList.toggle('active', _view3dTrails);
+}
+
 function toggle3d() {
   _view3d = !_view3d;
   document.getElementById('board').style.display    = _view3d ? 'none'  : 'block';
@@ -11454,21 +12108,34 @@ function renderAimHint() {
   const board = document.querySelector('.board-wrap');
   let el = document.getElementById('aim-hint');
   if (el) el.remove();
-  let msg = '';
+  let msg = '', showEndMoveBtn = false;
   if (state.aiming) {
     if (state.aiming.mode === 'deploy') msg = 'Move mouse to aim · click to set facing (any angle)';
     else if (state.aiming.mode === 'vectored') msg = 'Vectored pivot — aim (±45°) · click to set, then move again';
-    else if (state.aiming.mode === 'course_change') msg = 'Course Change — bonus turn (±45°) · click to set facing';
+    else if (state.aiming.mode === 'course_change') { msg = 'Course Change — bonus turn (±45°) · click to set facing'; showEndMoveBtn = true; }
   } else if (state.vectoredSecondMove) {
-    msg = 'Vectored — click ahead to move with remaining thrust (no further turn) · right-click or press Esc to skip';
+    msg = 'Vectored — click ahead to use remaining thrust (no further turn)';
+    showEndMoveBtn = true;
   }
   if (!msg) return;
   el = document.createElement('div');
   el.id = 'aim-hint';
   el.className = 'deploy-hint';
   el.style.bottom = '12px';
-  el.innerHTML = `<span><b>${msg}</b></span>`;
+  const endMoveBtn = showEndMoveBtn
+    ? `<button class="hud-btn" id="end-move-btn" style="padding:3px 10px;white-space:nowrap;">END MOVE</button>`
+    : '';
+  el.innerHTML = `<span><b>${msg}</b></span>${endMoveBtn}`;
   board.appendChild(el);
+  if (showEndMoveBtn) {
+    document.getElementById('end-move-btn').addEventListener('click', () => {
+      if (state.vectoredSecondMove) {
+        dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid });
+      } else if (state.aiming && state.aiming.mode === 'course_change') {
+        dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si });
+      }
+    });
+  }
 }
 
 function renderFeatureAttackHUD() {
@@ -11529,8 +12196,11 @@ function updateHUD() {
 document.addEventListener('click', (e) => {
   // Group card click handled inline
   // Arc view mode toggle (local only — affects board overlays for selected ship)
+  // Clicking the already-active mode toggles it off (mode 0 = hide all).
   if (e.target.matches('[data-arcview]')) {
-    arcViewMode = parseInt(e.target.dataset.arcview, 10);
+    const newMode = parseInt(e.target.dataset.arcview, 10);
+    arcViewMode = (arcViewMode === newMode) ? 0 : newMode;
+    updateArcViewHud();
     renderAll(true); return;
   }
   // Movement trails toggle — persisted, applies to both 2D and 3D views
@@ -11876,10 +12546,10 @@ document.addEventListener('click', (e) => {
     if (def) flashLaunchMsg(`${def.name} returned off-table`);
     return;
   }
-  if (e.target.matches('[data-hold-position]')) {
-    const [gid, si] = e.target.dataset.holdPosition.split('|');
+  if (e.target.matches('[data-end-move]')) {
+    const [gid, si] = e.target.dataset.endMove.split('|');
     dispatch({ type: 'holdPosition', gid, si: parseInt(si) });
-    renderAll(); return;
+    return;
   }
   if (e.target.matches('[data-clear-trail]')) {
     const [gid, si] = e.target.dataset.clearTrail.split('|');
@@ -11943,7 +12613,7 @@ document.addEventListener('click', (e) => {
     const log = _replayData ? _replayData.intentLog : [];
     let target = -1;
     for (let i = _replayStep - 1; i >= 0; i--) {
-      if (log[i].intent && log[i].intent.type === 'advanceRound') { target = i - 1; break; }
+      if (_replayEntryType(log[i]) === 'advanceRound') { target = i - 1; break; }
     }
     replayGoTo(target);
     return;
@@ -11952,7 +12622,7 @@ document.addEventListener('click', (e) => {
     // Seek to the step right after the next advanceRound
     const log = _replayData ? _replayData.intentLog : [];
     for (let i = _replayStep + 1; i < log.length; i++) {
-      if (log[i].intent && log[i].intent.type === 'advanceRound') { replayGoTo(i); return; }
+      if (_replayEntryType(log[i]) === 'advanceRound') { replayGoTo(i); return; }
     }
     replayGoTo(log.length - 1); // jump to end if no more rounds
     return;
@@ -12208,6 +12878,11 @@ document.addEventListener('click', (e) => {
     commitScenery(e.target.dataset.sceneryDone);
     return;
   }
+  if (e.target.matches('#commit-scenery-both')) {
+    commitScenery('player1');
+    commitScenery('player2');
+    return;
+  }
   // Reset game
   if (e.target.matches('#reset-game')) {
     if (confirm('Reset everything — scenario, ships, positions?')) {
@@ -12347,11 +13022,20 @@ function resolveLaunchClick(e) {
       if (gateRemaining(best.ship, best.def) <= 0) { flashLaunchMsg('That Voidgate has no Gateship value left'); return false; }
       // Must be within 3" of at least one same-layer dropsite.
       const gLayer = best.ship.layer || 'orbit';
-      const reachable = (state.scenarioData.dropsites || []).some(d => {
+      const allDs = state.scenarioData.dropsites || [];
+      const reachable = allDs.some(d => {
         const dl = d.base.layer === 'Atmosphere' ? 'atmosphere' : 'orbit';
         return dl === gLayer && Math.hypot(inchToPx(d.x) - best.x, inchToPx(d.y) - best.y) <= GATE_REACH + 2;
       });
-      if (!reachable) { flashLaunchMsg('No same-layer dropsite within 3" of that Voidgate'); return false; }
+      if (!reachable) {
+        const wrongLayer = allDs.some(d =>
+          Math.hypot(inchToPx(d.x) - best.x, inchToPx(d.y) - best.y) <= GATE_REACH + 2
+        );
+        flashLaunchMsg(wrongLayer
+          ? `Voidgate is in ${gLayer} — nearby Dropsite is on a different layer`
+          : 'No Dropsite within 3" of that Voidgate');
+        return false;
+      }
       dispatch({ type: 'selectGate', gid: L.gid, si: L.si, gateSel: { x: best.x, y: best.y, si: best.si, gid: best.def.id, layer: gLayer } });
       flashLaunchMsg('Voidgate selected — now click a dropsite within 3"');
       return true;
@@ -12505,7 +13189,9 @@ function flashLaunchMsg(msg, success) {
   el = document.createElement('div');
   el.id = 'launch-msg';
   el.className = 'deploy-hint';
-  el.style.bottom = '44px';
+  el.style.bottom = 'auto';
+  el.style.top = '60px';
+  el.style.zIndex = '50';
   el.style.color = success ? 'var(--hull-good)' : 'var(--hull-warn)';
   el.innerHTML = `<span><b>${msg}</b></span>`;
   board.appendChild(el);
@@ -12580,11 +13266,15 @@ board.addEventListener('contextmenu', (e) => {
     renderAll();
     return;
   }
-  if (state.aiming || state.vectoredSecondMove) {
+  if (state.aiming) {
     e.preventDefault();
-    state.aiming = null;
-    state.vectoredSecondMove = null;
-    renderAll();
+    if (state.aiming.mode === 'course_change') { dispatch({ type: 'holdPosition', gid: state.aiming.gid, si: state.aiming.si }); }
+    else { state.aiming = null; renderAll(); }
+    return;
+  }
+  if (state.vectoredSecondMove) {
+    e.preventDefault();
+    dispatch({ type: 'endVectoredMove', gid: state.vectoredSecondMove.gid });
     return;
   }
   if (state.battalionDeploy) {
@@ -12636,13 +13326,38 @@ board.addEventListener('contextmenu', (e) => {
     const _rTrail = _rGrp && (_rGrp.moveTrail || []);
     const _canUndo = _rShip && _rShip.movedThisRound && !_rShip.firedThisActivation && !_rShip.detectorUsed && !(_rShip.launchedThisRound > 0) && !_rGrp.activated && _rTrail.some(t => t.si === _rSi);
     if (_canUndo) { dispatch({ type: 'undoMove', gid: _rGid, si: _rSi }); }
-    else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(); }
+    else { state.selectedGroupId = null; state.selectedShipIdx = null; netSendPeerView(); renderAll(true); }
     return;
   }
 });
 
 board.addEventListener('click', (e) => {
   if (state.phase === 'setup') return; // overlay handles
+
+  // In replay mode allow ship/dropsite selection for viewing only — no game actions.
+  if (_replayMode) {
+    let el = e.target;
+    while (el && el !== board) {
+      if (el.dataset && el.dataset.ship) {
+        const [gid0, si0] = el.dataset.ship.split('|');
+        state.selectedGroupId = state.selectedGroupId === gid0 && state.selectedShipIdx === parseInt(si0) ? null : gid0;
+        state.selectedShipIdx = state.selectedGroupId ? parseInt(si0) : null;
+        state.selectedDropsiteId = null;
+        renderAll(true);
+        return;
+      }
+      if (el.dataset && el.dataset.dropsite) {
+        const did = el.dataset.dropsite;
+        state.selectedDropsiteId = state.selectedDropsiteId === did ? null : did;
+        state.selectedGroupId = null;
+        state.selectedShipIdx = null;
+        renderAll(true);
+        return;
+      }
+      el = el.parentNode;
+    }
+    return;
+  }
 
   // ── PROTECT NOMINATION — click a dropsite on the map ──
   if (state.phase === 'protect' && _nomPicking && _nomPicking.key === '__protect__' && (!_netSide || _nomPicking.side === _netSide)) {
@@ -13105,10 +13820,10 @@ board.addEventListener('click', (e) => {
         state.hoverPoint = null;
         state.redeployingShip = null;
         if (state.phase === 'deploy') {
-          // Show the ship at its aimed position locally; CONFIRM button sends the intent.
+          // Auto-dispatch immediately — no per-ship confirm step.
           aship.heading = heading;
-          _pendingDeploy = { gid: a.gid, si: a.si, x: finalX, y: finalY, heading };
-          renderAll(true);
+          aship.offTable = true; aship.x = undefined; aship.y = undefined; aship.deployedRound = undefined;
+          dispatch({ type: 'deployShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
         } else {
           // Play-phase reserve arrival — dispatch intent so the server is authoritative.
           dispatch({ type: 'arriveShip', gid: a.gid, si: a.si, x: finalX, y: finalY, heading });
@@ -13318,11 +14033,6 @@ board.addEventListener('click', (e) => {
     // Vanguard halo (Vanguard ships sit wherever clicked, X" into the board).
     const snapPlace = inBaseZone ? (snapToEdgeLineTangent(zone, pt, def) || pt) : pt;
 
-    // Block any placement while a ship is awaiting confirmation.
-    if (_pendingDeploy) {
-      flashLaunchMsg('Confirm or cancel the current placement first');
-      return;
-    }
 
     // Redeployment: user clicked a specific placed ship to pick it up and move it.
     const rdp = state.redeployingShip;
@@ -13549,11 +14259,23 @@ board.addEventListener('touchstart', (e) => {
 const _netParams = new URLSearchParams(location.search);
 const _netRoom   = (_netParams.get('room') || '').toUpperCase();
 const _netSide   = (_netParams.get('side') || '').toLowerCase(); // 'player1' | 'player2' | '' (hotseat)
+// Hotseat save room ID — generated once when the game moves past setup, persists for that session.
+let _hotseatRoomId = null;
+function _genId() { return Array.from({length:4}, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join(''); }
+function _hotseatSave() {
+  if (_netSide || !_hotseatRoomId || state.phase === 'setup') return;
+  fetch('/api/saves/hotseat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ roomId: _hotseatRoomId, state }) }).catch(() => {});
+}
 // Return the local player's board-side key ('player1' | 'player2').
 function _gs() { return _netSide; }
 let   _netWs            = null;
 let   _netConnected     = false;
 let   _netReceiving     = false; // true while we are applying a remote state update
+let   _chatMessages     = [];    // [{side, username, text, ts}]
+let   _activeLogTab     = 'chat'; // 'chat' | 'log'
+let   _chatUnread       = 0;
+let   _logExpanded      = false;
+let   _setupChatExpanded = true;
 let   _netPendingIntent = false; // true after sending an intent, until server broadcasts result
 
 // Local board overlay mode (not synced): 1 = selected ship's arcs+scan + enemy sigs, 2 = selected ship's sig + enemy arcs+scans
@@ -13639,6 +14361,7 @@ function _netApplyRemote(remoteState) {
     detector:          state.detector,              // local-only detector targeting cursor
     extracting:        state.extracting,            // local-only extract targeting cursor
     featureAttack:     state.featureAttack,          // local-only dropsite weapon targeting
+    peerView:          state.peerView,               // preserve opponent's view state through intent broadcasts
     // Preserve fromDropsite launches — committed via intent, must survive relay responses
     launching:         (state.launching && (state.launching.fromDropsite || state.launching.type === 'gate_dropship')) ? state.launching : (remoteState.launching || null),
     // Preserve the locally-selected dsId inside dropsiteActivation — it's UI-only
@@ -13699,10 +14422,21 @@ function _netConnect() {
     try { msg = JSON.parse(data); } catch { return; }
 
     switch (msg.type) {
-      case 'joined':
+      case 'joined': {
         // Server sends the current authoritative state on connect.
         _netApplyRemote(msg.state);
+        // Pre-fill our player name from the logged-in account if it's still the default.
+        if (currentUser?.username && _netSide && state.phase === 'setup') {
+          const slot = _netSide === 'player1' ? 'f1' : 'f2';
+          const defaultName = _netSide === 'player1' ? 'Player 1' : 'Player 2';
+          if (!state.playerNames) state.playerNames = { f1: 'Player 1', f2: 'Player 2' };
+          if (state.playerNames[slot] === defaultName) {
+            state.playerNames[slot] = currentUser.username;
+            netRelaySetup();
+          }
+        }
         break;
+      }
       case 'full':
         // Broadcast from the server after the other player acted.
         _endRoundVotes = new Set();
@@ -13728,6 +14462,19 @@ function _netConnect() {
         _endRoundVotes = new Set(msg.votes || []);
         renderAll(true);
         break;
+      case 'chatHistory': {
+        _chatMessages = msg.messages;
+        renderEventLog();
+        if (_activeLogTab === 'chat') _scrollChatToBottom();
+        break;
+      }
+      case 'chat': {
+        _chatMessages.push(msg);
+        if (_activeLogTab !== 'chat') _chatUnread++;
+        renderEventLog();
+        if (_activeLogTab === 'chat') _scrollChatToBottom();
+        break;
+      }
       case 'error':
         console.warn('[net] Server:', msg.reason);
         break;
@@ -13777,6 +14524,10 @@ function dispatch(intent) {
   const side = (_netSide ? _gs() : null) || _intentSide(intent);
   if (!_isLegal(state, intent, side)) return;
   if (_netSide) {
+    // Apply targeting-UI intents locally even in online mode so two-click flows
+    // (voidgate select → dropsite select) work without waiting for the server round-trip.
+    const _optimisticLocal = ['selectGate', 'cancelLaunch', 'beginLaunch'];
+    if (_optimisticLocal.includes(intent.type)) { _apply(state, intent, rng); renderAll(); }
     if (_netWs && _netConnected) {
       console.log('%c[intent]', 'color:#4caf50;font-weight:bold', intent.type, intent);
       _netPendingIntent = true;
@@ -13787,8 +14538,11 @@ function dispatch(intent) {
   } else {
     _apply(state, intent, rng);
     renderAll();
+    // Generate a hotseat room ID the first time the game moves past setup.
+    if (!_hotseatRoomId && state.phase !== 'setup') _hotseatRoomId = _genId();
+    _hotseatSave();
     // Bug 4: after a ship action, auto-finish the activation if all ships have acted.
-    const autoFinishTriggers = ['moveShip', 'holdPosition', 'fireWeapons', 'launchAsset', 'surveySite'];
+    const autoFinishTriggers = ['moveShip', 'holdPosition', 'endVectoredMove', 'fireWeapons', 'launchAsset', 'surveySite'];
     if (autoFinishTriggers.includes(intent.type)) maybeAutoFinish(intent.gid);
   }
 }
@@ -13865,18 +14619,154 @@ function _intentSide(intent) {
 // Mode selector — full-screen overlay shown at first load (no URL params)
 // ---------------------------------------------------------------------------
 
-async function showModeSelector() {
-  // Fetch saved games upfront; silently ignore errors (server may not be running).
-  let saves = [];
-  try {
-    const r = await fetch('/api/saves');
-    if (r.ok) saves = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
-  } catch {}
+function showAuthScreen() {
+  const existing = document.getElementById('auth-overlay');
+  if (existing) existing.remove();
 
+  const overlay = document.createElement('div');
+  overlay.id = 'auth-overlay';
+  overlay.className = 'setup-overlay';
+  overlay.style.cssText = 'z-index:600;display:flex;align-items:center;justify-content:center;';
+
+  let mode = 'login'; // 'login' | 'register'
+
+  function render() {
+    const isReg = mode === 'register';
+    overlay.innerHTML = `
+      <div style="background:var(--panel);border:1px solid var(--border-bright);border-radius:8px;padding:32px 28px;width:320px;max-width:90vw;">
+        <div style="text-align:center;margin-bottom:24px;">
+          <div style="font-size:11px;letter-spacing:0.18em;color:var(--text-mute);margin-bottom:6px;">DFC FLEET OPS</div>
+          <div style="font-size:16px;font-weight:700;letter-spacing:0.08em;">${isReg ? 'CREATE ACCOUNT' : 'SIGN IN'}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div>
+            <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">USERNAME</div>
+            <input id="auth-username" type="text" maxlength="32" autocomplete="username" spellcheck="false"
+              style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg-card,#0e1a20);border:1px solid var(--border-bright);color:var(--text);font-family:var(--mono);font-size:12px;border-radius:3px;"/>
+          </div>
+          <div>
+            <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">PASSWORD</div>
+            <input id="auth-password" type="password" maxlength="128" autocomplete="${isReg ? 'new-password' : 'current-password'}"
+              style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg-card,#0e1a20);border:1px solid var(--border-bright);color:var(--text);font-family:var(--mono);font-size:12px;border-radius:3px;"/>
+          </div>
+          ${isReg ? `<div>
+            <div style="font-size:9px;letter-spacing:0.12em;color:var(--text-mute);margin-bottom:4px;">CONFIRM PASSWORD</div>
+            <input id="auth-confirm" type="password" maxlength="128" autocomplete="new-password"
+              style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg-card,#0e1a20);border:1px solid var(--border-bright);color:var(--text);font-family:var(--mono);font-size:12px;border-radius:3px;"/>
+          </div>` : ''}
+          <div id="auth-err" style="color:var(--hull-crit,#ff5252);font-size:10px;min-height:14px;"></div>
+          <button id="auth-submit" class="btn-primary" style="padding:12px;font-size:12px;letter-spacing:0.08em;margin-top:2px;">
+            ${isReg ? 'CREATE ACCOUNT' : 'SIGN IN'}
+          </button>
+          <button id="auth-switch" class="btn" style="padding:9px;font-size:10px;color:var(--text-mute);">
+            ${isReg ? 'Already have an account? SIGN IN' : 'No account? CREATE ONE'}
+          </button>
+        </div>
+      </div>`;
+
+    overlay.querySelector('#auth-switch').addEventListener('click', () => {
+      mode = isReg ? 'login' : 'register';
+      render();
+    });
+
+    const submitBtn = overlay.querySelector('#auth-submit');
+    const errDiv    = overlay.querySelector('#auth-err');
+    const usernameEl = overlay.querySelector('#auth-username');
+    const passwordEl = overlay.querySelector('#auth-password');
+
+    // Focus username on render
+    setTimeout(() => usernameEl?.focus(), 0);
+
+    // Submit on Enter key
+    overlay.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') submitBtn.click(); });
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      errDiv.textContent = '';
+      const username = usernameEl.value.trim();
+      const password = passwordEl.value;
+      if (!username || !password) { errDiv.textContent = 'Username and password are required.'; return; }
+      if (isReg) {
+        const confirm = overlay.querySelector('#auth-confirm')?.value;
+        if (password !== confirm) { errDiv.textContent = 'Passwords do not match.'; return; }
+      }
+      submitBtn.disabled = true;
+      submitBtn.textContent = '…';
+      try {
+        const res  = await fetch(`/api/auth/${isReg ? 'register' : 'login'}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errDiv.textContent = data.error || 'Something went wrong.';
+          submitBtn.disabled = false;
+          submitBtn.textContent = isReg ? 'CREATE ACCOUNT' : 'SIGN IN';
+          return;
+        }
+        currentUser = { loggedIn: true, username: data.username, userId: data.userId, role: data.role || 'player' };
+        overlay.remove();
+        renderAll();
+        showModeSelector();
+      } catch {
+        errDiv.textContent = 'Network error — is the server running?';
+        submitBtn.disabled = false;
+        submitBtn.textContent = isReg ? 'CREATE ACCOUNT' : 'SIGN IN';
+      }
+    });
+  }
+
+  render();
+  document.body.appendChild(overlay);
+}
+
+async function showModeSelector() {
+  // Strip room/side/replay params from the URL without a page reload.
+  if (location.search) history.replaceState({}, '', location.pathname);
+  // Reset game state — the opaque overlay covers everything.
+  Object.assign(state, createState());
+  rebuildFleets();
+
+  // Append the overlay immediately so there is no gap between any outgoing
+  // overlay being removed and this one appearing.
   const overlay = document.createElement('div');
   overlay.id = 'mode-selector';
   overlay.className = 'setup-overlay';
-  overlay.style.zIndex = '500';
+  // Override the default centering — column layout so topbar sits above the card.
+  overlay.style.cssText = 'z-index:500;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:0;';
+
+  // ── Menu topbar ───────────────────────────────────────────────────────────
+  const menuBar = document.createElement('div');
+  menuBar.style.cssText = `
+    flex-shrink:0;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;
+    border-bottom:1px solid var(--border);
+    background:rgba(0,0,0,0.3);
+    font-family:var(--mono);font-size:9px;letter-spacing:0.12em;color:var(--text-mute);
+  `;
+  menuBar.innerHTML = `
+    <span style="font-family:var(--display);font-size:16px;font-weight:700;letter-spacing:0.18em;color:var(--ucm);">DFC FLEET OPS</span>
+    <div style="display:flex;align-items:center;gap:8px;position:relative;">
+      ${currentUser?.loggedIn ? `
+        <button id="ms-user-btn" title="Account details" style="
+          display:flex;align-items:center;gap:6px;
+          background:rgba(0,188,212,0.1);border:1px solid var(--ucm);border-radius:3px;
+          color:var(--ucm);font-family:var(--mono);font-size:9px;letter-spacing:0.08em;
+          padding:5px 10px;cursor:pointer;font-weight:700;">
+          ⬡ ${currentUser.username}${currentUser.role === 'admin' ? ' <span style="color:var(--hull-warn);font-size:7px;letter-spacing:0.1em;">ADMIN</span>' : ''}
+        </button>
+      ` : ''}
+    </div>
+  `;
+  overlay.appendChild(menuBar);
+
+  // Content area: fills remaining space, centres the card, scrollable.
+  const contentArea = document.createElement('div');
+  contentArea.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
+  overlay.appendChild(contentArea);
 
   function fmtDate(ts) {
     const d = new Date(ts);
@@ -13890,7 +14780,8 @@ async function showModeSelector() {
     const f1 = (s.factions && s.factions.player1) || '';
     const f2 = (s.factions && s.factions.player2) || '';
     const rnd = s.round ? `Rnd ${s.round}` : '';
-    return [p1 + ' vs ' + p2, f1 + '/' + f2, rnd, fmtDate(s.savedAt)].filter(Boolean).join(' · ');
+    const detail = [p1 + ' vs ' + p2, f1 + '/' + f2, rnd, fmtDate(s.savedAt)].filter(Boolean).join(' · ');
+    return `<span style="color:var(--text);font-weight:700;margin-right:6px;">${s.roomId}</span>${detail}`;
   }
 
   function render(view) {
@@ -13902,7 +14793,7 @@ async function showModeSelector() {
             <div style="font-size:10px;font-weight:400;color:var(--text-mute);margin-top:3px;">${saves.length} game${saves.length !== 1 ? 's' : ''} — resume or replay</div>
           </button>` : '';
       html = `<div class="setup-card" style="max-width:360px;text-align:center;">
-        <div class="setup-header"><h2 class="setup-title">DFC FLEET OPS</h2></div>
+        <div class="setup-header"><h2 class="setup-title">MAIN MENU</h2></div>
         <div style="font-size:9px;color:var(--text-mute);font-family:var(--mono);padding:4px 0 0;letter-spacing:0.5px;">
           App v${APP_VERSION} &nbsp;·&nbsp; Rulebook v${RULEBOOK_VERSION} &nbsp;·&nbsp; Errata v${ERRATA_VERSION}
         </div>
@@ -13923,18 +14814,24 @@ async function showModeSelector() {
         </div>
       </div>`;
     } else if (view === 'saves') {
-      const rows = saves.map(s => `
+      const makeRow = s => `
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);line-height:1.5;">${fmtSave(s)}</div>
           <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="btn-primary" data-ms-resume="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;">▶ RESUME</button>
             <button class="btn" data-ms-replay="${s.roomId}" style="flex:1;padding:7px 6px;font-size:11px;${!s.hasReplay ? 'opacity:0.35;cursor:not-allowed;' : ''}" ${!s.hasReplay ? 'disabled title="No replay data for this save"' : ''}>↺ REPLAY</button>
+            <button class="btn" data-ms-delete="${s.roomId}" style="padding:7px 10px;font-size:11px;color:var(--hull-crit);border-color:var(--hull-crit);" title="Delete save">🗑</button>
           </div>
-        </div>`).join('');
+        </div>`;
+      const sectionHdr = label => `<div style="font-size:9px;letter-spacing:0.1em;color:var(--text-mute);padding:4px 2px 2px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:2px;">${label}</div>`;
+      const hotseatSaves = saves.filter(s => s.isHotseat);
+      const onlineSaves  = saves.filter(s => !s.isHotseat);
+      const hsSection  = hotseatSaves.length ? sectionHdr('HOTSEAT') + hotseatSaves.map(makeRow).join('') : '';
+      const netSection = onlineSaves.length  ? sectionHdr('ONLINE')  + onlineSaves.map(makeRow).join('')  : '';
       html = `<div class="setup-card" style="max-width:440px;">
         <div class="setup-header"><h2 class="setup-title">SAVED GAMES</h2></div>
         <div class="setup-body" style="padding:16px;display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto;">
-          ${rows}
+          ${hsSection}${netSection}
         </div>
         <div class="setup-footer"><button class="btn" id="ms-back">← Back</button></div>
       </div>`;
@@ -13967,13 +14864,28 @@ async function showModeSelector() {
         </div>
       </div>`;
     }
-    overlay.innerHTML = html;
+    contentArea.innerHTML = html;
     wire(view);
+  }
+
+  function dismiss() {
+    overlay.remove();
   }
 
   function wire(view) {
     if (view === 'main') {
-      overlay.querySelector('#ms-hotseat').onclick = () => overlay.remove();
+      overlay.querySelector('#ms-hotseat').onclick = () => {
+        if (_netSide || _netParams.get('room') || _netParams.get('replay')) {
+          sessionStorage.setItem('startHotseat', '1');
+          location.href = location.pathname;
+          return;
+        }
+        dismiss();
+        _hotseatRoomId = null;
+        Object.assign(state, createState());
+        rebuildFleets();
+        renderAll();
+      };
       overlay.querySelector('#ms-host').onclick    = () => { render('hosting'); doHost(); };
       overlay.querySelector('#ms-join').onclick    = () => render('join');
       const savesBtn = overlay.querySelector('#ms-saves');
@@ -13981,11 +14893,24 @@ async function showModeSelector() {
     }
     if (view === 'saves') {
       overlay.querySelectorAll('[data-ms-resume]').forEach(btn => {
-        btn.onclick = () => {
+        btn.onclick = async () => {
           const id = btn.dataset.msResume;
           const meta = saves.find(s => s.roomId === id);
-          render('resuming');
-          doResume(id, meta);
+          if (meta && meta.isHotseat) {
+            // Hotseat resume: restore state locally, no WebSocket needed.
+            btn.disabled = true; btn.textContent = '…';
+            try {
+              const save = await fetch(`/api/saves/${id}`).then(r => r.json());
+              _hotseatRoomId = id;
+              dismiss();
+              Object.assign(state, save.currentState);
+              rebuildFleets();
+              renderAll();
+            } catch (err) { alert('Could not load save: ' + err.message); btn.disabled = false; btn.textContent = '▶ RESUME'; }
+            return;
+          }
+          btn.disabled = true; btn.textContent = '…';
+          doResume(id);
         };
       });
       overlay.querySelectorAll('[data-ms-replay]').forEach(btn => {
@@ -13995,11 +14920,28 @@ async function showModeSelector() {
           try {
             const data = await fetch(`/api/rooms/${id}/replay`).then(r => r.json());
             if (data.error) { alert(data.error); btn.disabled = false; btn.textContent = '↺ REPLAY'; return; }
-            overlay.remove();
+            dismiss();
             loadReplay(data);
           } catch (err) {
             alert('Could not load replay: ' + err.message);
             btn.disabled = false; btn.textContent = '↺ REPLAY';
+          }
+        };
+      });
+      overlay.querySelectorAll('[data-ms-delete]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.msDelete;
+          if (!confirm(`Delete save ${id}? This cannot be undone.`)) return;
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/saves/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!data.ok) { alert(data.error || 'Delete failed.'); btn.disabled = false; return; }
+            saves = saves.filter(s => s.roomId !== id);
+            if (saves.length) render('saves'); else render('main');
+          } catch (err) {
+            alert('Could not reach server: ' + err.message);
+            btn.disabled = false;
           }
         };
       });
@@ -14026,8 +14968,7 @@ async function showModeSelector() {
     }
   }
 
-  async function doResume(saveId, saveMeta) {
-    const msgEl = () => document.getElementById('ms-resume-msg');
+  async function doResume(saveId) {
     try {
       const res = await fetch('/api/rooms/resume', {
         method: 'POST',
@@ -14035,75 +14976,11 @@ async function showModeSelector() {
         body: JSON.stringify({ saveId }),
       });
       const data = await res.json();
-      if (data.error) { if (msgEl()) msgEl().textContent = data.error; return; }
-      const id = data.roomId;
-      const p1Name = saveMeta?.playerNames?.f1 || 'Player 1';
-      const p2Name = saveMeta?.playerNames?.f2 || 'Player 2';
-      const f1Key  = saveMeta?.factions?.player1 || '';
-      const f2Key  = saveMeta?.factions?.player2 || '';
-      const f1Name = (f1Key && FACTIONS[f1Key]?.name) || f1Key;
-      const f2Name = (f2Key && FACTIONS[f2Key]?.name) || f2Key;
-      const sc = saveMeta?.sideColors || {};
-      const c1 = (sc.player1 && PLAYER_COLORS[sc.player1]?.hex) || 'var(--ucm)';
-      const c2 = (sc.player2 && PLAYER_COLORS[sc.player2]?.hex) || 'var(--shal)';
-      const summary = `Rnd ${saveMeta?.round ?? '?'} · ${fmtDate(saveMeta?.savedAt)}`;
-      let chosenSide = null;
-      overlay.innerHTML = `<div class="setup-card" style="max-width:440px;">
-        <div class="setup-header"><h2 class="setup-title">ROOM ${id}</h2></div>
-        <div class="setup-body" style="padding:24px;display:flex;flex-direction:column;gap:14px;">
-          <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);">${summary}</div>
-          <div>
-            <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:6px;">SELECT PLAYER</div>
-            <div style="display:flex;gap:8px;">
-              <button class="btn ms-resume-side" data-side="player1" style="flex:1;padding:10px;border-color:${c1};color:${c1};">${p1Name} (${f1Name})</button>
-              <button class="btn ms-resume-side" data-side="player2" style="flex:1;padding:10px;border-color:${c2};color:${c2};">${p2Name} (${f2Name})</button>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-bottom:5px;">OPPONENT LINK</div>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <input readonly id="ms-resume-link" placeholder="Choose your side first"
-                style="flex:1;min-width:0;padding:7px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-family:var(--mono);font-size:9px;border-radius:4px;"/>
-              <button class="btn" id="ms-resume-copy" style="padding:7px 11px;white-space:nowrap;">📋 Copy</button>
-            </div>
-          </div>
-        </div>
-        <div class="setup-footer">
-          <button class="btn" id="ms-resume-back">← Back</button>
-          <button class="btn-primary" id="ms-resume-play" disabled style="padding:12px 28px;">▶ PLAY</button>
-        </div>
-      </div>`;
-      const colorOf = { player1: c1, player2: c2 };
-      overlay.querySelectorAll('.ms-resume-side').forEach(btn => {
-        btn.onclick = () => {
-          chosenSide = btn.dataset.side;
-          overlay.querySelectorAll('.ms-resume-side').forEach(b => {
-            b.classList.remove('active');
-            b.style.background = '';
-          });
-          btn.classList.add('active');
-          btn.style.background = colorOf[chosenSide] + '22'; // 13% opacity tint
-          const otherSide = chosenSide === 'player1' ? 'player2' : 'player1';
-          const linkEl = document.getElementById('ms-resume-link');
-          if (linkEl) linkEl.value = `${location.origin}${location.pathname}?room=${id}&side=${otherSide}`;
-          const playBtn = document.getElementById('ms-resume-play');
-          if (playBtn) playBtn.disabled = false;
-        };
-      });
-      document.getElementById('ms-resume-copy').onclick = () => {
-        const link = document.getElementById('ms-resume-link')?.value;
-        if (!link || !chosenSide) return;
-        navigator.clipboard.writeText(link).then(() => {
-          const b = document.getElementById('ms-resume-copy');
-          if (b) { b.textContent = '✓ Copied'; setTimeout(() => { if (document.getElementById('ms-resume-copy')) b.textContent = '📋 Copy'; }, 1500); }
-        });
-      };
-      document.getElementById('ms-resume-play').onclick = () => {
-        if (chosenSide) location.href = `${location.pathname}?room=${id}&side=${chosenSide}`;
-      };
-      document.getElementById('ms-resume-back').onclick = () => render('saves');
+      if (data.error) { render('saves'); alert(data.error); return; }
+      location.href = `${location.pathname}?room=${data.roomId}&side=${data.userSide || 'player1'}`;
     } catch (err) {
-      if (msgEl()) msgEl().textContent = 'Could not reach server: ' + err.message;
+      render('saves');
+      alert('Could not reach server: ' + err.message);
     }
   }
 
@@ -14112,60 +14989,345 @@ async function showModeSelector() {
     try {
       const res  = await fetch('/api/rooms', { method: 'POST' });
       const data = await res.json();
-      const id   = data.roomId;
-      const link = `${location.origin}${location.pathname}?room=${id}&side=player2`;
-      overlay.innerHTML = `<div class="setup-card" style="max-width:420px;">
-        <div class="setup-header"><h2 class="setup-title">ROOM ${id}</h2></div>
-        <div class="setup-body" style="padding:24px;display:flex;flex-direction:column;gap:14px;">
-          <div style="font-size:11px;color:var(--text-dim);">Share this link with Player 2:</div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <input readonly id="ms-link" value="${link}"
-              style="flex:1;min-width:0;padding:7px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-family:var(--mono);font-size:9px;border-radius:4px;"/>
-            <button class="btn" id="ms-copy" style="padding:7px 11px;white-space:nowrap;">📋 Copy</button>
-          </div>
-        </div>
-        <div class="setup-footer">
-          <button class="btn" id="ms-host-back">← Back</button>
-          <button class="btn-primary" id="ms-play-ucm" style="padding:12px 28px;">▶ PLAY</button>
-        </div>
-      </div>`;
-      document.getElementById('ms-copy').onclick = () => {
-        navigator.clipboard.writeText(link).then(() => {
-          const b = document.getElementById('ms-copy');
-          if (b) { b.textContent = '✓ Copied'; setTimeout(() => { if (document.getElementById('ms-copy')) b.textContent = '📋 Copy'; }, 1500); }
-        });
-      };
-      document.getElementById('ms-host-back').onclick = () => render('main');
-      document.getElementById('ms-play-ucm').onclick = () => {
-        location.href = `${location.pathname}?room=${id}&side=player1`;
-      };
+      location.href = `${location.pathname}?room=${data.roomId}&side=player1`;
     } catch {
       if (msgEl()) msgEl().textContent = 'Could not reach server. Is it running on port 3000?';
     }
   }
 
+  // Show with no saves first so there is no async gap between old and new overlay.
+  let saves = [];
   render('main');
+  wire('main');
   document.body.appendChild(overlay);
+
+  // Wire menu topbar buttons.
+  const wireMenuBar = () => {
+    const userBtn   = overlay.querySelector('#ms-user-btn');
+    const logoutBtn = overlay.querySelector('#ms-logout-btn');
+
+    if (userBtn && !userBtn._wired) {
+      userBtn._wired = true;
+      userBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const btnContainer = userBtn.closest('div[style*="position:relative"]') || menuBar;
+        const existing = btnContainer.querySelector('#ms-user-modal');
+        if (existing) { existing.remove(); return; }
+
+        if (currentUser?.role === 'admin') {
+          openAdminPanel(userBtn);
+        } else {
+          _openUserModal(btnContainer, userBtn);
+        }
+      });
+    }
+
+    if (logoutBtn && !logoutBtn._wired) {
+      logoutBtn._wired = true;
+      logoutBtn.addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); currentUser = null; location.reload(); });
+    }
+  };
+
+  function _openUserModal(container, anchor) {
+    const fmtDate = ts => new Date(ts).toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' });
+    const modal = document.createElement('div');
+    modal.id = 'ms-user-modal';
+    modal.style.cssText = `position:absolute;top:calc(100% + 4px);right:0;background:var(--bg-elev);border:1px solid var(--border-bright);border-radius:5px;padding:16px 18px;min-width:210px;font-family:var(--mono);font-size:10px;color:var(--text-dim);box-shadow:0 8px 32px rgba(0,0,0,0.5);z-index:10;`;
+    modal.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div style="width:36px;height:36px;border-radius:50%;background:var(--ucm);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;flex-shrink:0;">${currentUser.username[0].toUpperCase()}</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${currentUser.username}</div>
+          <div style="font-size:9px;color:var(--text-mute);margin-top:2px;">User #${currentUser.userId}</div>
+        </div>
+      </div>
+      ${currentUser.createdAt ? `<div style="margin-bottom:14px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:3px;border:1px solid var(--border);"><div style="font-size:8px;letter-spacing:0.1em;color:var(--text-mute);margin-bottom:3px;">MEMBER SINCE</div><div>${fmtDate(currentUser.createdAt)}</div></div>` : ''}
+      <button id="ms-modal-logout" class="btn" style="width:100%;padding:8px;font-size:10px;color:var(--hull-crit);border-color:var(--hull-crit);">⏏ SIGN OUT</button>`;
+    container.appendChild(modal);
+    modal.querySelector('#ms-modal-logout').addEventListener('click', async () => {
+      await fetch('/api/auth/logout', { method: 'POST' }); currentUser = null; location.reload();
+    });
+    const dismiss = (ev) => { if (!modal.contains(ev.target) && ev.target !== anchor) { modal.remove(); document.removeEventListener('click', dismiss); } };
+    setTimeout(() => document.addEventListener('click', dismiss), 0);
+  }
+
+  wireMenuBar();
+
+  // Fetch saves in background and refresh if any are found.
+  try {
+    const r = await fetch('/api/saves');
+    if (r.ok) {
+      const fetched = (await r.json()).sort((a, b) => b.savedAt - a.savedAt);
+      if (fetched.length) { saves = fetched; render('main'); wire('main'); wireMenuBar(); }
+    }
+  } catch {}
 }
 
 document.getElementById('btn-3d-toggle').addEventListener('click', toggle3d);
 
 // ---------------------------------------------------------------------------
+// Admin panel — opened from mode selector menu OR in-game topbar chip
+// ---------------------------------------------------------------------------
+
+async function openAdminPanel(anchor) {
+  const existing = document.getElementById('admin-panel-backdrop');
+  if (existing) { existing.remove(); return; }
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'admin-panel-backdrop';
+  backdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;';
+  document.body.appendChild(backdrop);
+
+  const closePanel = () => { backdrop.remove(); };
+  backdrop.addEventListener('click', closePanel);
+
+  const rect = anchor.getBoundingClientRect();
+  const modal = document.createElement('div');
+  modal.id = 'admin-panel-modal';
+  modal.style.cssText = `position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;background:var(--bg-elev,#11171a);border:1px solid var(--border-bright);border-radius:5px;padding:0;min-width:480px;max-width:90vw;font-family:var(--mono);font-size:10px;color:var(--text-dim);box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:9999;overflow:hidden;`;
+
+  const tabBtn = (id, label, active) => `<button data-tab="${id}" style="flex:1;padding:9px 6px;background:none;border:none;border-bottom:2px solid ${active?'var(--ucm)':'transparent'};color:${active?'var(--ucm)':'var(--text-mute)'};font-family:var(--mono);font-size:9px;letter-spacing:0.1em;cursor:pointer;">${label}</button>`;
+
+  modal.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:28px;height:28px;border-radius:50%;background:var(--ucm);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;">${currentUser.username[0].toUpperCase()}</div>
+        <div><div style="font-size:11px;font-weight:700;color:var(--text);">${currentUser.username}</div><div style="font-size:8px;color:var(--hull-warn);letter-spacing:0.12em;">⬡ ADMIN</div></div>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button id="adm-exit-game" class="btn" style="padding:5px 10px;font-size:9px;">← EXIT GAME</button>
+        <button id="adm-logout" class="btn" style="padding:5px 10px;font-size:9px;color:var(--hull-crit);border-color:var(--hull-crit);">⏏ SIGN OUT</button>
+      </div>
+    </div>
+    <div style="display:flex;border-bottom:1px solid var(--border);">
+      ${tabBtn('users','👤 USERS',true)}${tabBtn('rooms','⚡ LIVE GAMES',false)}${tabBtn('saves','💾 SAVES',false)}
+    </div>
+    <div id="adm-body" style="padding:12px 14px;max-height:360px;overflow-y:auto;">
+      <div style="color:var(--text-mute);text-align:center;padding:20px;">Loading…</div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#adm-exit-game').addEventListener('click', () => {
+    backdrop.remove();
+    location.href = location.pathname;
+  });
+  modal.querySelector('#adm-logout').addEventListener('click', async () => {
+    backdrop.remove();
+    await fetch('/api/auth/logout', { method: 'POST' }); currentUser = null; location.reload();
+  });
+
+  const body = modal.querySelector('#adm-body');
+
+  const loadTab = async (tab) => {
+    modal.querySelectorAll('[data-tab]').forEach(b => {
+      const active = b.dataset.tab === tab;
+      b.style.borderBottomColor = active ? 'var(--ucm)' : 'transparent';
+      b.style.color = active ? 'var(--ucm)' : 'var(--text-mute)';
+    });
+    body.innerHTML = `<div style="color:var(--text-mute);text-align:center;padding:20px;">Loading…</div>`;
+    try {
+      if (tab === 'users') {
+        const users = await fetch('/api/admin/users').then(r => r.json());
+        body.innerHTML = users.map(u => `
+          <div data-uid="${u.id}" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <div style="flex:1;min-width:0;">
+              <span style="color:var(--text);font-weight:700;">${u.username}</span>
+              <span style="margin-left:6px;font-size:8px;color:${u.role==='admin'?'var(--hull-warn)':'var(--text-mute)'};">${u.role.toUpperCase()}</span>
+              <div style="font-size:8px;color:var(--text-mute);">User #${u.id}</div>
+            </div>
+            ${u.id !== currentUser.userId ? `
+              <button class="btn adm-reset-pw" data-uid="${u.id}" data-uname="${u.username}" style="padding:3px 7px;font-size:8px;">🔑 RESET PW</button>
+              <button class="btn adm-toggle-role" data-uid="${u.id}" data-role="${u.role}" style="padding:3px 7px;font-size:8px;">${u.role==='admin'?'▽ PLAYER':'▲ ADMIN'}</button>
+              <button class="btn adm-del-user" data-uid="${u.id}" data-uname="${u.username}" style="padding:3px 7px;font-size:8px;color:var(--hull-crit);border-color:var(--hull-crit);">✕</button>
+            ` : '<span style="font-size:8px;color:var(--text-mute);">(you)</span>'}
+          </div>`).join('');
+        body.querySelectorAll('.adm-reset-pw').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const pw = prompt(`New password for ${btn.dataset.uname} (min 8 chars):`);
+            if (!pw || pw.length < 8) return;
+            const r = await fetch(`/api/admin/users/${btn.dataset.uid}/reset-password`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ newPassword: pw }) });
+            const d = await r.json();
+            if (d.ok) btn.textContent = '✓'; else alert(d.error);
+          });
+        });
+        body.querySelectorAll('.adm-toggle-role').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const newRole = btn.dataset.role === 'admin' ? 'player' : 'admin';
+            await fetch(`/api/admin/users/${btn.dataset.uid}/role`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role: newRole }) });
+            loadTab('users');
+          });
+        });
+        body.querySelectorAll('.adm-del-user').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Delete user ${btn.dataset.uname}? This cannot be undone.`)) return;
+            await fetch(`/api/admin/users/${btn.dataset.uid}`, { method:'DELETE' });
+            loadTab('users');
+          });
+        });
+
+      } else if (tab === 'rooms') {
+        const rooms = await fetch('/api/admin/rooms').then(r => r.json());
+        if (!rooms.length) { body.innerHTML = '<div style="color:var(--text-mute);text-align:center;padding:20px;">No live rooms.</div>'; return; }
+        const ago = ms => { const s = Math.floor((Date.now()-ms)/1000); return s < 60 ? `${s}s ago` : `${Math.floor(s/60)}m ago`; };
+        body.innerHTML = rooms.map(r => `
+          <div style="padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <div style="display:flex;justify-content:space-between;">
+              <span style="color:var(--text);font-weight:700;">${r.id}</span>
+              <span style="font-size:8px;color:var(--text-mute);">${ago(r.lastActivity)}</span>
+            </div>
+            <div style="font-size:8px;color:var(--text-mute);margin-top:2px;">
+              ${r.phase?.toUpperCase()} · Rnd ${r.round??'—'} · P1:${r.p1?'✓':'✗'} P2:${r.p2?'✓':'✗'} · ${r.spectators} spec
+            </div>
+          </div>`).join('');
+
+      } else if (tab === 'saves') {
+        const saves = await fetch('/api/admin/saves').then(r => r.json());
+        if (!saves.length) { body.innerHTML = '<div style="color:var(--text-mute);text-align:center;padding:20px;">No saves.</div>'; return; }
+        const fmtTs = ts => ts ? new Date(ts).toLocaleDateString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+        body.innerHTML = saves.map(s => `
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;justify-content:space-between;">
+                <span style="color:var(--text);font-weight:700;">${s.roomId}</span>
+                <span style="font-size:8px;color:var(--text-mute);">${fmtTs(s.savedAt)}</span>
+              </div>
+              <div style="font-size:8px;color:var(--text-mute);margin-top:2px;">
+                ${(s.playerNames?.f1||'P1')} vs ${(s.playerNames?.f2||'P2')} · ${s.phase?.toUpperCase()} Rnd ${s.round??'—'} · ${s.isHotseat?'HOTSEAT':'ONLINE'}${s.hasReplay?' · ↺':''}
+              </div>
+            </div>
+            <button class="btn adm-del-save" data-rid="${s.roomId}" style="padding:3px 7px;font-size:8px;color:var(--hull-crit);border-color:var(--hull-crit);flex-shrink:0;">✕</button>
+          </div>`).join('');
+        body.querySelectorAll('.adm-del-save').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Delete save ${btn.dataset.rid}? This cannot be undone.`)) return;
+            const r = await fetch(`/api/admin/saves/${btn.dataset.rid}`, { method: 'DELETE' });
+            const d = await r.json();
+            if (d.ok) loadTab('saves'); else alert(d.error);
+          });
+        });
+      }
+    } catch(err) {
+      body.innerHTML = `<div style="color:var(--hull-crit);padding:12px;">Error: ${err.message}</div>`;
+    }
+  };
+
+  modal.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => loadTab(b.dataset.tab)));
+  modal.addEventListener('click', e => e.stopPropagation());
+  backdrop.appendChild(modal);
+  loadTab('users');
+}
+
+// ---------------------------------------------------------------------------
 // Initialise networking (online) or show mode selector (local/first load)
 // ---------------------------------------------------------------------------
 
-if (_netRoom && (_netSide === 'player1' || _netSide === 'player2')) {
-  // Online mode: connect — room/status badge is shown in the event log header.
-  _netConnect();
-} else if (!_netRoom) {
-  // No URL params: show the mode selector before the game starts.
-  showModeSelector();
+function renderUserChip() {
+  const chip = document.getElementById('topbar-user');
+  if (!chip) return;
+  if (!currentUser?.loggedIn) { chip.innerHTML = ''; return; }
+
+  chip.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 10px;font-family:var(--mono);font-size:9px;color:var(--text-mute);white-space:nowrap;position:relative;';
+  chip.innerHTML = `
+    <button id="btn-user-chip" style="
+      display:flex;align-items:center;gap:5px;
+      background:none;border:1px solid rgba(255,255,255,0.1);border-radius:3px;
+      color:var(--text-dim);font-family:var(--mono);font-size:9px;letter-spacing:0.06em;
+      padding:3px 8px;cursor:pointer;">
+      <span style="opacity:0.6;">⬡</span> ${currentUser.username}${currentUser.role==='admin'?' <span style="color:var(--hull-warn);font-size:7px;letter-spacing:0.1em;">ADMIN</span>':''}
+    </button>`;
+
+  const chipBtn = chip.querySelector('#btn-user-chip');
+  chipBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    if (currentUser?.role === 'admin') {
+      openAdminPanel(chipBtn);
+      return;
+    }
+
+    const existing = document.getElementById('user-chip-popup');
+    if (existing) { existing.remove(); return; }
+
+    const rect = chipBtn.getBoundingClientRect();
+    const popup = document.createElement('div');
+    popup.id = 'user-chip-popup';
+    popup.style.cssText = `
+      position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;
+      background:#0d1a1f;border:1px solid var(--border-bright);border-radius:6px;
+      padding:12px;min-width:170px;
+      font-family:var(--mono);font-size:10px;
+      box-shadow:0 12px 40px rgba(0,0,0,0.85);z-index:9999;
+    `;
+    popup.innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border);">
+        ${currentUser.username}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <button id="chip-exit-game" class="btn" style="width:100%;padding:9px 10px;font-size:10px;text-align:left;box-sizing:border-box;">
+          ← EXIT GAME
+        </button>
+        <button id="chip-logout" class="btn" style="width:100%;padding:9px 10px;font-size:10px;text-align:left;box-sizing:border-box;color:var(--hull-crit);border-color:var(--hull-crit);">
+          ⏏ SIGN OUT
+        </button>
+      </div>`;
+    document.body.appendChild(popup);
+
+    popup.querySelector('#chip-exit-game').addEventListener('click', () => {
+      popup.remove();
+      location.href = location.pathname;
+    });
+    popup.querySelector('#chip-logout').addEventListener('click', async () => {
+      popup.remove();
+      await fetch('/api/auth/logout', { method: 'POST' });
+      currentUser = null;
+      location.reload();
+    });
+
+    const dismiss = (ev) => {
+      if (!popup.contains(ev.target) && ev.target !== chipBtn) {
+        popup.remove();
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', dismiss), 0);
+  });
 }
 
-/* ==========================================================================
-   INITIAL RENDER
-   ========================================================================== */
-renderAll();
+// ---------------------------------------------------------------------------
+// Initialise: check auth, then connect or show mode selector
+// ---------------------------------------------------------------------------
+
+// Check authentication status before anything else.
+try {
+  const meRes = await fetch('/api/auth/me');
+  currentUser = await meRes.json();
+} catch {
+  currentUser = { loggedIn: false };
+}
+renderUserChip();
+
+if (_netRoom && (_netSide === 'player1' || _netSide === 'player2')) {
+  // Online mode: connect — auth check already done above.
+  if (!currentUser?.loggedIn) {
+    // Show auth screen; after login the page will reload via the URL params.
+    showAuthScreen();
+  } else {
+    _netConnect();
+  }
+} else if (!_netRoom) {
+  if (sessionStorage.getItem('startHotseat')) {
+    sessionStorage.removeItem('startHotseat');
+    if (!currentUser?.loggedIn) { showAuthScreen(); }
+    else { renderAll(); }
+  } else {
+    renderAll(); // render board behind overlay
+    if (!currentUser?.loggedIn) {
+      showAuthScreen();
+    } else {
+      showModeSelector();
+    }
+  }
+}
 
 </script>
 </body></html>

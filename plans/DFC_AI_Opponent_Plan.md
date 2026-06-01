@@ -111,6 +111,36 @@ New optional fields on `POST /api/rooms`:
 When `aiOpponent: true` the server fills the chosen slot permanently. The AI slot never
 sends or receives WebSocket messages. The human joins as normal on the other side.
 
+### Slot-locking compatibility (auth branch)
+
+The `feature/auth-sqlite` branch locks room slots to user accounts. At WebSocket connect
+time, `handleConnection` in `src/api.js` rejects any user whose id doesn't match the
+`room_slots` record for that side — and lets any authenticated user *claim* a free slot.
+
+This means the AI's slot must be explicitly reserved so no human can walk in and claim it.
+Two options:
+
+1. **Sentinel user_id** — create a dedicated `users` row for the AI (e.g. username
+   `_ai`, role `ai`) at server startup. When `aiOpponent: true`, call
+   `setRoomSlot(room.id, aiSide, AI_USER_ID)`. The ownership check will then reject any
+   real user who tries to connect to that side.
+
+2. **`room.aiSide` guard in `handleConnection`** — before the slot-ownership check, add:
+   ```js
+   if (room.aiSide === side) {
+     send(ws, { type: 'error', reason: 'This slot is reserved for the AI opponent.' });
+     return ws.close();
+   }
+   ```
+
+**Recommended: option 2** — simpler, no DB row needed, and it's explicit. Add this check
+at the top of the side-validation block in `handleConnection`, before the existing
+`getRoomSlot` call.
+
+Also: `dotenv/config` is now loaded by `server.js`, so `AI_PROVIDER`, `AI_API_KEY`,
+`AI_MODEL`, `AI_TIMEOUT_MS`, and `AI_FALLBACK_ONLY` (see Server Config section) work
+out of the box from a `.env` file — no additional setup needed.
+
 ---
 
 ## `triggerAi(room)` — Top-Level Entry (`src/ai/index.js`)
